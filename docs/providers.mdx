@@ -1,0 +1,173 @@
+---
+title: Providers
+description: SirenSpec supports OpenAI, Anthropic, and Ollama as LLM backends.
+---
+
+## Overview
+
+Providers are selected via the `model` field on each agent definition using a `provider:model` URI:
+
+```yaml
+agents:
+  assistant:
+    model: "openai:gpt-4o-mini"
+```
+
+SirenSpec resolves the provider at runtime, instantiates the appropriate client, and calls the model's chat completions API asynchronously.
+
+---
+
+## OpenAI
+
+Uses the official [OpenAI Python SDK](https://github.com/openai/openai-python).
+
+**URI format:** `openai:<model-name>`
+
+```yaml
+agents:
+  assistant:
+    model: "openai:gpt-4o-mini"
+    system: "You are a helpful assistant."
+```
+
+**Authentication:**
+
+```bash
+export OPENAI_API_KEY=sk-...
+```
+
+**Examples:**
+
+| URI | Model |
+|-----|-------|
+| `openai:gpt-4o-mini` | GPT-4o mini |
+| `openai:gpt-4o` | GPT-4o |
+| `openai:gpt-4-turbo` | GPT-4 Turbo |
+
+Any model name supported by the OpenAI chat completions API can be used.
+
+---
+
+## Anthropic
+
+Uses the official [Anthropic Python SDK](https://github.com/anthropics/anthropic-sdk-python).
+
+**URI format:** `anthropic:<model-name>`
+
+```yaml
+agents:
+  assistant:
+    model: "anthropic:claude-haiku-4-5-20251001"
+    system: "You are a helpful assistant."
+```
+
+**Authentication:**
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+```
+
+**Examples:**
+
+| URI | Model |
+|-----|-------|
+| `anthropic:claude-haiku-4-5-20251001` | Claude Haiku |
+| `anthropic:claude-sonnet-4-6` | Claude Sonnet |
+| `anthropic:claude-opus-4-7` | Claude Opus |
+
+<Note>
+The Anthropic provider extracts any `system`-role message and passes it as the top-level `system` parameter, as required by the Anthropic Messages API. The `max_tokens` is fixed at `4096`.
+</Note>
+
+---
+
+## Ollama
+
+Uses Ollama's OpenAI-compatible API via the OpenAI Python SDK.
+
+**URI format:** `ollama:<model-name>`
+
+```yaml
+agents:
+  assistant:
+    model: "ollama:llama3.2"
+    system: "You are a helpful assistant."
+```
+
+**Configuration:**
+
+| Environment variable | Default | Description |
+|---------------------|---------|-------------|
+| `OLLAMA_BASE_URL` | `http://localhost:11434/v1` | Ollama server URL. |
+| `OLLAMA_API_KEY` | `ollama` | API key (for auth-protected deployments; most local setups don't need this). |
+
+Start Ollama locally:
+
+```bash
+ollama serve
+ollama pull llama3.2
+```
+
+Then run your workflow:
+
+```bash
+sirenspec run workflow.yaml
+```
+
+<Note>
+Ollama must be running and the model must be pulled locally before running a workflow that references it.
+</Note>
+
+---
+
+## Mixing Providers
+
+You can use different providers in a single workflow. Each agent independently resolves its own provider:
+
+```yaml
+agents:
+  classifier:
+    model: "openai:gpt-4o-mini"
+    system: "Classify the user's intent as 'question' or 'complaint'."
+
+  responder:
+    model: "anthropic:claude-haiku-4-5-20251001"
+    system: "You are a customer support agent. Compose a helpful reply."
+
+nodes:
+  classify:
+    agent: classifier
+    writes: working.intent
+
+  reply:
+    agent: responder
+    writes: output.reply
+
+edges:
+  - from: classify
+    to: reply
+```
+
+This workflow calls OpenAI for classification and Anthropic for the final response.
+
+---
+
+## Token Tracking
+
+Each provider records the total token count from its most recent call. This is surfaced in the execution trace:
+
+```json
+{
+  "nodes": [
+    {
+      "id": "answer",
+      "tokens": 42,
+      ...
+    }
+  ],
+  "summary": {
+    "total_tokens": 42,
+    ...
+  }
+}
+```

@@ -1,0 +1,132 @@
+---
+title: Quickstart
+description: Install SirenSpec and run your first workflow in under five minutes.
+---
+
+## Installation
+
+<Tabs>
+  <Tab title="uv (recommended)">
+    ```bash
+    uv add sirenspec
+    ```
+  </Tab>
+  <Tab title="pip">
+    ```bash
+    pip install sirenspec
+    ```
+  </Tab>
+</Tabs>
+
+Python 3.13 or later is required.
+
+## Set Your API Key
+
+SirenSpec reads provider credentials from environment variables. Set at least one:
+
+```bash
+export OPENAI_API_KEY=sk-...
+# or
+export ANTHROPIC_API_KEY=sk-ant-...
+```
+
+## Create a Workflow
+
+Create a file named `hello.yaml`:
+
+```yaml hello.yaml
+version: "0.1"
+
+agents:
+  assistant:
+    model: "openai:gpt-4o-mini"
+    system: "You are a helpful assistant. Answer questions clearly and concisely."
+
+nodes:
+  answer:
+    agent: assistant
+    writes: output.reply
+
+input:
+  message: "What is the capital of France?"
+```
+
+## Run It
+
+```bash
+sirenspec run hello.yaml
+```
+
+You'll see a JSON execution trace:
+
+```json
+{
+  "workflow": { "version": "0.1" },
+  "input": { "message": "What is the capital of France?" },
+  "nodes": [
+    {
+      "id": "answer",
+      "agent": "assistant",
+      "prompt_sent": "What is the capital of France?",
+      "response_received": "Paris is the capital of France.",
+      "writes": "output.reply",
+      "guardrails_passed": ["InjectionGuardrail.check_input", "InjectionGuardrail.check_output"],
+      "tokens": 24,
+      "duration_ms": 312.5,
+      "error": null
+    }
+  ],
+  "output": { "reply": "Paris is the capital of France." },
+  "summary": {
+    "total_tokens": 24,
+    "total_duration_ms": 312.5,
+    "status": "success"
+  }
+}
+```
+
+## Override the Input at Runtime
+
+Use `--input` (or `-i`) to pass a message from the command line, overriding any `input.message` defined in the YAML:
+
+```bash
+sirenspec run hello.yaml --input "What is the speed of light?"
+```
+
+## Validate Without Running
+
+Check that your workflow is valid without making any API calls:
+
+```bash
+sirenspec validate hello.yaml
+# ✓ hello.yaml is valid (1 agent, 1 node)
+```
+
+## Try a Multi-Agent Pipeline
+
+SirenSpec ships with runnable examples. Clone the repo and try:
+
+```bash
+# Sequential pipeline: classify → reply
+sirenspec run examples/sequential-pipeline.yaml --input "I need help with my order"
+
+# Conditional branching: triage → handle_refund or handle_general
+sirenspec run examples/conditional-pipeline.yaml --input "I want a refund"
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="YAML Reference" icon="book" href="/yaml-reference">
+    Learn every field available in a workflow file.
+  </Card>
+  <Card title="Providers" icon="server" href="/providers">
+    Configure OpenAI, Anthropic, and Ollama.
+  </Card>
+  <Card title="Guardrails" icon="shield" href="/guardrails">
+    Understand the built-in guardrail system.
+  </Card>
+  <Card title="CLI Reference" icon="terminal" href="/cli-reference">
+    Full CLI command documentation.
+  </Card>
+</CardGroup>

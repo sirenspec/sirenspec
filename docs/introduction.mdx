@@ -1,0 +1,65 @@
+---
+title: Introduction
+description: SirenSpec is a YAML-first agent orchestration SDK for defining and running multi-agent workflows.
+---
+
+## What is SirenSpec?
+
+SirenSpec lets you define multi-agent AI workflows in human-readable YAML and execute them against OpenAI, Anthropic, or Ollama backends. You describe *what* each agent does and *how* agents connect — SirenSpec handles the rest.
+
+```yaml
+version: "0.1"
+
+agents:
+  assistant:
+    model: "openai:gpt-4o-mini"
+    system: "You are a helpful assistant. Answer questions clearly and concisely."
+
+nodes:
+  answer:
+    agent: assistant
+    writes: output.reply
+
+input:
+  message: "What is the capital of France?"
+```
+
+```bash
+sirenspec run workflow.yaml
+# → { "output": { "reply": "Paris" }, ... }
+```
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="YAML Workflows" icon="file-code">
+    Define agents, nodes, edges, and guardrails in a single readable YAML file.
+  </Card>
+  <Card title="Multiple Providers" icon="server">
+    Works with OpenAI, Anthropic, and Ollama out of the box.
+  </Card>
+  <Card title="Guardrails" icon="shield">
+    Built-in injection detection and output length limiting on every agent call.
+  </Card>
+  <Card title="CLI + SDK" icon="terminal">
+    Run workflows from the command line or import directly into Python code.
+  </Card>
+</CardGroup>
+
+## How It Works
+
+1. **Define agents** — each agent has a model URI (`provider:model`) and a system prompt.
+2. **Define nodes** — each node binds an agent to an output path in the workflow context.
+3. **Connect nodes with edges** — edges control execution order and support conditional branching via `when:` expressions.
+4. **Run** — SirenSpec executes nodes in topological order, routing outputs through the context, and returns a structured JSON trace.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Install SirenSpec and run your first workflow in minutes.
+  </Card>
+  <Card title="YAML Reference" icon="book" href="/yaml-reference">
+    Complete reference for all workflow fields and options.
+  </Card>
+</CardGroup>

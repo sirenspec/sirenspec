@@ -1,0 +1,139 @@
+---
+title: Guardrails
+description: Guardrails protect every agent call with input validation and output filtering.
+---
+
+## Overview
+
+Guardrails run on every node execution — checking input before it reaches the LLM and validating (or transforming) output before it is written to the context.
+
+By default, the `injection` guardrail is active on all agents. You can configure guardrails at the workflow level, per agent, or disable them entirely.
+
+```yaml
+guardrails:        # workflow-level (applies to all agents by default)
+  - injection
+  - length
+```
+
+---
+
+## Built-in Guardrails
+
+### `injection`
+
+Detects common prompt-injection patterns in both input and output text.
+
+If an injection signature is detected, the node fails immediately with a `GuardrailViolation` and the workflow status is set to `"failed"`.
+
+**Detected patterns include:**
+
+- `ignore previous instructions`
+- `disregard your instructions`
+- `you are now [role]`
+- `forget your instructions`
+- `new instructions:`
+- `override previous instructions`
+- `act as a [role]`
+- `pretend you are [role]`
+- `your new role is`
+- `system: you are`
+
+Detection is case-insensitive.
+
+**Default:** Always active unless explicitly overridden with an empty list or a list that omits `injection`.
+
+### `length`
+
+Limits the length of LLM output. In the default `"truncate"` mode, responses longer than the limit are silently cut and appended with `"..."`.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `max_chars` | `4000` | Maximum allowed output length in characters. |
+| `mode` | `truncate` | `"truncate"` appends `"..."` and trims; `"raise"` raises a `GuardrailViolation`. |
+
+<Note>
+The `length` guardrail only checks output — input is passed through unchanged.
+</Note>
+
+---
+
+## Configuration
+
+### Workflow-level (default for all agents)
+
+```yaml
+guardrails:
+  - injection
+  - length
+```
+
+If `guardrails` is omitted from the workflow file, only `injection` is active.
+
+### Per-agent override
+
+An agent's `guardrails` field completely replaces the workflow-level list for that agent:
+
+```yaml
+guardrails:
+  - injection
+  - length
+
+agents:
+  summarizer:
+    model: "openai:gpt-4o-mini"
+    system: "Summarise the text."
+    guardrails: ["length"]   # injection disabled for this agent only
+
+  responder:
+    model: "openai:gpt-4o-mini"
+    system: "You are a support agent."
+    # no override — inherits [injection, length] from workflow level
+```
+
+### Disabling all guardrails
+
+Set an empty list to disable all guardrails for the workflow or a specific agent:
+
+```yaml
+# Disable for the entire workflow
+guardrails: []
+
+# Disable for one agent
+agents:
+  internal_tool:
+    model: "openai:gpt-4o-mini"
+    system: "Internal tool with no user-facing output."
+    guardrails: []
+```
+
+<Warning>
+Disabling the `injection` guardrail removes protection against prompt-injection attacks. Only do this for agents that process fully trusted input.
+</Warning>
+
+---
+
+## Execution Trace
+
+Guardrails that pass are recorded in each node's trace entry:
+
+```json
+{
+  "id": "answer",
+  "guardrails_passed": [
+    "InjectionGuardrail.check_input",
+    "InjectionGuardrail.check_output",
+    "LengthGuardrail.check_output"
+  ],
+  "error": null
+}
+```
+
+A `GuardrailViolation` sets the node's `error` field and the workflow `summary.status` to `"failed"`:
+
+```json
+{
+  "id": "answer",
+  "error": "GuardrailViolation: Injection pattern detected in input: 'ignore\\s+(all\\s+)?...'",
+  "guardrails_passed": []
+}
+```
