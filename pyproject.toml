@@ -26,7 +26,7 @@ target-version = "py311"
 line-length = 120
 
 [tool.ruff.lint]
-rule-select = [
+select = [
     "E",     # pycodestyle errors
     "W",     # pycodestyle warnings
     "F",     # pyflakes
@@ -35,6 +35,6 @@ rule-select = [
     "C4",    # flake8-comprehensions
     "UP",    # pyupgrade
 ]
-rule-ignore = [
+ignore = [
     "E501",  # line too long (handled by formatter)
 ]

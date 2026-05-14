@@ -15,6 +15,11 @@ wheels/
 # IDE
 .windsurf/
 
-# OpenSpec
+# OpenSpec, OpenCode, Claude Code
 openspec/
+.opencode/
+.claude/
+
+# Environment variables
+.env
 
