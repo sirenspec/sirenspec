@@ -12,12 +12,14 @@
     "light": "#07C983",
     "dark": "#0D9373"
   },
-  "topbarLinks": [
-    {
-      "name": "GitHub",
-      "url": "https://github.com/TJLSmith0831/sirenspec"
-    }
-  ],
+  "navbar": {
+    "links": [
+      {
+        "name": "GitHub",
+        "url": "https://github.com/TJLSmith0831/sirenspec"
+      }
+    ]
+  },
   "navigation": [
     {
       "tab": "Documentation",
@@ -37,7 +39,9 @@
       ]
     }
   ],
-  "footerSocials": {
-    "github": "https://github.com/TJLSmith0831/sirenspec"
+  "footer": {
+    "socials": {
+      "github": "https://github.com/TJLSmith0831/sirenspec"
+    }
   }
 }
