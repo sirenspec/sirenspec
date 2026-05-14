@@ -15,30 +15,32 @@
   "navbar": {
     "links": [
       {
-        "name": "GitHub",
-        "url": "https://github.com/TJLSmith0831/sirenspec"
+        "label": "GitHub",
+        "href": "https://github.com/TJLSmith0831/sirenspec"
       }
     ]
   },
-  "navigation": [
-    {
-      "tab": "Documentation",
-      "groups": [
-        {
-          "group": "Getting Started",
-          "pages": ["introduction", "quickstart"]
-        },
-        {
-          "group": "Core Concepts",
-          "pages": ["assistant", "yaml-reference", "providers", "guardrails"]
-        },
-        {
-          "group": "Reference",
-          "pages": ["cli-reference", "sdk"]
-        }
-      ]
-    }
-  ],
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": ["introduction", "quickstart"]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": ["assistant", "yaml-reference", "providers", "guardrails"]
+          },
+          {
+            "group": "Reference",
+            "pages": ["cli-reference", "sdk"]
+          }
+        ]
+      }
+    ]
+  },
   "footer": {
     "socials": {
       "github": "https://github.com/TJLSmith0831/sirenspec"
