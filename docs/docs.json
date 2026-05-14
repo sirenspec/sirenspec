@@ -1,5 +1,5 @@
 {
-  "$schema": "https://mintlify.com/schema.json",
+  "$schema": "https://mintlify.com/docs.json",
   "name": "SirenSpec",
   "theme": "willow",
   "logo": {
@@ -20,16 +20,21 @@
   ],
   "navigation": [
     {
-      "group": "Getting Started",
-      "pages": ["introduction", "quickstart"]
-    },
-    {
-      "group": "Core Concepts",
-      "pages": ["assistant", "yaml-reference", "providers", "guardrails"]
-    },
-    {
-      "group": "Reference",
-      "pages": ["cli-reference", "sdk"]
+      "tab": "Documentation",
+      "groups": [
+        {
+          "group": "Getting Started",
+          "pages": ["introduction", "quickstart"]
+        },
+        {
+          "group": "Core Concepts",
+          "pages": ["assistant", "yaml-reference", "providers", "guardrails"]
+        },
+        {
+          "group": "Reference",
+          "pages": ["cli-reference", "sdk"]
+        }
+      ]
     }
   ],
   "footerSocials": {
