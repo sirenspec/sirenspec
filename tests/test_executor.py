@@ -6,7 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from sirenspec.core.executor import _topological_sort, execute
+from sirenspec.core.context import WorkflowContext
+from sirenspec.core.executor import DotDict, evaluate_when_condition, topological_sort, execute
 from sirenspec.core.models import AgentDefinition, Edge, Node, Workflow
 
 
@@ -19,19 +20,19 @@ def _make_provider_mock(response_text: str = "mock response", tokens: int = 10) 
 
 class TestTopologicalSort:
     def test_single_node(self) -> None:
-        assert _topological_sort(["a"], []) == ["a"]
+        assert topological_sort(["a"], []) == ["a"]
 
     def test_linear_chain(self) -> None:
-        result = _topological_sort(["a", "b", "c"], [("a", "b"), ("b", "c")])
+        result = topological_sort(["a", "b", "c"], [("a", "b"), ("b", "c")])
         assert result == ["a", "b", "c"]
 
     def test_no_edges(self) -> None:
-        result = _topological_sort(["a", "b"], [])
+        result = topological_sort(["a", "b"], [])
         assert set(result) == {"a", "b"}
 
     def test_cycle_raises(self) -> None:
         with pytest.raises(ValueError, match="cycle"):
-            _topological_sort(["a", "b"], [("a", "b"), ("b", "a")])
+            topological_sort(["a", "b"], [("a", "b"), ("b", "a")])
 
 
 class TestExecuteSingleNode:
@@ -154,3 +155,177 @@ class TestGuardrailIntegration:
 
         assert trace["summary"]["status"] == "failed"
         assert "GuardrailViolation" in trace["nodes"][0]["error"]
+
+
+# ---------------------------------------------------------------------------
+# DotDict helper
+# ---------------------------------------------------------------------------
+
+
+class TestDotDict:
+    def test_simple_attribute_access(self) -> None:
+        d = DotDict({"key": "value"})
+        assert d.key == "value"
+
+    def test_nested_dict_wraps_recursively(self) -> None:
+        d = DotDict({"triage": {"intent": "refund"}})
+        # Nested dict access should return a DotDict, making deep paths work.
+        assert d.triage.intent == "refund"
+
+    def test_missing_key_raises_attribute_error(self) -> None:
+        d = DotDict({"x": 1})
+        with pytest.raises(AttributeError):
+            _ = d.missing
+
+    def test_equality_with_plain_dict(self) -> None:
+        d = DotDict({"a": 1})
+        assert d == {"a": 1}
+
+    def test_equality_with_another_dot_dict(self) -> None:
+        assert DotDict({"a": 1}) == DotDict({"a": 1})
+
+
+# ---------------------------------------------------------------------------
+# evaluate_when_condition
+# ---------------------------------------------------------------------------
+
+
+class TestEvaluateWhenCondition:
+    def _ctx(self, working: dict | None = None, output: dict | None = None) -> WorkflowContext:
+        """Build a minimal WorkflowContext with pre-populated state."""
+        ctx = WorkflowContext()
+        if working:
+            ctx.working.update(working)
+        if output:
+            ctx.output.update(output)
+        return ctx
+
+    def test_simple_equality_true(self) -> None:
+        ctx = self._ctx(working={"triage": {"intent": "refund"}})
+        assert evaluate_when_condition('working.triage.intent == "refund"', ctx) is True
+
+    def test_simple_equality_false(self) -> None:
+        ctx = self._ctx(working={"triage": {"intent": "general"}})
+        assert evaluate_when_condition('working.triage.intent == "refund"', ctx) is False
+
+    def test_yaml_true_literal(self) -> None:
+        # Authors can write 'true' (YAML style) in the expression string.
+        ctx = self._ctx(working={"flag": True})
+        assert evaluate_when_condition("working.flag == true", ctx) is True
+
+    def test_yaml_false_literal(self) -> None:
+        ctx = self._ctx(working={"flag": False})
+        assert evaluate_when_condition("working.flag == false", ctx) is True
+
+    def test_missing_key_returns_false(self) -> None:
+        # A missing attribute raises AttributeError which is caught → False.
+        ctx = self._ctx()
+        assert evaluate_when_condition("working.nonexistent == 1", ctx) is False
+
+    def test_syntax_error_returns_false(self) -> None:
+        ctx = self._ctx()
+        assert evaluate_when_condition("this is not valid python ===", ctx) is False
+
+    def test_no_builtins_available(self) -> None:
+        # __import__ and open are blocked; the expression must return False.
+        ctx = self._ctx()
+        assert evaluate_when_condition("__import__('os')", ctx) is False
+
+    def test_output_namespace_accessible(self) -> None:
+        ctx = self._ctx(output={"status": "done"})
+        assert evaluate_when_condition('output.status == "done"', ctx) is True
+
+
+# ---------------------------------------------------------------------------
+# Conditional branching in execute()
+# ---------------------------------------------------------------------------
+
+
+def _conditional_workflow() -> Workflow:
+    """Three-node workflow: triage → handle_refund OR handle_general (conditional)."""
+    return Workflow(
+        version="0.1",
+        agents={
+            "triage_agent": AgentDefinition(model="openai:gpt-4o-mini", system="Classify."),
+            "refund_handler": AgentDefinition(model="openai:gpt-4o-mini", system="Handle refund."),
+            "general_handler": AgentDefinition(model="openai:gpt-4o-mini", system="Handle general."),
+        },
+        nodes={
+            "triage": Node(agent="triage_agent", writes="working.triage.intent"),
+            "handle_refund": Node(agent="refund_handler", writes="output.reply"),
+            "handle_general": Node(agent="general_handler", writes="output.reply"),
+        },
+        edges=[
+            Edge(**{"from": "triage", "to": "handle_refund", "when": 'working.triage.intent == "refund"'}),
+            Edge(**{"from": "triage", "to": "handle_general", "when": 'working.triage.intent == "general"'}),
+        ],
+    )
+
+
+class TestConditionalBranching:
+    @pytest.mark.asyncio
+    async def test_routes_to_refund_branch(self) -> None:
+        """When triage writes 'refund', only handle_refund executes."""
+        wf = _conditional_workflow()
+
+        call_count = 0
+
+        async def mock_complete(messages: list[dict]) -> str:
+            nonlocal call_count
+            call_count += 1
+            # First call is triage; return the classification label.
+            return "refund" if call_count == 1 else "Here is your refund information."
+
+        mock_provider = MagicMock()
+        mock_provider.complete = mock_complete
+        mock_provider.last_token_count = 5
+
+        with patch("sirenspec.core.executor.resolve_provider", return_value=mock_provider):
+            trace = await execute(wf, "I want a refund")
+
+        executed_ids = [n["id"] for n in trace["nodes"]]
+        assert "triage" in executed_ids
+        assert "handle_refund" in executed_ids
+        # The general branch must have been skipped entirely.
+        assert "handle_general" not in executed_ids
+        assert trace["summary"]["status"] == "success"
+
+    @pytest.mark.asyncio
+    async def test_routes_to_general_branch(self) -> None:
+        """When triage writes 'general', only handle_general executes."""
+        wf = _conditional_workflow()
+
+        call_count = 0
+
+        async def mock_complete(messages: list[dict]) -> str:
+            nonlocal call_count
+            call_count += 1
+            return "general" if call_count == 1 else "Our hours are 9–5 Monday to Friday."
+
+        mock_provider = MagicMock()
+        mock_provider.complete = mock_complete
+        mock_provider.last_token_count = 5
+
+        with patch("sirenspec.core.executor.resolve_provider", return_value=mock_provider):
+            trace = await execute(wf, "What are your hours?")
+
+        executed_ids = [n["id"] for n in trace["nodes"]]
+        assert "triage" in executed_ids
+        assert "handle_general" in executed_ids
+        assert "handle_refund" not in executed_ids
+        assert trace["summary"]["status"] == "success"
+
+    @pytest.mark.asyncio
+    async def test_no_branch_activated_when_all_conditions_false(self) -> None:
+        """If no outgoing condition is satisfied, successor nodes are simply not executed."""
+        wf = _conditional_workflow()
+
+        mock_provider = _make_provider_mock("unknown")
+
+        with patch("sirenspec.core.executor.resolve_provider", return_value=mock_provider):
+            trace = await execute(wf, "some input")
+
+        executed_ids = [n["id"] for n in trace["nodes"]]
+        # Only the root triage node runs; neither handler is activated.
+        assert executed_ids == ["triage"]
+        assert trace["summary"]["status"] == "success"

@@ -23,11 +23,38 @@ class Node(BaseModel):
 
 
 class Edge(BaseModel):
-    """Connects two nodes in the workflow graph."""
+    """Connects two nodes in the workflow graph.
+
+    When ``when`` is omitted the edge is always traversed.  When it is set, the
+    executor evaluates it as a Python expression against the live workflow context
+    after the source node completes; the target node is activated only if the
+    expression returns a truthy value.
+
+    The expression namespace contains only ``working`` and ``output`` (plus the
+    YAML literals ``true``, ``false``, and ``null``).  No built-ins are available,
+    so arbitrary imports or side-effects are blocked.  Any evaluation error is
+    treated as ``False`` so the edge is silently skipped.
+
+    Example::
+
+        edges:
+          - from: triage
+            to: handle_refund
+            when: working.triage.intent == "refund"
+          - from: triage
+            to: handle_general
+            when: working.triage.intent == "general"
+    """
 
     from_node: str = Field(alias="from")
     to_node: str = Field(alias="to")
-    when: str | None = None
+    when: str | None = Field(
+        default=None,
+        description=(
+            "Optional Python expression evaluated against the workflow context after the source node "
+            "completes.  Only 'working' and 'output' are in scope.  Evaluation failure is treated as False."
+        ),
+    )
 
     model_config = {"populate_by_name": True}
 
