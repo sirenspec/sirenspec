@@ -1,0 +1,70 @@
+version: "0.1"
+
+# Conditional branching pipeline.
+#
+# Graph structure:
+#
+#   [triage] --when: intent=="refund"--> [handle_refund]
+#            --when: intent=="general"--> [handle_general]
+#
+# The 'triage' node runs first and writes a single-word classification
+# ("refund" or "general") to working.triage.intent.
+#
+# The executor then evaluates both outgoing edges against the context.
+# Exactly one of the two handler nodes will be activated and executed;
+# the other is silently skipped.
+#
+# Try it:
+#   sirenspec run examples/conditional-pipeline.yaml --input "I want a refund"
+#   sirenspec run examples/conditional-pipeline.yaml --input "What are your hours?"
+
+agents:
+  triage_agent:
+    model: "openai:gpt-4o-mini"
+    system: |
+      Classify the user's message as either a refund request or a general enquiry.
+      Reply with ONLY one word — either "refund" or "general" — and nothing else.
+
+  refund_handler:
+    model: "openai:gpt-4o-mini"
+    system: |
+      You are a customer-support specialist handling refund requests.
+      Acknowledge the request warmly, outline the refund process in two or three
+      sentences, and let the customer know how long it typically takes.
+
+  general_handler:
+    model: "openai:gpt-4o-mini"
+    system: |
+      You are a helpful customer-support agent.
+      Answer the user's question clearly and concisely in two or three sentences.
+
+nodes:
+  triage:
+    agent: triage_agent
+    # The classification label is written to a nested key so the when: expressions
+    # below can reference it with dot notation: working.triage.intent
+    writes: working.triage.intent
+
+  handle_refund:
+    agent: refund_handler
+    writes: output.reply
+
+  handle_general:
+    agent: general_handler
+    writes: output.reply
+
+edges:
+  # Each edge carries a when: expression evaluated after 'triage' completes.
+  # The expression runs in a safe namespace — only 'working' and 'output' are
+  # available; no built-ins or imports are permitted.
+  - from: triage
+    to: handle_refund
+    when: working.triage.intent == "refund"
+
+  - from: triage
+    to: handle_general
+    when: working.triage.intent == "general"
+
+guardrails:
+  - injection
+  - length
