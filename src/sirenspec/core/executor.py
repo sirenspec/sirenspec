@@ -13,7 +13,7 @@ from sirenspec.guardrails.registry import build_guardrails
 from sirenspec.providers.registry import resolve_provider
 
 
-class _DotDict:
+class DotDict:
     """Wraps a plain dict so that attribute-style (dot) access works in ``when:`` expressions.
 
     Nested dicts are wrapped recursively, so a path like ``working.triage.intent``
@@ -34,11 +34,11 @@ class _DotDict:
         except KeyError as exc:
             raise AttributeError(key) from exc
         # Recursively wrap nested dicts so deep paths keep resolving.
-        return _DotDict(value) if isinstance(value, dict) else value
+        return DotDict(value) if isinstance(value, dict) else value
 
     def __eq__(self, other: object) -> bool:
         data: dict[str, Any] = object.__getattribute__(self, "_data")
-        if isinstance(other, _DotDict):
+        if isinstance(other, DotDict):
             return data == object.__getattribute__(other, "_data")
         return data == other
 
@@ -46,13 +46,13 @@ class _DotDict:
         return repr(object.__getattribute__(self, "_data"))
 
 
-def _evaluate_when_condition(condition: str, context: WorkflowContext) -> bool:
+def evaluate_when_condition(condition: str, context: WorkflowContext) -> bool:
     """Evaluate a ``when:`` expression against the current workflow context.
 
     The expression runs in a tightly-restricted namespace:
 
-    * ``working`` — a :class:`_DotDict` wrapping ``context.working``
-    * ``output``  — a :class:`_DotDict` wrapping ``context.output``
+    * ``working`` — a :class:`DotDict` wrapping ``context.working``
+    * ``output``  — a :class:`DotDict` wrapping ``context.output``
     * ``true`` / ``false`` / ``null`` — YAML boolean/null literals
 
     No built-ins are available (``__builtins__`` is cleared), so arbitrary
@@ -65,8 +65,8 @@ def _evaluate_when_condition(condition: str, context: WorkflowContext) -> bool:
     try:
         # Build a safe evaluation namespace with only the allowed names.
         namespace: dict[str, Any] = {
-            "working": _DotDict(context.working),
-            "output": _DotDict(context.output),
+            "working": DotDict(context.working),
+            "output": DotDict(context.output),
             # Map YAML boolean/null literals so authors can write them naturally.
             "true": True,
             "false": False,
@@ -82,7 +82,7 @@ def _evaluate_when_condition(condition: str, context: WorkflowContext) -> bool:
         return False
 
 
-def _topological_sort(node_ids: list[str], edges: list[tuple[str, str]]) -> list[str]:
+def topological_sort(node_ids: list[str], edges: list[tuple[str, str]]) -> list[str]:
     """Return node IDs in topological order (Kahn's algorithm).
 
     :param node_ids: All node identifiers in the workflow.
@@ -152,7 +152,7 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
     # Use all edges (without when: semantics) for topological ordering only —
     # the sort gives a deterministic, cycle-free iteration sequence.
     edge_pairs = [(e.from_node, e.to_node) for e in workflow.edges]
-    execution_order = _topological_sort(node_ids, edge_pairs)
+    execution_order = topological_sort(node_ids, edge_pairs)
 
     # Root nodes are unconditionally active; all other nodes start inactive and
     # become active only when an incoming edge's condition is satisfied at runtime.
@@ -233,7 +233,7 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
             # An unconditional edge always activates its target; a conditional edge
             # does so only if its when: expression evaluates to True.
             for target, condition in out_edges[node_id]:
-                if condition is None or _evaluate_when_condition(condition, context):
+                if condition is None or evaluate_when_condition(condition, context):
                     active_nodes.add(target)
 
             duration_ms = (time.monotonic() - start_time) * 1000

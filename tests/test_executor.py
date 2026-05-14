@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from sirenspec.core.context import WorkflowContext
-from sirenspec.core.executor import _DotDict, _evaluate_when_condition, _topological_sort, execute
+from sirenspec.core.executor import DotDict, evaluate_when_condition, topological_sort, execute
 from sirenspec.core.models import AgentDefinition, Edge, Node, Workflow
 
 
@@ -20,19 +20,19 @@ def _make_provider_mock(response_text: str = "mock response", tokens: int = 10) 
 
 class TestTopologicalSort:
     def test_single_node(self) -> None:
-        assert _topological_sort(["a"], []) == ["a"]
+        assert topological_sort(["a"], []) == ["a"]
 
     def test_linear_chain(self) -> None:
-        result = _topological_sort(["a", "b", "c"], [("a", "b"), ("b", "c")])
+        result = topological_sort(["a", "b", "c"], [("a", "b"), ("b", "c")])
         assert result == ["a", "b", "c"]
 
     def test_no_edges(self) -> None:
-        result = _topological_sort(["a", "b"], [])
+        result = topological_sort(["a", "b"], [])
         assert set(result) == {"a", "b"}
 
     def test_cycle_raises(self) -> None:
         with pytest.raises(ValueError, match="cycle"):
-            _topological_sort(["a", "b"], [("a", "b"), ("b", "a")])
+            topological_sort(["a", "b"], [("a", "b"), ("b", "a")])
 
 
 class TestExecuteSingleNode:
@@ -158,35 +158,35 @@ class TestGuardrailIntegration:
 
 
 # ---------------------------------------------------------------------------
-# _DotDict helper
+# DotDict helper
 # ---------------------------------------------------------------------------
 
 
 class TestDotDict:
     def test_simple_attribute_access(self) -> None:
-        d = _DotDict({"key": "value"})
+        d = DotDict({"key": "value"})
         assert d.key == "value"
 
     def test_nested_dict_wraps_recursively(self) -> None:
-        d = _DotDict({"triage": {"intent": "refund"}})
-        # Nested dict access should return a _DotDict, making deep paths work.
+        d = DotDict({"triage": {"intent": "refund"}})
+        # Nested dict access should return a DotDict, making deep paths work.
         assert d.triage.intent == "refund"
 
     def test_missing_key_raises_attribute_error(self) -> None:
-        d = _DotDict({"x": 1})
+        d = DotDict({"x": 1})
         with pytest.raises(AttributeError):
             _ = d.missing
 
     def test_equality_with_plain_dict(self) -> None:
-        d = _DotDict({"a": 1})
+        d = DotDict({"a": 1})
         assert d == {"a": 1}
 
     def test_equality_with_another_dot_dict(self) -> None:
-        assert _DotDict({"a": 1}) == _DotDict({"a": 1})
+        assert DotDict({"a": 1}) == DotDict({"a": 1})
 
 
 # ---------------------------------------------------------------------------
-# _evaluate_when_condition
+# evaluate_when_condition
 # ---------------------------------------------------------------------------
 
 
@@ -202,38 +202,38 @@ class TestEvaluateWhenCondition:
 
     def test_simple_equality_true(self) -> None:
         ctx = self._ctx(working={"triage": {"intent": "refund"}})
-        assert _evaluate_when_condition('working.triage.intent == "refund"', ctx) is True
+        assert evaluate_when_condition('working.triage.intent == "refund"', ctx) is True
 
     def test_simple_equality_false(self) -> None:
         ctx = self._ctx(working={"triage": {"intent": "general"}})
-        assert _evaluate_when_condition('working.triage.intent == "refund"', ctx) is False
+        assert evaluate_when_condition('working.triage.intent == "refund"', ctx) is False
 
     def test_yaml_true_literal(self) -> None:
         # Authors can write 'true' (YAML style) in the expression string.
         ctx = self._ctx(working={"flag": True})
-        assert _evaluate_when_condition("working.flag == true", ctx) is True
+        assert evaluate_when_condition("working.flag == true", ctx) is True
 
     def test_yaml_false_literal(self) -> None:
         ctx = self._ctx(working={"flag": False})
-        assert _evaluate_when_condition("working.flag == false", ctx) is True
+        assert evaluate_when_condition("working.flag == false", ctx) is True
 
     def test_missing_key_returns_false(self) -> None:
         # A missing attribute raises AttributeError which is caught → False.
         ctx = self._ctx()
-        assert _evaluate_when_condition("working.nonexistent == 1", ctx) is False
+        assert evaluate_when_condition("working.nonexistent == 1", ctx) is False
 
     def test_syntax_error_returns_false(self) -> None:
         ctx = self._ctx()
-        assert _evaluate_when_condition("this is not valid python ===", ctx) is False
+        assert evaluate_when_condition("this is not valid python ===", ctx) is False
 
     def test_no_builtins_available(self) -> None:
         # __import__ and open are blocked; the expression must return False.
         ctx = self._ctx()
-        assert _evaluate_when_condition("__import__('os')", ctx) is False
+        assert evaluate_when_condition("__import__('os')", ctx) is False
 
     def test_output_namespace_accessible(self) -> None:
         ctx = self._ctx(output={"status": "done"})
-        assert _evaluate_when_condition('output.status == "done"', ctx) is True
+        assert evaluate_when_condition('output.status == "done"', ctx) is True
 
 
 # ---------------------------------------------------------------------------
