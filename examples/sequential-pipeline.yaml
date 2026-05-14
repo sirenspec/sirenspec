@@ -1,0 +1,31 @@
+version: "0.1"
+
+agents:
+  classifier:
+    model: "openai:gpt-4o-mini"
+    system: |
+      Classify the user's message into one of these intents: question, complaint, feedback, other.
+      Respond with ONLY the intent label, nothing else.
+
+  replier:
+    model: "anthropic:claude-haiku-4-5-20251001"
+    system: |
+      You are a customer support agent. The user's intent has been classified.
+      Compose a short, helpful reply appropriate for that intent.
+
+nodes:
+  classify:
+    agent: classifier
+    writes: working.intent
+
+  reply:
+    agent: replier
+    writes: output.reply
+
+edges:
+  - from: classify
+    to: reply
+
+guardrails:
+  - injection
+  - length

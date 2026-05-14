@@ -1,0 +1,14 @@
+version: "0.1"
+
+agents:
+  assistant:
+    model: "openai:gpt-4o-mini"
+    system: "You are a helpful assistant. Answer questions clearly and concisely."
+
+nodes:
+  answer:
+    agent: assistant
+    writes: output.reply
+
+input:
+  message: "What is the capital of France?"

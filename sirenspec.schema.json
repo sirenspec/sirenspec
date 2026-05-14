@@ -1,0 +1,97 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SirenSpec Workflow",
+  "description": "YAML-first agent orchestration workflow definition.",
+  "type": "object",
+  "required": ["version", "agents", "nodes"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Workflow schema version (e.g. '0.1')."
+    },
+    "agents": {
+      "type": "object",
+      "description": "Named agent definitions. Keys are agent IDs.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["model", "system"],
+        "additionalProperties": false,
+        "properties": {
+          "model": {
+            "type": "string",
+            "description": "Provider URI in 'provider:model' format (e.g. 'openai:gpt-4o-mini').",
+            "examples": ["openai:gpt-4o-mini", "anthropic:claude-haiku-4-5-20251001"]
+          },
+          "system": {
+            "type": "string",
+            "description": "System prompt for this agent."
+          },
+          "guardrails": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Agent-level guardrail overrides. Overrides global guardrails."
+          }
+        }
+      }
+    },
+    "nodes": {
+      "type": "object",
+      "description": "Named node definitions. Keys are node IDs.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["agent", "writes"],
+        "additionalProperties": false,
+        "properties": {
+          "agent": {
+            "type": "string",
+            "description": "Agent ID that executes this node."
+          },
+          "writes": {
+            "type": "string",
+            "description": "Dot-notation path where the agent's output is stored (e.g. 'output.reply', 'working.intent')."
+          }
+        }
+      }
+    },
+    "edges": {
+      "type": "array",
+      "description": "Directed edges connecting nodes.",
+      "items": {
+        "type": "object",
+        "required": ["from", "to"],
+        "additionalProperties": false,
+        "properties": {
+          "from": { "type": "string", "description": "Source node ID." },
+          "to": { "type": "string", "description": "Destination node ID." },
+          "when": { "type": "string", "description": "Condition expression (Phase 2; accepted but not evaluated in v0.1)." }
+        }
+      }
+    },
+    "input": {
+      "type": "object",
+      "description": "Optional static input for the first node.",
+      "additionalProperties": false,
+      "properties": {
+        "message": { "type": "string", "description": "Static user message." }
+      }
+    },
+    "state": {
+      "type": "object",
+      "description": "Optional initial workflow state.",
+      "additionalProperties": true,
+      "properties": {
+        "working": { "type": "object", "additionalProperties": true },
+        "output": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "guardrails": {
+      "type": "array",
+      "description": "Global guardrails applied to all agents. Defaults to ['injection'] if omitted.",
+      "items": {
+        "type": "string",
+        "enum": ["injection", "length"]
+      }
+    }
+  }
+}
