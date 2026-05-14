@@ -1,0 +1,239 @@
+---
+title: YAML Reference
+description: Complete reference for all fields in a SirenSpec workflow file.
+---
+
+## File Structure
+
+A SirenSpec workflow is a YAML file with a top-level mapping. Three fields are required; the rest are optional.
+
+```yaml
+version: "0.1"         # required
+agents: {}             # required
+nodes: {}              # required
+edges: []              # optional
+input: {}              # optional
+state: {}              # optional
+guardrails: []         # optional
+```
+
+---
+
+## `version`
+
+**Required.** The schema version string. Currently only `"0.1"` is supported.
+
+```yaml
+version: "0.1"
+```
+
+---
+
+## `agents`
+
+**Required.** A mapping of agent IDs to agent definitions. Each agent wraps an LLM with a system prompt.
+
+```yaml
+agents:
+  assistant:
+    model: "openai:gpt-4o-mini"
+    system: "You are a helpful assistant."
+    guardrails: ["injection", "length"]   # optional
+```
+
+| Field | Required | Type | Description |
+|-------|----------|------|-------------|
+| `model` | Yes | string | Provider URI — `provider:model` format. |
+| `system` | Yes | string | System prompt sent to the model. |
+| `guardrails` | No | list of strings | Agent-level guardrail override. Replaces the workflow-level list. |
+
+See [Agents](/assistant) for full agent documentation and [Providers](/providers) for valid model URIs.
+
+---
+
+## `nodes`
+
+**Required.** A mapping of node IDs to node definitions. Each node binds an agent to an output path.
+
+```yaml
+nodes:
+  answer:
+    agent: assistant
+    writes: output.reply
+```
+
+| Field | Required | Type | Description |
+|-------|----------|------|-------------|
+| `agent` | Yes | string | Agent ID from the `agents` map. |
+| `writes` | Yes | string | Dot-notation context path where the agent's response is stored. |
+
+### Context paths
+
+The `writes` field uses dot-notation to specify where output is written in the workflow context:
+
+| Path prefix | Description |
+|-------------|-------------|
+| `output.*` | Final output — included in the trace's `output` field. |
+| `working.*` | Intermediate state — readable by downstream nodes but not in final output. |
+
+Examples:
+- `output.reply` — final response available in the JSON trace.
+- `working.intent` — intermediate classification readable by the next node.
+- `working.triage.intent` — nested intermediate state.
+
+---
+
+## `edges`
+
+**Optional.** A list of directed edges connecting nodes. If omitted, all nodes are treated as roots and execute in definition order.
+
+```yaml
+edges:
+  - from: classify
+    to: reply
+
+  - from: triage
+    to: handle_refund
+    when: working.triage.intent == "refund"
+
+  - from: triage
+    to: handle_general
+    when: working.triage.intent == "general"
+```
+
+| Field | Required | Type | Description |
+|-------|----------|------|-------------|
+| `from` | Yes | string | Source node ID. |
+| `to` | Yes | string | Destination node ID. |
+| `when` | No | string | Python expression evaluated after the source node completes. |
+
+### `when` expressions
+
+The `when` field enables conditional branching. The expression is evaluated after the source node writes its output to the context.
+
+**Available names in `when` expressions:**
+
+| Name | Type | Description |
+|------|------|-------------|
+| `working` | object | The current `working` context (dot-access). |
+| `output` | object | The current `output` context (dot-access). |
+| `true` / `false` / `null` | literals | YAML boolean/null literals. |
+
+No Python built-ins or imports are available — the namespace is intentionally restricted.
+
+```yaml
+# Activate handle_refund only if the triage agent classified the intent as "refund"
+edges:
+  - from: triage
+    to: handle_refund
+    when: working.triage.intent == "refund"
+```
+
+If a `when` expression raises an error (missing key, syntax error, type mismatch), it is treated as `false` and the edge is not traversed. Edges without `when` are always traversed.
+
+---
+
+## `input`
+
+**Optional.** A static input message for the first node. Can be overridden at runtime with the `--input` CLI flag.
+
+```yaml
+input:
+  message: "What is the capital of France?"
+```
+
+| Field | Required | Type | Description |
+|-------|----------|------|-------------|
+| `message` | No | string | Static user message passed to the first (root) node. |
+
+If neither `input.message` nor `--input` is provided, the CLI exits with an error.
+
+---
+
+## `state`
+
+**Optional.** Initial state to seed the workflow context before execution begins.
+
+```yaml
+state:
+  working:
+    seed: "initial value"
+  output:
+    default_reply: "No answer yet."
+```
+
+State is merged into the corresponding `working` and `output` context buckets at startup. Nodes can read and overwrite these values during execution.
+
+---
+
+## `guardrails`
+
+**Optional.** A list of guardrail names applied globally to all agents. Defaults to `["injection"]` if omitted.
+
+```yaml
+guardrails:
+  - injection
+  - length
+```
+
+| Value | Description |
+|-------|-------------|
+| `injection` | Detects prompt-injection patterns. Applied by default. |
+| `length` | Truncates output to 4000 characters. |
+
+An empty list (`[]`) disables all guardrails for the entire workflow. Individual agents can override this with their own `guardrails` field.
+
+See [Guardrails](/guardrails) for full details.
+
+---
+
+## Complete Example
+
+```yaml
+version: "0.1"
+
+agents:
+  triage_agent:
+    model: "openai:gpt-4o-mini"
+    system: |
+      Classify the user's message as either a refund request or a general enquiry.
+      Reply with ONLY one word — either "refund" or "general" — and nothing else.
+
+  refund_handler:
+    model: "openai:gpt-4o-mini"
+    system: |
+      You are a customer-support specialist handling refund requests.
+      Acknowledge the request warmly and outline the refund process in two or three sentences.
+
+  general_handler:
+    model: "openai:gpt-4o-mini"
+    system: |
+      You are a helpful customer-support agent.
+      Answer the user's question clearly and concisely in two or three sentences.
+
+nodes:
+  triage:
+    agent: triage_agent
+    writes: working.triage.intent
+
+  handle_refund:
+    agent: refund_handler
+    writes: output.reply
+
+  handle_general:
+    agent: general_handler
+    writes: output.reply
+
+edges:
+  - from: triage
+    to: handle_refund
+    when: working.triage.intent == "refund"
+
+  - from: triage
+    to: handle_general
+    when: working.triage.intent == "general"
+
+guardrails:
+  - injection
+  - length
+```

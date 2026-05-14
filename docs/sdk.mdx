@@ -1,0 +1,156 @@
+---
+title: Python SDK
+description: Use SirenSpec programmatically from Python code.
+---
+
+## Installation
+
+```bash
+uv add sirenspec
+# or
+pip install sirenspec
+```
+
+Python 3.13 or later is required.
+
+## Public API
+
+SirenSpec exposes three names at the top level:
+
+```python
+from sirenspec import load_workflow, execute, Workflow
+```
+
+| Name | Type | Description |
+|------|------|-------------|
+| `load_workflow` | function | Load and validate a YAML workflow file. |
+| `execute` | async function | Execute a validated workflow. |
+| `Workflow` | class | Pydantic model representing a workflow. |
+
+---
+
+## `load_workflow`
+
+Load and validate a workflow file, returning a `Workflow` instance.
+
+```python
+from sirenspec import load_workflow
+
+workflow = load_workflow("workflow.yaml")
+```
+
+**Signature:**
+
+```python
+def load_workflow(filepath: str | Path) -> Workflow: ...
+```
+
+**Raises:**
+
+| Exception | When |
+|-----------|------|
+| `FileNotFoundError` | The file does not exist. |
+| `ValueError` | YAML is malformed or fails schema validation. |
+
+---
+
+## `execute`
+
+Execute a workflow asynchronously and return a structured trace dict.
+
+```python
+import asyncio
+from sirenspec import load_workflow, execute
+
+workflow = load_workflow("workflow.yaml")
+trace = asyncio.run(execute(workflow, user_input="What is the capital of France?"))
+
+print(trace["output"])
+# {"reply": "Paris is the capital of France."}
+
+print(trace["summary"]["status"])
+# "success"
+```
+
+**Signature:**
+
+```python
+async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]: ...
+```
+
+**Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `workflow` | `Workflow` | Validated workflow instance from `load_workflow`. |
+| `user_input` | `str` | The initial user message passed to the first (root) node. |
+
+**Returns:**
+
+A dict with the same structure as the `sirenspec run` JSON output. See the [CLI Reference](/cli-reference#output-format) for field descriptions.
+
+---
+
+## Usage in an Async Context
+
+If you're already in an async context (FastAPI, asyncio script, etc.), `await` the call directly:
+
+```python
+import asyncio
+from sirenspec import load_workflow, execute
+
+async def main() -> None:
+    workflow = load_workflow("workflow.yaml")
+    trace = await execute(workflow, user_input="Hello")
+    print(trace["output"])
+
+asyncio.run(main())
+```
+
+---
+
+## Error Handling
+
+```python
+from sirenspec import load_workflow, execute
+
+try:
+    workflow = load_workflow("workflow.yaml")
+except FileNotFoundError as exc:
+    print(f"File not found: {exc}")
+except ValueError as exc:
+    print(f"Invalid workflow: {exc}")
+
+trace = await execute(workflow, user_input="Hello")
+
+if trace["summary"]["status"] == "failed":
+    for node in trace["nodes"]:
+        if node["error"]:
+            print(f"Node '{node['id']}' failed: {node['error']}")
+```
+
+---
+
+## The `Workflow` Model
+
+`Workflow` is a Pydantic v2 model. You can inspect it directly or construct one programmatically:
+
+```python
+from sirenspec import Workflow
+from sirenspec.core.models import AgentDefinition, Node
+
+workflow = Workflow(
+    version="0.1",
+    agents={
+        "assistant": AgentDefinition(
+            model="openai:gpt-4o-mini",
+            system="You are a helpful assistant.",
+        )
+    },
+    nodes={
+        "answer": Node(agent="assistant", writes="output.reply")
+    },
+)
+```
+
+All validation (cross-references between nodes/agents and edges) runs automatically when the model is constructed.

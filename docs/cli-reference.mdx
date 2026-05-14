@@ -1,0 +1,159 @@
+---
+title: CLI Reference
+description: Complete reference for the sirenspec command-line interface.
+---
+
+## Installation
+
+The `sirenspec` CLI is installed automatically when you add the package:
+
+```bash
+uv add sirenspec
+# or
+pip install sirenspec
+```
+
+After installation, the `sirenspec` command is available on your PATH.
+
+---
+
+## `sirenspec run`
+
+Execute a workflow and print the JSON execution trace to stdout.
+
+```bash
+sirenspec run <workflow-file> [OPTIONS]
+```
+
+**Arguments:**
+
+| Argument | Description |
+|----------|-------------|
+| `workflow-file` | Path to the workflow YAML file. |
+
+**Options:**
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--input TEXT` | `-i` | User input message. Overrides `input.message` in the YAML. |
+
+**Exit codes:**
+
+| Code | Meaning |
+|------|---------|
+| `0` | Workflow completed successfully. |
+| `1` | File not found, validation error, execution error, or guardrail violation. |
+
+**Examples:**
+
+```bash
+# Run with input defined in the YAML file
+sirenspec run workflow.yaml
+
+# Override the input from the command line
+sirenspec run workflow.yaml --input "What is the capital of France?"
+sirenspec run workflow.yaml -i "What is the capital of France?"
+
+# Pipe the JSON output to jq
+sirenspec run workflow.yaml --input "Hello" | jq '.output'
+```
+
+**Output format:**
+
+The JSON trace is written to stdout. Errors and validation messages go to stderr.
+
+```json
+{
+  "workflow": { "version": "0.1" },
+  "input": { "message": "What is the capital of France?" },
+  "nodes": [
+    {
+      "id": "answer",
+      "agent": "assistant",
+      "prompt_sent": "What is the capital of France?",
+      "response_received": "Paris is the capital of France.",
+      "writes": "output.reply",
+      "guardrails_passed": [
+        "InjectionGuardrail.check_input",
+        "InjectionGuardrail.check_output"
+      ],
+      "tokens": 24,
+      "duration_ms": 312.5,
+      "error": null
+    }
+  ],
+  "output": {
+    "reply": "Paris is the capital of France."
+  },
+  "summary": {
+    "total_tokens": 24,
+    "total_duration_ms": 312.5,
+    "status": "success"
+  }
+}
+```
+
+**Trace fields:**
+
+| Field | Description |
+|-------|-------------|
+| `workflow.version` | Schema version from the YAML file. |
+| `input.message` | The user input that was used. |
+| `nodes` | Ordered list of executed nodes. |
+| `nodes[].id` | Node identifier. |
+| `nodes[].agent` | Agent that executed this node. |
+| `nodes[].prompt_sent` | Input passed to the LLM (after input guardrails). |
+| `nodes[].response_received` | LLM output (after output guardrails). |
+| `nodes[].writes` | Context path where the output was written. |
+| `nodes[].guardrails_passed` | List of guardrail check methods that succeeded. |
+| `nodes[].tokens` | Total tokens used by this node. |
+| `nodes[].duration_ms` | Wall-clock time for this node in milliseconds. |
+| `nodes[].error` | Error message if the node failed, otherwise `null`. |
+| `output` | Final output context (all `output.*` paths). |
+| `summary.total_tokens` | Sum of tokens across all nodes. |
+| `summary.total_duration_ms` | Sum of durations across all nodes. |
+| `summary.status` | `"success"` or `"failed"`. |
+
+---
+
+## `sirenspec validate`
+
+Validate a workflow YAML file without executing it or making any API calls.
+
+```bash
+sirenspec validate <workflow-file>
+```
+
+**Arguments:**
+
+| Argument | Description |
+|----------|-------------|
+| `workflow-file` | Path to the workflow YAML file. |
+
+**Exit codes:**
+
+| Code | Meaning |
+|------|---------|
+| `0` | File is valid. |
+| `1` | File not found or validation failed. |
+
+**Examples:**
+
+```bash
+sirenspec validate workflow.yaml
+# ✓ workflow.yaml is valid (2 agents, 3 nodes)
+
+sirenspec validate broken.yaml
+# ✗ Validation failed: agents.assistant.model: field required
+```
+
+**What is validated:**
+
+- YAML syntax (including duplicate key detection).
+- Required fields (`version`, `agents`, `nodes`).
+- Agent fields (`model`, `system`).
+- Node fields (`agent`, `writes`).
+- Edge references — all `from` and `to` values must refer to existing nodes.
+- Node agent references — all `agent` values must refer to existing agents.
+
+Provider credentials and `when:` expressions are **not** evaluated during validation.
