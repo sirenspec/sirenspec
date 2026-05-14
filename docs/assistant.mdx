@@ -1,0 +1,124 @@
+---
+title: Agents
+description: Agents are the building blocks of a SirenSpec workflow — each one wraps an LLM with a system prompt and optional guardrails.
+---
+
+## What Is an Agent?
+
+An **agent** is a named LLM configuration. It combines:
+
+- A **model URI** that specifies the provider and model to use.
+- A **system prompt** that shapes the model's behaviour.
+- An optional **guardrails** list that overrides the workflow-level defaults.
+
+Agents are declared once under the `agents:` key and reused by any number of nodes.
+
+## Defining an Agent
+
+```yaml
+agents:
+  assistant:
+    model: "openai:gpt-4o-mini"
+    system: "You are a helpful assistant. Answer questions clearly and concisely."
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `model` | Yes | Provider URI — `provider:model` format (e.g. `openai:gpt-4o-mini`). |
+| `system` | Yes | System prompt sent to the model on every call. |
+| `guardrails` | No | List of guardrail names. Overrides workflow-level guardrails for this agent only. |
+
+## Model URI Format
+
+The `model` field uses a `provider:model` URI:
+
+```
+openai:gpt-4o-mini
+anthropic:claude-haiku-4-5-20251001
+ollama:llama3.2
+```
+
+See [Providers](/providers) for the full list of supported providers and their configuration.
+
+## System Prompts
+
+The system prompt is passed to the model as a `system` role message (OpenAI/Ollama) or as the top-level `system` parameter (Anthropic). Write prompts that are specific and task-focused:
+
+```yaml
+agents:
+  classifier:
+    model: "openai:gpt-4o-mini"
+    system: |
+      Classify the user's message into one of these intents: question, complaint, feedback, other.
+      Respond with ONLY the intent label, nothing else.
+
+  replier:
+    model: "anthropic:claude-haiku-4-5-20251001"
+    system: |
+      You are a customer support agent. Compose a short, helpful reply
+      appropriate for the user's intent.
+```
+
+## Per-Agent Guardrails
+
+By default, every agent inherits the workflow-level `guardrails:` list (or `["injection"]` if unset). You can override this per agent:
+
+```yaml
+guardrails:
+  - injection
+  - length
+
+agents:
+  summarizer:
+    model: "openai:gpt-4o-mini"
+    system: "Summarise the following text in one paragraph."
+    guardrails: []   # disable all guardrails for this agent only
+
+  responder:
+    model: "openai:gpt-4o-mini"
+    system: "You are a support agent."
+    # inherits workflow-level guardrails: [injection, length]
+```
+
+An empty list (`[]`) disables all guardrails for that agent. See [Guardrails](/guardrails) for the available options.
+
+## Multiple Agents in One Workflow
+
+A workflow can define as many agents as needed. Each node binds to exactly one agent:
+
+```yaml
+agents:
+  triage_agent:
+    model: "openai:gpt-4o-mini"
+    system: "Classify the request as 'refund' or 'general'. Reply with one word only."
+
+  refund_handler:
+    model: "openai:gpt-4o-mini"
+    system: "You handle refund requests. Acknowledge warmly and explain the process."
+
+  general_handler:
+    model: "openai:gpt-4o-mini"
+    system: "You are a helpful support agent. Answer the question clearly."
+
+nodes:
+  triage:
+    agent: triage_agent
+    writes: working.triage.intent
+
+  handle_refund:
+    agent: refund_handler
+    writes: output.reply
+
+  handle_general:
+    agent: general_handler
+    writes: output.reply
+```
+
+## How Agents Receive Input
+
+Each node's agent receives:
+
+1. **System message** — the agent's `system` prompt.
+2. **User message** — the first (root) node gets the raw user input; subsequent nodes receive the output of the most recently completed node.
+
+The agent response is written to the context path specified by the node's `writes` field.
