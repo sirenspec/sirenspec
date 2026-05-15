@@ -20,7 +20,9 @@ wheels/
 openspec/
 .opencode/
 .claude/
+.agents/
 .hypothesis/
+skills-lock.json
 
 # Environment variables
 .env
