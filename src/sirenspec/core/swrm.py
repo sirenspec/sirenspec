@@ -33,7 +33,7 @@ from sirenspec.providers.registry import resolve_provider
 _TEMPLATE_RE = re.compile(r"\{\{\s*(.+?)\s*\}\}")
 
 
-def _render_template(template: str, context: dict[str, Any]) -> str:
+def render_template(template: str, context: dict[str, Any]) -> str:
     """Render a ``{{ variable }}`` template against a flat context dict.
 
     Supports simple dotted-path lookups (e.g. ``{{ inputs.report }}``,
@@ -57,7 +57,7 @@ def _render_template(template: str, context: dict[str, Any]) -> str:
     return _TEMPLATE_RE.sub(lambda m: _resolve(m.group(1).strip(), context), template)
 
 
-def _build_template_context(
+def build_template_context(
     node_id: str,
     user_input: str,
     working: dict[str, Any],
@@ -71,7 +71,7 @@ def _build_template_context(
     :param working: Current ``working`` context dict.
     :param output: Current ``output`` context dict.
     :param agent_results: Mapping of agent id → output string (populated after agents run).
-    :returns: Flat namespace dict suitable for :func:`_render_template`.
+    :returns: Flat namespace dict suitable for :func:`render_template`.
     """
     ctx: dict[str, Any] = {
         "inputs": {"message": user_input},
@@ -84,7 +84,7 @@ def _build_template_context(
     return ctx
 
 
-async def _run_single_agent(
+async def run_single_agent(
     agent: SwrmAgent,
     prompt: str,
     global_guardrail_names: list[str] | None,
@@ -128,7 +128,7 @@ async def _run_single_agent(
         raise SwrmAgentError(agent.id, exc) from exc
 
 
-async def _run_synthesis(
+async def run_synthesis(
     synthesis: SwrmSynthesis,
     prompt: str,
     global_guardrail_names: list[str] | None,
@@ -218,7 +218,7 @@ async def execute_swrm(
     semaphore = asyncio.Semaphore(concurrency)
 
     # Build per-agent prompts from the template context (no agent results yet).
-    template_ctx = _build_template_context(node_id, user_input, working, output)
+    template_ctx = build_template_context(node_id, user_input, working, output)
 
     agent_traces: list[dict[str, Any]] = []
     agent_results: dict[str, str] = {}  # agent_id → output
@@ -226,7 +226,7 @@ async def execute_swrm(
     # Each coroutine returns (agent_trace_dict, exception_or_None).
     # We never raise inside gather so we always collect all results.
     async def _run_with_semaphore(agent: SwrmAgent) -> tuple[dict[str, Any], SwrmAgentError | None]:
-        rendered_prompt = _render_template(agent.prompt, template_ctx)
+        rendered_prompt = render_template(agent.prompt, template_ctx)
         agent_trace: dict[str, Any] = {
             "id": agent.id,
             "prompt_sent": rendered_prompt,
@@ -237,7 +237,7 @@ async def execute_swrm(
         }
         async with semaphore:
             try:
-                text, tok, dur = await _run_single_agent(agent, rendered_prompt, global_guardrail_names)
+                text, tok, dur = await run_single_agent(agent, rendered_prompt, global_guardrail_names)
                 agent_trace.update({"response_received": text, "tokens": tok, "duration_ms": round(dur, 2)})
                 return agent_trace, None
             except SwrmAgentError as exc:
@@ -277,8 +277,8 @@ async def execute_swrm(
     final_output: Any
 
     if node.synthesis is not None:
-        synth_ctx = _build_template_context(node_id, user_input, working, output, agent_results)
-        rendered_synthesis_prompt = _render_template(node.synthesis.prompt, synth_ctx)
+        synth_ctx = build_template_context(node_id, user_input, working, output, agent_results)
+        rendered_synthesis_prompt = render_template(node.synthesis.prompt, synth_ctx)
         synthesis_trace = {
             "prompt_sent": rendered_synthesis_prompt,
             "response_received": None,
@@ -287,7 +287,7 @@ async def execute_swrm(
             "error": None,
         }
         try:
-            synth_text, synth_tok, synth_dur = await _run_synthesis(
+            synth_text, synth_tok, synth_dur = await run_synthesis(
                 node.synthesis, rendered_synthesis_prompt, global_guardrail_names
             )
             synthesis_trace.update(

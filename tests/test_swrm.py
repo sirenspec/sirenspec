@@ -8,7 +8,7 @@ import pytest
 
 from sirenspec.core.executor import execute
 from sirenspec.core.models import AgentDefinition, Edge, Node, SwrmAgent, SwrmNode, SwrmSynthesis, Workflow
-from sirenspec.core.swrm import _build_template_context, _render_template, execute_swrm
+from sirenspec.core.swrm import build_template_context, render_template, execute_swrm
 from sirenspec.exceptions import SwrmAgentError
 
 # ---------------------------------------------------------------------------
@@ -69,53 +69,53 @@ def _make_swrm_workflow(
 
 class TestRenderTemplate:
     def test_simple_substitution(self) -> None:
-        result = _render_template("Hello {{ name }}", {"name": "World"})
+        result = render_template("Hello {{ name }}", {"name": "World"})
         assert result == "Hello World"
 
     def test_dotted_path(self) -> None:
         ctx = {"inputs": {"message": "test report"}}
-        result = _render_template("Report: {{ inputs.message }}", ctx)
+        result = render_template("Report: {{ inputs.message }}", ctx)
         assert result == "Report: test report"
 
     def test_deeply_nested_path(self) -> None:
         ctx = {"analyze": {"agents": {"sentiment": {"output": "bullish"}}}}
-        result = _render_template("Sentiment: {{ analyze.agents.sentiment.output }}", ctx)
+        result = render_template("Sentiment: {{ analyze.agents.sentiment.output }}", ctx)
         assert result == "Sentiment: bullish"
 
     def test_missing_key_leaves_placeholder(self) -> None:
-        result = _render_template("{{ missing.key }}", {})
+        result = render_template("{{ missing.key }}", {})
         assert "missing.key" in result
 
     def test_no_placeholders(self) -> None:
-        result = _render_template("No placeholders here", {"x": 1})
+        result = render_template("No placeholders here", {"x": 1})
         assert result == "No placeholders here"
 
     def test_multiple_placeholders(self) -> None:
         ctx = {"a": "first", "b": "second"}
-        result = _render_template("{{ a }} and {{ b }}", ctx)
+        result = render_template("{{ a }} and {{ b }}", ctx)
         assert result == "first and second"
 
 
 class TestBuildTemplateContext:
     def test_includes_inputs(self) -> None:
-        ctx = _build_template_context("node1", "hello world", {}, {})
+        ctx = build_template_context("node1", "hello world", {}, {})
         assert ctx["inputs"]["message"] == "hello world"
 
     def test_includes_working_and_output(self) -> None:
         working = {"x": 1}
         output = {"y": 2}
-        ctx = _build_template_context("node1", "input", working, output)
+        ctx = build_template_context("node1", "input", working, output)
         assert ctx["working"]["x"] == 1
         assert ctx["output"]["y"] == 2
 
     def test_agent_results_injected(self) -> None:
         agent_results = {"sentiment": "bullish", "risk": "high"}
-        ctx = _build_template_context("analyze", "input", {}, {}, agent_results)
+        ctx = build_template_context("analyze", "input", {}, {}, agent_results)
         assert ctx["analyze"]["agents"]["sentiment"]["output"] == "bullish"
         assert ctx["analyze"]["agents"]["risk"]["output"] == "high"
 
     def test_no_agent_results_by_default(self) -> None:
-        ctx = _build_template_context("node1", "input", {}, {})
+        ctx = build_template_context("node1", "input", {}, {})
         assert "node1" not in ctx
 
 
