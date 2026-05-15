@@ -66,6 +66,8 @@ nodes:
 |-------|----------|------|-------------|
 | `agent` | Yes | string | Agent ID from the `agents` map. |
 | `writes` | Yes | string | Dot-notation context path where the agent's response is stored. |
+| `retry` | No | object | Per-node retry policy. Overrides `defaults.retry`. See [Retry Policies](/retry-policies). |
+| `on_failure` | No | object | Failure action when retries are exhausted. Overrides `defaults.on_failure`. See [Retry Policies](/retry-policies). |
 
 ### Context paths
 
@@ -163,6 +165,25 @@ state:
 ```
 
 State is merged into the corresponding `working` and `output` context buckets at startup. Nodes can read and overwrite these values during execution.
+
+---
+
+## `defaults`
+
+**Optional.** Workflow-wide defaults for retry and failure handling, inherited by all nodes that do not specify their own.
+
+```yaml
+defaults:
+  retry:
+    max_attempts: 3
+    backoff: exponential
+    base_delay: 1.0
+    on: [429, network_error]
+  on_failure:
+    action: abort
+```
+
+See [Retry Policies](/retry-policies) for the full field reference.
 
 ---
 

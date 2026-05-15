@@ -1,0 +1,186 @@
+---
+title: Retry Policies
+description: Configure automatic retries and failure handling to make SirenSpec workflows resilient to transient provider errors.
+---
+
+## Overview
+
+LLM provider APIs fail transiently — rate limits (429), overloaded servers (503), and flaky networks are normal in production. Without retry logic a single transient error silently kills an otherwise-healthy run. SirenSpec's retry policy system gives you configurable backoff, jitter, and structured failure handling with zero boilerplate.
+
+---
+
+## `retry` block
+
+Add a `retry` block to any node to override the retry behaviour for that node.
+
+```yaml
+nodes:
+  classify:
+    agent: classifier
+    writes: working.intent
+    retry:
+      max_attempts: 3
+      backoff: exponential      # linear | exponential | constant
+      base_delay: 1.0           # seconds before the first retry
+      max_delay: 30.0           # cap on the computed delay ceiling
+      jitter: true              # add ±20 % random variation
+      on: [429, 500, 502, 503, network_error]
+```
+
+### Fields
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `max_attempts` | No | `1` | Total number of attempts, including the first. |
+| `backoff` | No | `constant` | Delay growth strategy: `constant`, `linear`, or `exponential`. |
+| `base_delay` | No | `1.0` | Delay in seconds before attempt 2. |
+| `max_delay` | No | `60.0` | Maximum delay regardless of backoff math. |
+| `jitter` | No | `false` | When `true`, adds a random ±20 % offset to each delay. |
+| `on` | No | `[429, network_error]` | Trigger conditions. Integers match HTTP status codes; `network_error` matches connection failures. |
+
+### Backoff strategies
+
+| Strategy | Delay formula |
+|----------|---------------|
+| `constant` | `base_delay` on every retry |
+| `linear` | `base_delay × attempt` |
+| `exponential` | `base_delay × 2^(attempt-1)` |
+
+All strategies are clamped to `max_delay`.
+
+---
+
+## `on_failure` block
+
+`on_failure` controls what happens when all retry attempts are exhausted.
+
+```yaml
+nodes:
+  classify:
+    agent: classifier
+    writes: working.intent
+    retry:
+      max_attempts: 3
+      on: [429, 503]
+    on_failure:
+      action: fallback             # abort | fallback | skip | use_default
+      fallback_node: classify_safe
+      default_output: "unknown"
+```
+
+### Fields
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `action` | No | `abort` | What to do when retries are exhausted. |
+| `fallback_node` | No | — | Node ID to route to when `action: fallback`. |
+| `default_output` | No | — | Static value written to the node's `writes` path when `action: use_default`. |
+
+### Actions
+
+| Action | Behaviour |
+|--------|-----------|
+| `abort` | Raises `RetryExhaustedError` and stops the run immediately. |
+| `fallback` | Routes execution to `fallback_node`. The failed node is marked skipped. |
+| `skip` | Silently skips the node; downstream nodes that depend on its output receive nothing. |
+| `use_default` | Writes `default_output` to the node's `writes` path and continues normally. |
+
+---
+
+## Workflow-level defaults
+
+Set retry and failure defaults at the top level of your workflow. Every node that does not specify its own `retry` or `on_failure` block inherits these defaults.
+
+```yaml
+version: "0.1"
+
+defaults:
+  retry:
+    max_attempts: 3
+    backoff: exponential
+    base_delay: 1.0
+    on: [429, network_error]
+  on_failure:
+    action: abort
+
+agents: { ... }
+nodes: { ... }
+```
+
+Per-node `retry` and `on_failure` blocks completely override the defaults for that node — they are not merged field-by-field.
+
+---
+
+## Error types
+
+| Exception | When raised |
+|-----------|-------------|
+| `RetryExhaustedError` | All retry attempts failed and `on_failure.action` is `abort` (or unset). Subclass of `ProviderError`. |
+
+`RetryExhaustedError` carries the node ID, the number of attempts made, and the last upstream exception so you can log and inspect the root cause.
+
+---
+
+## Tracing
+
+Every retry attempt is recorded in the run trace under the node's `retry_attempts` list:
+
+```json
+{
+  "id": "classify",
+  "retry_attempts": [
+    { "attempt": 1, "delay_seconds": 1.0, "error": "HTTP 429: Too Many Requests" },
+    { "attempt": 2, "delay_seconds": 2.0, "error": "HTTP 429: Too Many Requests" }
+  ]
+}
+```
+
+Silent retries make debugging impossible — every attempt, delay, and error is always logged.
+
+---
+
+## Full example
+
+```yaml
+version: "0.1"
+
+defaults:
+  retry:
+    max_attempts: 3
+    backoff: exponential
+    base_delay: 1.0
+    on: [429, network_error]
+  on_failure:
+    action: abort
+
+agents:
+  classifier:
+    model: "anthropic:claude-haiku-4-5"
+    system: "Classify the ticket."
+
+  safe_classifier:
+    model: "openai:gpt-4o-mini"
+    system: "Classify the ticket. Reply with a single word."
+
+nodes:
+  classify:
+    agent: classifier
+    writes: working.intent
+    retry:
+      max_attempts: 5
+      backoff: exponential
+      base_delay: 1.0
+      max_delay: 30.0
+      jitter: true
+      on: [429, 500, 502, 503, network_error]
+    on_failure:
+      action: fallback
+      fallback_node: classify_safe
+
+  classify_safe:
+    agent: safe_classifier
+    writes: working.intent
+    on_failure:
+      action: use_default
+      default_output: "unknown"
+```
