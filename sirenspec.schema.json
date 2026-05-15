@@ -150,11 +150,104 @@
     },
     "nodes": {
       "type": "object",
-      "description": "Named node definitions. Keys are node IDs. Values are either agent nodes or swrm nodes.",
+      "description": "Named node definitions. Keys are node IDs. Values are agent nodes, tool nodes, or swrm nodes.",
       "additionalProperties": {
         "oneOf": [
           { "$ref": "#/definitions/AgentNode" },
-          { "$ref": "#/definitions/SwrmNode" }
+          { "$ref": "#/definitions/SwrmNode" },
+          {
+            "type": "object",
+            "description": "Tool node: invokes an HTTP endpoint or a Python callable.",
+            "required": ["type", "tool", "config"],
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["tool"],
+                "description": "Discriminator that marks this as a tool node."
+              },
+              "tool": {
+                "type": "string",
+                "enum": ["http", "python"],
+                "description": "Tool adapter to use: 'http' for HTTP requests, 'python' for Python callable."
+              },
+              "config": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "description": "HTTP tool configuration.",
+                    "required": ["url"],
+                    "additionalProperties": false,
+                    "properties": {
+                      "url": {
+                        "type": "string",
+                        "description": "Request URL. Supports template placeholders ({{ expr }})."
+                      },
+                      "method": {
+                        "type": "string",
+                        "enum": ["GET", "POST"],
+                        "default": "GET",
+                        "description": "HTTP method."
+                      },
+                      "headers": {
+                        "type": "object",
+                        "additionalProperties": { "type": "string" },
+                        "description": "Optional HTTP headers. Values support template placeholders."
+                      },
+                      "body": {
+                        "type": "string",
+                        "description": "Optional request body string (used for POST). Supports template placeholders."
+                      },
+                      "timeout": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "default": 10,
+                        "description": "Request timeout in seconds."
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "description": "Python callable tool configuration.",
+                    "required": ["module", "function"],
+                    "additionalProperties": false,
+                    "properties": {
+                      "module": {
+                        "type": "string",
+                        "description": "Fully-qualified Python module path (e.g. 'mypackage.tools')."
+                      },
+                      "function": {
+                        "type": "string",
+                        "description": "Function name to call on the imported module."
+                      },
+                      "args": {
+                        "type": "object",
+                        "additionalProperties": true,
+                        "description": "Keyword arguments passed to the function. Values support template placeholders."
+                      }
+                    }
+                  }
+                ]
+              },
+              "output_key": {
+                "type": "string",
+                "default": "output",
+                "description": "Key under which the tool result is stored in working.<node_id>.<output_key>. Defaults to 'output'."
+              },
+              "retry": {
+                "type": "integer",
+                "minimum": 0,
+                "default": 0,
+                "description": "Number of additional retry attempts on failure."
+              },
+              "on_failure": {
+                "type": "string",
+                "enum": ["raise", "skip"],
+                "default": "raise",
+                "description": "Behaviour after all retry attempts fail: 'raise' (default) stops execution; 'skip' continues with null output."
+              }
+            }
+          }
         ]
       }
     },
