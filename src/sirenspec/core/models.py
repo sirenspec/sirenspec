@@ -7,6 +7,61 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, model_validator
 
 
+class RetryPolicy(BaseModel):
+    """Retry policy for a provider node or workflow-level defaults.
+
+    Controls how many times the executor will retry a failing LLM call, which
+    backoff strategy to use, how long to wait between attempts, and which error
+    codes or categories trigger a retry.
+    """
+
+    max_attempts: int = Field(default=1, ge=1, description="Maximum number of total attempts (including the first).")
+    backoff: Literal["exponential", "linear", "constant"] = Field(
+        default="constant",
+        description="Backoff strategy: 'exponential' doubles the delay each retry, "
+        "'linear' adds base_delay each retry, 'constant' keeps the delay fixed.",
+    )
+    base_delay: float = Field(default=1.0, ge=0.0, description="Initial delay in seconds before the first retry.")
+    max_delay: float = Field(default=30.0, ge=0.0, description="Upper bound on the computed delay in seconds.")
+    jitter: bool = Field(default=False, description="When True, applies ±20% random variation to the computed delay.")
+    on: list[str] = Field(
+        default_factory=lambda: ["429", "network_error"],
+        description=(
+            "List of trigger conditions. HTTP status codes are written as strings (e.g. '429', '500'); "
+            "use 'network_error' to also retry on connection-level failures."
+        ),
+    )
+
+
+class OnFailurePolicy(BaseModel):
+    """Specifies what the executor should do when all retry attempts are exhausted."""
+
+    action: Literal["abort", "fallback", "skip", "use_default"] = Field(
+        default="abort",
+        description=(
+            "'abort' raises RetryExhaustedError; "
+            "'fallback' routes execution to fallback_node; "
+            "'skip' silently marks the node as skipped; "
+            "'use_default' injects default_output into the context."
+        ),
+    )
+    fallback_node: str | None = Field(
+        default=None,
+        description="Node ID to route execution to when action is 'fallback'.",
+    )
+    default_output: str | None = Field(
+        default=None,
+        description="Static string written to the node's 'writes' path when action is 'use_default'.",
+    )
+
+
+class WorkflowDefaults(BaseModel):
+    """Workflow-level defaults applied to every node that does not override them."""
+
+    retry: RetryPolicy | None = None
+    on_failure: OnFailurePolicy | None = None
+
+
 class AgentDefinition(BaseModel):
     """Defines an LLM agent: model URI, system prompt, and optional guardrails."""
 
@@ -21,6 +76,8 @@ class Node(BaseModel):
     type: Literal["agent"] = "agent"
     agent: str
     writes: str
+    retry: RetryPolicy | None = None
+    on_failure: OnFailurePolicy | None = None
 
 
 class SwrmAgent(BaseModel):
@@ -145,6 +202,7 @@ class Workflow(BaseModel):
     input: WorkflowInput | None = None
     state: dict[str, Any] | None = None
     guardrails: list[str] | None = None
+    defaults: WorkflowDefaults | None = None
 
     @model_validator(mode="after")
     def validate_edges_reference_valid_nodes(self) -> Workflow:

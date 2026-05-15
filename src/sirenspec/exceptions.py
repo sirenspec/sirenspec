@@ -14,6 +14,26 @@ class SirenSpecError(Exception):
 class ProviderError(SirenSpecError):
     """Raised when an LLM provider call fails."""
 
+    def __init__(self, message: str, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
+class RetryExhaustedError(ProviderError):
+    """Raised when all retry attempts for a provider call are exhausted.
+
+    This is a subclass of :class:`ProviderError` and is raised by the executor
+    when a node's retry policy runs out of attempts and the on_failure action is
+    ``'abort'`` (or no on_failure policy is configured).
+    """
+
+    def __init__(self, node_id: str, attempts: int, last_error: Exception) -> None:
+        message = f"Node '{node_id}' failed after {attempts} attempt(s): {last_error}"
+        super().__init__(message)
+        self.node_id = node_id
+        self.attempts = attempts
+        self.last_error = last_error
+
 
 class GuardrailError(SirenSpecError):
     """Raised on guardrail configuration or execution errors."""

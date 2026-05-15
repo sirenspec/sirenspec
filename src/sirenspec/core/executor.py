@@ -7,9 +7,10 @@ from collections import defaultdict, deque
 from typing import Any
 
 from sirenspec.core.context import WorkflowContext
-from sirenspec.core.models import SwrmNode, Workflow
+from sirenspec.core.models import OnFailurePolicy, RetryPolicy, SwrmNode, Workflow
+from sirenspec.core.retry import run_with_retry
 from sirenspec.core.swrm import execute_swrm
-from sirenspec.exceptions import SwrmAgentError
+from sirenspec.exceptions import RetryExhaustedError, SwrmAgentError
 from sirenspec.guardrails.base import GuardrailViolation
 from sirenspec.guardrails.registry import build_guardrails
 from sirenspec.providers.registry import resolve_provider
@@ -117,6 +118,42 @@ def topological_sort(node_ids: list[str], edges: list[tuple[str, str]]) -> list[
     return order
 
 
+def resolve_retry_policy(workflow: Workflow, node_id: str) -> RetryPolicy:
+    """Return the effective :class:`~sirenspec.core.models.RetryPolicy` for *node_id*.
+
+    Node-level policy takes precedence over workflow defaults.  If neither is
+    set a policy with ``max_attempts=1`` (i.e. no retries) is returned.
+
+    :param workflow: The workflow containing node and default definitions.
+    :param node_id: The identifier of the node being resolved.
+    :returns: The effective RetryPolicy for the node.
+    """
+    node = workflow.nodes[node_id]
+    if node.retry is not None:
+        return node.retry
+    if workflow.defaults and workflow.defaults.retry is not None:
+        return workflow.defaults.retry
+    return RetryPolicy()
+
+
+def resolve_on_failure_policy(workflow: Workflow, node_id: str) -> OnFailurePolicy:
+    """Return the effective :class:`~sirenspec.core.models.OnFailurePolicy` for *node_id*.
+
+    Node-level policy takes precedence over workflow defaults.  If neither is
+    set a policy with ``action='abort'`` is returned.
+
+    :param workflow: The workflow containing node and default definitions.
+    :param node_id: The identifier of the node being resolved.
+    :returns: The effective OnFailurePolicy for the node.
+    """
+    node = workflow.nodes[node_id]
+    if node.on_failure is not None:
+        return node.on_failure
+    if workflow.defaults and workflow.defaults.on_failure is not None:
+        return workflow.defaults.on_failure
+    return OnFailurePolicy()
+
+
 async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
     """Execute a workflow and return a structured JSON-serialisable trace.
 
@@ -133,6 +170,13 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
 
     4. Nodes that never become active are silently skipped, so exactly one
        branch of a conditional fork is executed.
+    5. Provider calls are wrapped by the retry engine.  When all retries are
+       exhausted the ``on_failure`` policy governs what happens next:
+
+       * ``abort`` — raises :class:`~sirenspec.exceptions.RetryExhaustedError` and halts execution.
+       * ``fallback`` — routes execution to the named ``fallback_node``.
+       * ``skip`` — silently marks the node as skipped and continues.
+       * ``use_default`` — injects ``default_output`` into the node's write path.
 
     :param workflow: Validated :class:`~sirenspec.core.models.Workflow` instance.
     :param user_input: The initial user message (from CLI ``--input`` or
@@ -170,7 +214,16 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
 
     global_guardrail_names = workflow.guardrails
 
+    # Collect node IDs that the on_failure fallback mechanism wants to force-activate.
+    # We store them here and activate them at the start of the loop iteration.
+    pending_fallback_nodes: set[str] = set()
+
     for node_id in execution_order:
+        # Activate any fallback nodes requested by a previous on_failure policy.
+        if node_id in pending_fallback_nodes:
+            active_nodes.add(node_id)
+            pending_fallback_nodes.discard(node_id)
+
         # Skip nodes that no active edge has routed to yet.
         # This is how conditional branching suppresses the unchosen fork.
         if node_id not in active_nodes:
@@ -268,6 +321,9 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
         guardrail_names = agent_def.guardrails if agent_def.guardrails is not None else global_guardrail_names
         guardrails = build_guardrails(guardrail_names)
 
+        retry_policy = resolve_retry_policy(workflow, node_id)
+        on_failure_policy = resolve_on_failure_policy(workflow, node_id)
+
         node_trace: dict[str, Any] = {
             "id": node_id,
             "agent": node.agent,
@@ -278,6 +334,7 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
             "tokens": 0,
             "duration_ms": 0,
             "error": None,
+            "retry_attempts": [],
         }
 
         start_time = time.monotonic()
@@ -294,7 +351,25 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
             ]
 
             provider = resolve_provider(agent_def.model)
-            response_text = await provider.complete(messages)
+
+            def log_attempt(attempt_number: int, delay: float, error_message: str) -> None:
+                node_trace["retry_attempts"].append(
+                    {
+                        "attempt": attempt_number,
+                        "delay_seconds": round(delay, 3),
+                        "error": error_message,
+                    }
+                )
+
+            async def call() -> str:
+                return await provider.complete(messages)
+
+            response_text = await run_with_retry(
+                node_id=node_id,
+                policy=retry_policy,
+                call=call,
+                on_attempt=log_attempt,
+            )
             tokens = provider.last_token_count
 
             # Run output guardrails before writing the response to the context.
@@ -332,6 +407,48 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
             status = "failed"
             trace_nodes.append(node_trace)
             break
+
+        except RetryExhaustedError as exc:
+            duration_ms = (time.monotonic() - start_time) * 1000
+            node_trace["error"] = str(exc)
+            node_trace["duration_ms"] = round(duration_ms, 2)
+            total_duration_ms += duration_ms
+
+            action = on_failure_policy.action
+
+            if action == "abort":
+                status = "failed"
+                trace_nodes.append(node_trace)
+                break
+
+            elif action == "fallback":
+                node_trace["on_failure_action"] = "fallback"
+                node_trace["fallback_node"] = on_failure_policy.fallback_node
+                trace_nodes.append(node_trace)
+                if on_failure_policy.fallback_node:
+                    pending_fallback_nodes.add(on_failure_policy.fallback_node)
+                continue
+
+            elif action == "skip":
+                node_trace["on_failure_action"] = "skip"
+                trace_nodes.append(node_trace)
+                # Activate outgoing edges so the graph can continue.
+                for target, condition in out_edges[node_id]:
+                    if condition is None or evaluate_when_condition(condition, context):
+                        active_nodes.add(target)
+                continue
+
+            elif action == "use_default":
+                default_val = on_failure_policy.default_output or ""
+                context.write(node.writes, default_val)
+                last_writes_path = node.writes
+                node_trace["on_failure_action"] = "use_default"
+                node_trace["response_received"] = default_val
+                trace_nodes.append(node_trace)
+                for target, condition in out_edges[node_id]:
+                    if condition is None or evaluate_when_condition(condition, context):
+                        active_nodes.add(target)
+                continue
 
         except Exception as exc:
             duration_ms = (time.monotonic() - start_time) * 1000
