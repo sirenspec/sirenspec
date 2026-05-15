@@ -157,3 +157,59 @@ sirenspec validate broken.yaml
 - Node agent references — all `agent` values must refer to existing agents.
 
 Provider credentials and `when:` expressions are **not** evaluated during validation.
+
+---
+
+## `sirenspec render`
+
+Render a workflow as a diagram without executing it or making any API calls.
+
+```bash
+sirenspec render <workflow-file> --target <format> [OPTIONS]
+```
+
+**Arguments:**
+
+| Argument | Description |
+|----------|-------------|
+| `workflow-file` | Path to the workflow YAML file. |
+
+**Options:**
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--target TEXT` | | Render target format. Currently only `mermaid` is supported. |
+| `--output TEXT` | `-o` | Write output to a file instead of stdout. |
+
+**Exit codes:**
+
+| Code | Meaning |
+|------|---------|
+| `0` | Rendered successfully. |
+| `1` | File not found, validation error, or unsupported target. |
+
+**Examples:**
+
+```bash
+# Print a Mermaid flowchart to stdout
+sirenspec render workflow.yaml --target mermaid
+
+# Save to a file
+sirenspec render workflow.yaml --target mermaid --output diagram.md
+sirenspec render workflow.yaml --target mermaid -o diagram.md
+```
+
+**Output format:**
+
+The `mermaid` target produces a `graph TD` flowchart. Unconditional edges are plain arrows; conditional edges are labeled with their `when:` expression.
+
+```
+graph TD
+    triage[triage]
+    handle_refund[handle_refund]
+    handle_general[handle_general]
+    triage -->|"working.triage.intent == 'refund'"| handle_refund
+    triage -->|"working.triage.intent == 'general'"| handle_general
+```
+
+Paste this into any Mermaid renderer (GitHub markdown, Mermaid Live Editor, etc.) to visualise the workflow graph.
