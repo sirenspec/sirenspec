@@ -1,0 +1,226 @@
+---
+title: Tool Nodes
+description: Invoke HTTP endpoints and Python callables as first-class workflow nodes.
+---
+
+## Overview
+
+Tool nodes let you integrate external services and custom Python code directly into your workflow — without needing to write an LLM prompt.  Any node with `type: tool` is a tool node.
+
+```yaml
+nodes:
+  fetch_context:
+    type: tool
+    tool: http
+    config:
+      url: "https://api.example.com/context"
+      method: GET
+    output_key: context_data
+```
+
+Two adapters are currently supported:
+
+| Adapter | `tool:` value | Description |
+|---------|--------------|-------------|
+| HTTP | `http` | Sends an HTTP GET or POST request and stores the response. |
+| Python | `python` | Imports a Python module and calls a function with keyword arguments. |
+
+---
+
+## Common fields
+
+All tool nodes share these top-level fields.
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `type` | Yes | — | Must be `"tool"` to identify this as a tool node. |
+| `tool` | Yes | — | Adapter to use: `"http"` or `"python"`. |
+| `config` | Yes | — | Adapter-specific configuration (see below). |
+| `output_key` | No | `"output"` | Key under which the result is stored in the workflow context. |
+| `retry` | No | `0` | Number of extra attempts if the tool call fails. |
+| `on_failure` | No | `"raise"` | What to do after all retries fail: `"raise"` stops the workflow; `"skip"` stores `null` and continues. |
+
+### `output_key` and context storage
+
+Tool output is stored under `working.<node_id>.<output_key>`.  For example, a node named `fetch_diff` with `output_key: diff` writes to `working.fetch_diff.diff`.  Downstream agent nodes can reference this value in their system prompts using Jinja-style template syntax:
+
+```yaml
+agents:
+  summarizer:
+    system: |
+      Summarize the following diff:
+      {{ working.fetch_diff.diff }}
+```
+
+If `output_key` is omitted it defaults to `output`, so the context path becomes `working.<node_id>.output`.
+
+---
+
+## HTTP adapter
+
+Use `tool: http` to call an HTTP endpoint.
+
+```yaml
+nodes:
+  fetch_context:
+    type: tool
+    tool: http
+    config:
+      url: "https://api.github.com/repos/owner/repo/pulls/42"
+      method: GET
+      headers:
+        Authorization: "Bearer {{ env.GITHUB_TOKEN }}"
+        Accept: "application/vnd.github.v3.diff"
+      timeout: 15
+    output_key: diff
+```
+
+### HTTP config fields
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `url` | Yes | — | Full URL of the endpoint to call. Supports template placeholders. |
+| `method` | No | `GET` | HTTP method — `GET` or `POST`. |
+| `headers` | No | `{}` | Key/value map of request headers. Values support template placeholders. |
+| `body` | No | `null` | Request body string (typically JSON). Used for POST requests. |
+| `timeout` | No | `10` | Request timeout in seconds (minimum 1). |
+
+### Response handling
+
+- If the response `Content-Type` is `application/json`, the body is parsed and the result is a Python dict or list.
+- Otherwise, the raw response text string is stored.
+
+### Error behaviour
+
+Any non-2xx status code raises a `ToolError` with the HTTP status code and response body excerpt in the message.  Network errors (DNS failures, connection refused) and timeouts also raise `ToolError`.
+
+---
+
+## Python adapter
+
+Use `tool: python` to call any importable Python function.
+
+```yaml
+nodes:
+  run_parser:
+    type: tool
+    tool: python
+    config:
+      module: mypackage.tools
+      function: parse_diff
+      args:
+        raw: "{{ working.fetch_diff.diff }}"
+    output_key: parsed
+```
+
+### Python config fields
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `module` | Yes | — | Fully-qualified Python module path (e.g. `mypackage.tools`). |
+| `function` | Yes | — | Name of the callable on the module. |
+| `args` | No | `{}` | Keyword arguments passed to the function. Values support template placeholders. |
+
+### Module resolution
+
+The module is resolved using `importlib.import_module` against the **user's runtime environment** (`sys.path`), not against the `sirenspec` package.  This means any module that is importable in the process where `sirenspec` runs can be used — your own application code, installed packages, or local scripts.
+
+Synchronous functions are run in a thread-pool executor so they do not block the event loop.  Async functions are awaited directly.
+
+### Error behaviour
+
+- `ModuleNotFoundError` → `ToolError` with message `"Cannot import module '...'"`
+- Missing attribute → `ToolError` with message `"Module '...' has no attribute '...'"`
+- Exception during call → `ToolError` with the original exception type and message included
+
+---
+
+## Retry and failure handling
+
+```yaml
+nodes:
+  flaky_api:
+    type: tool
+    tool: http
+    config:
+      url: "https://unstable.example.com/data"
+      timeout: 5
+    retry: 3          # try up to 4 times total
+    on_failure: skip  # if all 4 attempts fail, store null and continue
+```
+
+- **`retry: N`** — the tool is attempted `N + 1` times total before giving up.
+- **`on_failure: raise`** (default) — propagates a `ToolError` and marks the workflow as `"failed"`.
+- **`on_failure: skip`** — stores `null` under the output key and lets the workflow continue.
+
+---
+
+## Full example: PR summarizer
+
+This workflow fetches a GitHub pull-request diff over HTTP and then asks an LLM to summarise it.
+
+```yaml
+version: "0.1"
+
+agents:
+  summarizer:
+    model: "openai:gpt-4o-mini"
+    system: |
+      You are a senior engineer reviewing a GitHub pull request.
+      Summarise the diff below in under 200 words using markdown bullet points.
+      Focus on what changed, why it was likely changed, and any risks.
+
+nodes:
+  fetch_diff:
+    type: tool
+    tool: http
+    config:
+      url: "https://api.github.com/repos/owner/repo/pulls/42"
+      method: GET
+      headers:
+        Authorization: "Bearer {{ env.GITHUB_TOKEN }}"
+        Accept: "application/vnd.github.v3.diff"
+      timeout: 15
+    output_key: diff
+
+  summarize:
+    agent: summarizer
+    writes: output.summary
+
+edges:
+  - from: fetch_diff
+    to: summarize
+```
+
+Run it with:
+
+```bash
+export GITHUB_TOKEN=ghp_...
+sirenspec run examples/pr-summarizer.yaml --input "Summarise this PR."
+```
+
+A working copy of this example is available at [`examples/pr-summarizer.yaml`](https://github.com/TJLSmith0831/sirenspec/blob/main/examples/pr-summarizer.yaml).
+
+---
+
+## ToolError
+
+All tool failures raise `sirenspec.exceptions.ToolError` (a subclass of `SirenSpecError`).  The exception message always includes the adapter name and the upstream error:
+
+```
+[tool:http] HTTP 404 Not Found from https://api.example.com/missing: resource not found
+[tool:python] Cannot import module 'mypackage.tools': No module named 'mypackage'
+```
+
+`ToolError` exposes two attributes:
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `tool_name` | `str` | The adapter that raised the error (`"http"` or `"python"`). |
+| `cause` | `BaseException \| None` | The upstream exception, if any. |
+
+---
+
+## JSON Schema
+
+The `sirenspec.schema.json` artifact validates tool nodes inline with agent nodes.  IDEs that support JSON Schema (VS Code, JetBrains) will autocomplete `type: tool`, `tool:`, and all `config` fields automatically.
