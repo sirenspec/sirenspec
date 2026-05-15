@@ -3,10 +3,10 @@
   "name": "SirenSpec",
   "theme": "willow",
   "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
+    "light": "/docs/logo/light.svg",
+    "dark": "/docs/logo/dark.svg"
   },
-  "favicon": "/favicon.svg",
+  "favicon": "/docs/favicon.svg",
   "colors": {
     "primary": "#0D9373",
     "light": "#07C983",
@@ -27,15 +27,15 @@
         "groups": [
           {
             "group": "Getting Started",
-            "pages": ["introduction", "quickstart"]
+            "pages": ["docs/introduction", "docs/quickstart"]
           },
           {
             "group": "Core Concepts",
-            "pages": ["assistant", "yaml-reference", "providers", "guardrails"]
+            "pages": ["docs/assistant", "docs/yaml-reference", "docs/providers", "docs/guardrails"]
           },
           {
             "group": "Reference",
-            "pages": ["cli-reference", "sdk"]
+            "pages": ["docs/cli-reference", "docs/sdk"]
           }
         ]
       }

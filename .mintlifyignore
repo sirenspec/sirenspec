@@ -1,0 +1,7 @@
+openspec/
+.opencode/
+.windsurf/
+.claude/
+src/
+tests/
+examples/
