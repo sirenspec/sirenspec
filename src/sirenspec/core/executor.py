@@ -7,13 +7,15 @@ from collections import defaultdict, deque
 from typing import Any
 
 from sirenspec.core.context import WorkflowContext
-from sirenspec.core.models import OnFailurePolicy, RetryPolicy, SwrmNode, Workflow
+from sirenspec.core.models import AgentNode, HttpToolConfig, OnFailurePolicy, PythonToolConfig, RetryPolicy, SwrmNode, ToolNode, Workflow
 from sirenspec.core.retry import run_with_retry
 from sirenspec.core.swrm import execute_swrm
-from sirenspec.exceptions import RetryExhaustedError, SwrmAgentError
+from sirenspec.exceptions import RetryExhaustedError, SwrmAgentError, ToolError
 from sirenspec.guardrails.base import GuardrailViolation
 from sirenspec.guardrails.registry import build_guardrails
 from sirenspec.providers.registry import resolve_provider
+from sirenspec.tools.http_adapter import run_http_tool
+from sirenspec.tools.python_adapter import run_python_tool
 
 
 class DotDict:
@@ -154,6 +156,43 @@ def resolve_on_failure_policy(workflow: Workflow, node_id: str) -> OnFailurePoli
     return OnFailurePolicy()
 
 
+
+async def run_tool_node(node_id: str, node: ToolNode) -> Any:
+    """Execute a tool node with retry logic.
+
+    Attempts the tool call up to ``node.retry + 1`` times.  If all attempts fail and
+    ``node.on_failure == 'raise'``, the final :class:`~sirenspec.exceptions.ToolError`
+    propagates.  If ``node.on_failure == 'skip'``, ``None`` is returned instead.
+
+    :param node_id: The workflow node identifier (used for error messages).
+    :param node: The validated :class:`~sirenspec.core.models.ToolNode` to execute.
+    :raises ToolError: If the tool fails on all attempts and ``on_failure == 'raise'``.
+    :returns: The tool's return value, or ``None`` if skipped on failure.
+    """
+    max_attempts = node.retry + 1
+    last_exc: ToolError | None = None
+
+    for attempt in range(max_attempts):
+        try:
+            if node.tool == "http" and isinstance(node.config, HttpToolConfig):
+                return await run_http_tool(node.config)
+            elif node.tool == "python" and isinstance(node.config, PythonToolConfig):
+                return await run_python_tool(node.config)
+            else:
+                raise ToolError(node.tool, f"Config type mismatch for tool '{node.tool}'")
+        except ToolError as exc:
+            last_exc = exc
+            if attempt < max_attempts - 1:
+                continue  # will retry
+
+    # All attempts exhausted.
+    if node.on_failure == "skip":
+        return None
+
+    assert last_exc is not None
+    raise last_exc
+
+
 async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
     """Execute a workflow and return a structured JSON-serialisable trace.
 
@@ -177,6 +216,11 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
        * ``fallback`` — routes execution to the named ``fallback_node``.
        * ``skip`` — silently marks the node as skipped and continues.
        * ``use_default`` — injects ``default_output`` into the node's write path.
+
+    **Tool nodes** (``type: tool``) are handled by the respective adapter instead of
+    an LLM provider.  Their output is stored in the workflow context under
+    ``working.<node_id>.<output_key>``.  Downstream nodes can reference this value
+    as ``{{ node_id.output }}`` (or whatever ``output_key`` was set to).
 
     :param workflow: Validated :class:`~sirenspec.core.models.Workflow` instance.
     :param user_input: The initial user message (from CLI ``--input`` or
@@ -204,7 +248,7 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
     # become active only when an incoming edge's condition is satisfied at runtime.
     active_nodes: set[str] = {n for n in node_ids if in_degree[n] == 0}
 
-    # Track the writes path of the most recently completed node for downstream input resolution.
+    # Track the writes path of the most recently completed agent node for downstream input resolution.
     last_writes_path: str | None = None
 
     trace_nodes: list[dict[str, Any]] = []
@@ -302,9 +346,57 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
             trace_nodes.append(swrm_trace)
             continue
 
+        # ---------------------------------------------------------------
+        # Tool node execution path
+        # ---------------------------------------------------------------
+        if isinstance(node, ToolNode):
+            tool_node_trace: dict[str, Any] = {
+                "id": node_id,
+                "type": "tool",
+                "tool": node.tool,
+                "output_key": node.output_key,
+                "result": None,
+                "duration_ms": 0,
+                "error": None,
+            }
+            start_time = time.monotonic()
+            try:
+                result = await run_tool_node(node_id, node)
+                context.write(f"working.{node_id}.{node.output_key}", result)
+                duration_ms = (time.monotonic() - start_time) * 1000
+                tool_node_trace["result"] = result
+                tool_node_trace["duration_ms"] = round(duration_ms, 2)
+                total_duration_ms += duration_ms
+
+                for target, condition in out_edges[node_id]:
+                    if condition is None or evaluate_when_condition(condition, context):
+                        active_nodes.add(target)
+
+            except ToolError as exc:
+                duration_ms = (time.monotonic() - start_time) * 1000
+                tool_node_trace["error"] = str(exc)
+                tool_node_trace["duration_ms"] = round(duration_ms, 2)
+                total_duration_ms += duration_ms
+                status = "failed"
+                trace_nodes.append(tool_node_trace)
+                break
+
+            except Exception as exc:
+                duration_ms = (time.monotonic() - start_time) * 1000
+                tool_node_trace["error"] = str(exc)
+                tool_node_trace["duration_ms"] = round(duration_ms, 2)
+                total_duration_ms += duration_ms
+                status = "failed"
+                trace_nodes.append(tool_node_trace)
+                break
+
+            trace_nodes.append(tool_node_trace)
+            continue
+
         # ------------------------------------------------------------------ #
-        # Regular agent node.                                                  #
+        # Agent node execution path.                                           #
         # ------------------------------------------------------------------ #
+        assert isinstance(node, AgentNode)
         agent_def = workflow.agents[node.agent]
 
         # Resolve this node's input: first active node gets raw user input;
@@ -324,7 +416,7 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
         retry_policy = resolve_retry_policy(workflow, node_id)
         on_failure_policy = resolve_on_failure_policy(workflow, node_id)
 
-        node_trace: dict[str, Any] = {
+        agent_node_trace: dict[str, Any] = {
             "id": node_id,
             "agent": node.agent,
             "prompt_sent": node_input,
@@ -343,7 +435,7 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
             checked_input = node_input
             for g in guardrails:
                 checked_input = g.check_input(checked_input)
-                node_trace["guardrails_passed"].append(f"{type(g).__name__}.check_input")
+                agent_node_trace["guardrails_passed"].append(f"{type(g).__name__}.check_input")
 
             messages = [
                 {"role": "system", "content": agent_def.system},
@@ -353,7 +445,7 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
             provider = resolve_provider(agent_def.model)
 
             def log_attempt(attempt_number: int, delay: float, error_message: str) -> None:
-                node_trace["retry_attempts"].append(
+                agent_node_trace["retry_attempts"].append(
                     {
                         "attempt": attempt_number,
                         "delay_seconds": round(delay, 3),
@@ -376,7 +468,7 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
             checked_output = response_text
             for g in guardrails:
                 checked_output = g.check_output(checked_output)
-                node_trace["guardrails_passed"].append(f"{type(g).__name__}.check_output")
+                agent_node_trace["guardrails_passed"].append(f"{type(g).__name__}.check_output")
 
             context.write(node.writes, checked_output)
             last_writes_path = node.writes
@@ -389,7 +481,7 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
                     active_nodes.add(target)
 
             duration_ms = (time.monotonic() - start_time) * 1000
-            node_trace.update(
+            agent_node_trace.update(
                 {
                     "response_received": checked_output,
                     "tokens": tokens,
@@ -401,37 +493,37 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
 
         except GuardrailViolation as exc:
             duration_ms = (time.monotonic() - start_time) * 1000
-            node_trace["error"] = f"GuardrailViolation: {exc.reason}"
-            node_trace["duration_ms"] = round(duration_ms, 2)
+            agent_node_trace["error"] = f"GuardrailViolation: {exc.reason}"
+            agent_node_trace["duration_ms"] = round(duration_ms, 2)
             total_duration_ms += duration_ms
             status = "failed"
-            trace_nodes.append(node_trace)
+            trace_nodes.append(agent_node_trace)
             break
 
         except RetryExhaustedError as exc:
             duration_ms = (time.monotonic() - start_time) * 1000
-            node_trace["error"] = str(exc)
-            node_trace["duration_ms"] = round(duration_ms, 2)
+            agent_node_trace["error"] = str(exc)
+            agent_node_trace["duration_ms"] = round(duration_ms, 2)
             total_duration_ms += duration_ms
 
             action = on_failure_policy.action
 
             if action == "abort":
                 status = "failed"
-                trace_nodes.append(node_trace)
+                trace_nodes.append(agent_node_trace)
                 break
 
             elif action == "fallback":
-                node_trace["on_failure_action"] = "fallback"
-                node_trace["fallback_node"] = on_failure_policy.fallback_node
-                trace_nodes.append(node_trace)
+                agent_node_trace["on_failure_action"] = "fallback"
+                agent_node_trace["fallback_node"] = on_failure_policy.fallback_node
+                trace_nodes.append(agent_node_trace)
                 if on_failure_policy.fallback_node:
                     pending_fallback_nodes.add(on_failure_policy.fallback_node)
                 continue
 
             elif action == "skip":
-                node_trace["on_failure_action"] = "skip"
-                trace_nodes.append(node_trace)
+                agent_node_trace["on_failure_action"] = "skip"
+                trace_nodes.append(agent_node_trace)
                 # Activate outgoing edges so the graph can continue.
                 for target, condition in out_edges[node_id]:
                     if condition is None or evaluate_when_condition(condition, context):
@@ -442,9 +534,9 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
                 default_val = on_failure_policy.default_output or ""
                 context.write(node.writes, default_val)
                 last_writes_path = node.writes
-                node_trace["on_failure_action"] = "use_default"
-                node_trace["response_received"] = default_val
-                trace_nodes.append(node_trace)
+                agent_node_trace["on_failure_action"] = "use_default"
+                agent_node_trace["response_received"] = default_val
+                trace_nodes.append(agent_node_trace)
                 for target, condition in out_edges[node_id]:
                     if condition is None or evaluate_when_condition(condition, context):
                         active_nodes.add(target)
@@ -452,14 +544,14 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
 
         except Exception as exc:
             duration_ms = (time.monotonic() - start_time) * 1000
-            node_trace["error"] = str(exc)
-            node_trace["duration_ms"] = round(duration_ms, 2)
+            agent_node_trace["error"] = str(exc)
+            agent_node_trace["duration_ms"] = round(duration_ms, 2)
             total_duration_ms += duration_ms
             status = "failed"
-            trace_nodes.append(node_trace)
+            trace_nodes.append(agent_node_trace)
             break
 
-        trace_nodes.append(node_trace)
+        trace_nodes.append(agent_node_trace)
 
     return {
         "workflow": {"version": workflow.version},

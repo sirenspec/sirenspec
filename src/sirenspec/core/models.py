@@ -70,14 +70,93 @@ class AgentDefinition(BaseModel):
     guardrails: list[str] | None = None
 
 
-class Node(BaseModel):
-    """Binds an agent to an output context path."""
+# ---------------------------------------------------------------------------
+# Tool node models
+# ---------------------------------------------------------------------------
 
-    type: Literal["agent"] = "agent"
+
+class HttpToolConfig(BaseModel):
+    """Configuration for the HTTP tool adapter.
+
+    Supports GET and POST requests with optional headers, a request body, and a timeout.
+    Template placeholders (``{{ expr }}``) in ``url``, ``headers``, and ``body`` are
+    resolved against the workflow context before the request is made.
+    """
+
+    url: str
+    method: Literal["GET", "POST"] = "GET"
+    headers: dict[str, str] | None = None
+    body: str | None = None
+    timeout: int = Field(default=10, ge=1, description="Request timeout in seconds.")
+
+
+class PythonToolConfig(BaseModel):
+    """Configuration for the Python callable adapter.
+
+    The executor imports ``module`` at runtime (relative to the user's environment, not
+    the sirenspec package) and calls ``function`` with the keyword arguments in ``args``.
+    """
+
+    module: str
+    function: str
+    args: dict[str, Any] | None = None
+
+
+class ToolNode(BaseModel):
+    """A node that invokes an external tool (HTTP or Python callable) instead of an LLM agent.
+
+    .. code-block:: yaml
+
+        nodes:
+          fetch_context:
+            type: tool
+            tool: http
+            config:
+              url: "{{ inputs.context_url }}"
+              method: GET
+              timeout: 10
+            output_key: context_data
+    """
+
+    type: Literal["tool"]
+    tool: Literal["http", "python"]
+    config: HttpToolConfig | PythonToolConfig
+    output_key: str = Field(default="output", description="Key under which the tool result is stored in node output.")
+    retry: int = Field(default=0, ge=0, description="Number of times to retry the tool on failure.")
+    on_failure: Literal["raise", "skip"] = Field(
+        default="raise",
+        description="What to do when the tool fails after all retries: 'raise' (default) or 'skip'.",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def coerce_config(cls, values: Any) -> Any:
+        """Parse the raw ``config`` dict into the correct typed config model based on ``tool``."""
+        if not isinstance(values, dict):
+            return values
+        tool = values.get("tool")
+        config = values.get("config")
+        if isinstance(config, dict):
+            if tool == "http":
+                values["config"] = HttpToolConfig(**config)
+            elif tool == "python":
+                values["config"] = PythonToolConfig(**config)
+        return values
+
+
+class AgentNode(BaseModel):
+    """Binds an agent to an output context path (classic node type)."""
+
+    type: Literal["agent"] | None = None  # ``None`` means the field is omitted (backward compat)
     agent: str
     writes: str
     retry: RetryPolicy | None = None
     on_failure: OnFailurePolicy | None = None
+
+
+# ---------------------------------------------------------------------------
+# Swrm (parallel agent fan-out) node models
+# ---------------------------------------------------------------------------
 
 
 class SwrmAgent(BaseModel):
@@ -146,7 +225,9 @@ class SwrmNode(BaseModel):
     )
 
 
-AnyNode = Node | SwrmNode
+# Backward-compatible alias so existing code using ``Node(agent=..., writes=...)`` keeps working.
+Node = AgentNode
+AnyNode = AgentNode | ToolNode | SwrmNode
 
 
 class Edge(BaseModel):
@@ -192,17 +273,47 @@ class WorkflowInput(BaseModel):
     message: str | None = None
 
 
+# Discriminator helper: if raw node dict has ``type == "tool"`` use ToolNode,
+# ``type == "swrm"`` use SwrmNode, else AgentNode.
+def parse_node(raw: Any) -> AgentNode | ToolNode | SwrmNode:
+    """Parse a raw node dict into an ``AgentNode``, ``ToolNode``, or ``SwrmNode``.
+
+    :param raw: The raw YAML mapping for a single node.
+    :returns: A typed node instance.
+    """
+    if isinstance(raw, (AgentNode, ToolNode, SwrmNode)):
+        return raw
+    if isinstance(raw, dict):
+        t = raw.get("type")
+        if t == "tool":
+            return ToolNode.model_validate(raw)
+        if t == "swrm":
+            return SwrmNode.model_validate(raw)
+    return AgentNode.model_validate(raw)
+
+
 class Workflow(BaseModel):
     """Top-level workflow definition loaded from YAML."""
 
     version: str
     agents: dict[str, AgentDefinition] = Field(default_factory=dict)
-    nodes: dict[str, AnyNode]
+    nodes: dict[str, AgentNode | ToolNode | SwrmNode]
     edges: list[Edge] = Field(default_factory=list)
     input: WorkflowInput | None = None
     state: dict[str, Any] | None = None
     guardrails: list[str] | None = None
     defaults: WorkflowDefaults | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def parse_nodes(cls, values: Any) -> Any:
+        """Convert each raw node mapping into the correct typed node model."""
+        if not isinstance(values, dict):
+            return values
+        raw_nodes = values.get("nodes")
+        if isinstance(raw_nodes, dict):
+            values["nodes"] = {node_id: parse_node(raw) for node_id, raw in raw_nodes.items()}
+        return values
 
     @model_validator(mode="after")
     def validate_edges_reference_valid_nodes(self) -> Workflow:
@@ -216,10 +327,13 @@ class Workflow(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def validate_nodes_reference_valid_agents(self) -> Workflow:
+    def validate_agent_nodes_reference_valid_agents(self) -> Workflow:
         """Validate that agent-type nodes reference declared agent IDs."""
         agent_ids = set(self.agents.keys())
         for node_id, node in self.nodes.items():
-            if isinstance(node, Node) and node.agent not in agent_ids:
+            if isinstance(node, AgentNode) and node.agent not in agent_ids:
                 raise ValueError(f"Node '{node_id}' references unknown agent '{node.agent}'")
         return self
+
+    # Keep backward-compat alias: ``node.agent`` and ``node.writes`` still work for AgentNode.
+    # ToolNode uses ``node.tool``, ``node.config``, and ``node.output_key``.

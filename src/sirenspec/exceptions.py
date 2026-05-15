@@ -54,3 +54,18 @@ class SwrmAgentError(SirenSpecError):
         super().__init__(f"swrm agent '{agent_id}' failed: {cause}")
         self.agent_id = agent_id
         self.cause = cause
+
+
+class ToolError(SirenSpecError):
+    """Raised when a tool node execution fails.
+
+    :param tool_name: The name of the tool adapter that failed (e.g. ``'http'``, ``'python'``).
+    :param message: A human-readable description of the failure.
+    :param cause: The upstream exception that triggered this error, if any.
+    """
+
+    def __init__(self, tool_name: str, message: str, cause: BaseException | None = None) -> None:
+        full_message = f"[tool:{tool_name}] {message}"
+        super().__init__(full_message)
+        self.tool_name = tool_name
+        self.cause = cause

@@ -10,6 +10,7 @@ from sirenspec.exceptions import (
     RetryExhaustedError,
     SirenSpecError,
     SwrmAgentError,
+    ToolError,
     ValidationError,
 )
 from sirenspec.yaml.parser import load_workflow
@@ -25,4 +26,5 @@ __all__ = [
     "GuardrailError",
     "ValidationError",
     "SwrmAgentError",
+    "ToolError",
 ]
