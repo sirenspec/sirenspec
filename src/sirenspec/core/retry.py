@@ -35,7 +35,7 @@ def compute_delay(policy: RetryPolicy, attempt: int) -> float:
     return delay
 
 
-def _error_matches_policy(exc: Exception, policy: RetryPolicy) -> bool:
+def error_matches_policy(exc: Exception, policy: RetryPolicy) -> bool:
     """Return True if *exc* matches any trigger condition in *policy.on*.
 
     HTTP status-code triggers (e.g. ``'429'``, ``'500'``) are matched against
@@ -90,7 +90,7 @@ async def run_with_retry(
             last_exc = exc
 
             is_last = attempt >= policy.max_attempts
-            if is_last or not _error_matches_policy(exc, policy):
+            if is_last or not error_matches_policy(exc, policy):
                 raise RetryExhaustedError(node_id, attempt, exc) from exc
 
             # Compute delay for the upcoming retry (0-based index = attempt - 1).

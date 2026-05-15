@@ -118,7 +118,7 @@ def topological_sort(node_ids: list[str], edges: list[tuple[str, str]]) -> list[
     return order
 
 
-def _resolve_retry_policy(workflow: Workflow, node_id: str) -> RetryPolicy:
+def resolve_retry_policy(workflow: Workflow, node_id: str) -> RetryPolicy:
     """Return the effective :class:`~sirenspec.core.models.RetryPolicy` for *node_id*.
 
     Node-level policy takes precedence over workflow defaults.  If neither is
@@ -136,7 +136,7 @@ def _resolve_retry_policy(workflow: Workflow, node_id: str) -> RetryPolicy:
     return RetryPolicy()
 
 
-def _resolve_on_failure_policy(workflow: Workflow, node_id: str) -> OnFailurePolicy:
+def resolve_on_failure_policy(workflow: Workflow, node_id: str) -> OnFailurePolicy:
     """Return the effective :class:`~sirenspec.core.models.OnFailurePolicy` for *node_id*.
 
     Node-level policy takes precedence over workflow defaults.  If neither is
@@ -321,8 +321,8 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
         guardrail_names = agent_def.guardrails if agent_def.guardrails is not None else global_guardrail_names
         guardrails = build_guardrails(guardrail_names)
 
-        retry_policy = _resolve_retry_policy(workflow, node_id)
-        on_failure_policy = _resolve_on_failure_policy(workflow, node_id)
+        retry_policy = resolve_retry_policy(workflow, node_id)
+        on_failure_policy = resolve_on_failure_policy(workflow, node_id)
 
         node_trace: dict[str, Any] = {
             "id": node_id,
@@ -352,26 +352,23 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
 
             provider = resolve_provider(agent_def.model)
 
-            def _make_attempt_logger(trace: dict[str, Any]) -> Any:
-                def _log_attempt(attempt_number: int, delay: float, error_message: str) -> None:
-                    trace["retry_attempts"].append(
-                        {
-                            "attempt": attempt_number,
-                            "delay_seconds": round(delay, 3),
-                            "error": error_message,
-                        }
-                    )
+            def log_attempt(attempt_number: int, delay: float, error_message: str) -> None:
+                node_trace["retry_attempts"].append(
+                    {
+                        "attempt": attempt_number,
+                        "delay_seconds": round(delay, 3),
+                        "error": error_message,
+                    }
+                )
 
-                return _log_attempt
-
-            async def _call(_provider: Any = provider, _messages: list[dict[str, str]] = messages) -> str:
-                return await _provider.complete(_messages)
+            async def call() -> str:
+                return await provider.complete(messages)
 
             response_text = await run_with_retry(
                 node_id=node_id,
                 policy=retry_policy,
-                call=_call,
-                on_attempt=_make_attempt_logger(node_trace),
+                call=call,
+                on_attempt=log_attempt,
             )
             tokens = provider.last_token_count
 
