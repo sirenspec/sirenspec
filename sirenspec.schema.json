@@ -3,8 +3,121 @@
   "title": "SirenSpec Workflow",
   "description": "YAML-first agent orchestration workflow definition.",
   "type": "object",
-  "required": ["version", "agents", "nodes"],
+  "required": ["version", "nodes"],
   "additionalProperties": false,
+  "definitions": {
+    "AgentNode": {
+      "type": "object",
+      "description": "A regular agent node that runs a single named agent and writes output to a context path.",
+      "required": ["agent", "writes"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["agent"],
+          "description": "Node type discriminator. Defaults to 'agent' when omitted."
+        },
+        "agent": {
+          "type": "string",
+          "description": "Agent ID from the top-level 'agents' map."
+        },
+        "writes": {
+          "type": "string",
+          "description": "Dot-notation context path where the agent's output is stored (e.g. 'output.reply', 'working.intent')."
+        }
+      }
+    },
+    "SwrmAgent": {
+      "type": "object",
+      "description": "An inline agent definition within a swrm node.",
+      "required": ["id", "provider", "prompt"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique agent identifier within the swrm node."
+        },
+        "provider": {
+          "type": "string",
+          "description": "LLM provider name (e.g. 'openai', 'anthropic', 'ollama').",
+          "examples": ["openai", "anthropic", "ollama"]
+        },
+        "model": {
+          "type": "string",
+          "description": "Model name (e.g. 'gpt-4o-mini', 'claude-haiku-4-5-20251001'). Provider default used if omitted.",
+          "examples": ["gpt-4o-mini", "claude-haiku-4-5-20251001"]
+        },
+        "prompt": {
+          "type": "string",
+          "description": "Prompt template sent to the agent. Supports {{ variable }} interpolation."
+        },
+        "guardrails": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Agent-level guardrail overrides."
+        }
+      }
+    },
+    "SwrmSynthesis": {
+      "type": "object",
+      "description": "Optional synthesis step that aggregates swrm agent outputs into a single response.",
+      "required": ["provider", "prompt"],
+      "additionalProperties": false,
+      "properties": {
+        "provider": {
+          "type": "string",
+          "description": "LLM provider name (e.g. 'openai', 'anthropic')."
+        },
+        "model": {
+          "type": "string",
+          "description": "Model name. Provider default used if omitted."
+        },
+        "prompt": {
+          "type": "string",
+          "description": "Synthesis prompt template. Can reference agent outputs via {{ <node_id>.agents.<agent_id>.output }}."
+        },
+        "guardrails": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Synthesis-level guardrail overrides."
+        }
+      }
+    },
+    "SwrmNode": {
+      "type": "object",
+      "description": "A swrm (parallel agent fan-out) node. Runs all agents concurrently and optionally synthesises their outputs.",
+      "required": ["type", "agents"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["swrm"],
+          "description": "Node type discriminator. Must be 'swrm'."
+        },
+        "concurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum number of agents to run concurrently. Defaults to all agents in parallel."
+        },
+        "on_failure": {
+          "type": "string",
+          "enum": ["abort", "continue"],
+          "default": "abort",
+          "description": "Policy when an agent fails. 'abort' raises SwrmAgentError; 'continue' skips the failed agent."
+        },
+        "agents": {
+          "type": "array",
+          "description": "Ordered list of agents to run in parallel.",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/SwrmAgent" }
+        },
+        "synthesis": {
+          "$ref": "#/definitions/SwrmSynthesis",
+          "description": "Optional synthesis step. Its output becomes the node's canonical output."
+        }
+      }
+    }
+  },
   "properties": {
     "version": {
       "type": "string",
@@ -12,7 +125,7 @@
     },
     "agents": {
       "type": "object",
-      "description": "Named agent definitions. Keys are agent IDs.",
+      "description": "Named agent definitions. Keys are agent IDs. Used by regular agent nodes.",
       "additionalProperties": {
         "type": "object",
         "required": ["model", "system"],
@@ -37,21 +150,12 @@
     },
     "nodes": {
       "type": "object",
-      "description": "Named node definitions. Keys are node IDs.",
+      "description": "Named node definitions. Keys are node IDs. Values are either agent nodes or swrm nodes.",
       "additionalProperties": {
-        "type": "object",
-        "required": ["agent", "writes"],
-        "additionalProperties": false,
-        "properties": {
-          "agent": {
-            "type": "string",
-            "description": "Agent ID that executes this node."
-          },
-          "writes": {
-            "type": "string",
-            "description": "Dot-notation path where the agent's output is stored (e.g. 'output.reply', 'working.intent')."
-          }
-        }
+        "oneOf": [
+          { "$ref": "#/definitions/AgentNode" },
+          { "$ref": "#/definitions/SwrmNode" }
+        ]
       }
     },
     "edges": {
@@ -64,7 +168,7 @@
         "properties": {
           "from": { "type": "string", "description": "Source node ID." },
           "to": { "type": "string", "description": "Destination node ID." },
-          "when": { "type": "string", "description": "Condition expression (Phase 2; accepted but not evaluated in v0.1)." }
+          "when": { "type": "string", "description": "Condition expression evaluated after the source node completes." }
         }
       }
     },

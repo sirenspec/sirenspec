@@ -1,0 +1,295 @@
+---
+title: Swrm — Parallel Agent Fan-Out
+description: Run multiple specialist LLM agents in parallel and optionally synthesise their outputs with a committee-of-experts pattern.
+---
+
+## Overview
+
+The `swrm` node type lets you fan out to a **static, author-defined set of agents** that all run concurrently against the same workflow input. After every agent completes, an optional `synthesis` step combines their outputs into a single response.
+
+This pattern is sometimes called a **committee of experts**: each agent contributes a specialist perspective, and a final model synthesises them into a coherent answer.
+
+```yaml
+nodes:
+  analyze:
+    type: swrm
+    concurrency: 3
+    agents:
+      - id: sentiment
+        provider: openai
+        model: gpt-4o-mini
+        prompt: "Analyze market sentiment in: {{ inputs.message }}"
+      - id: risk
+        provider: anthropic
+        model: claude-haiku-4-5-20251001
+        prompt: "Identify top risks in: {{ inputs.message }}"
+      - id: opportunity
+        provider: openai
+        model: gpt-4o-mini
+        prompt: "Find the top 3 opportunities in: {{ inputs.message }}"
+    synthesis:
+      provider: anthropic
+      model: claude-haiku-4-5-20251001
+      prompt: |
+        Sentiment: {{ analyze.agents.sentiment.output }}
+        Risk:      {{ analyze.agents.risk.output }}
+        Opportunity: {{ analyze.agents.opportunity.output }}
+        Produce a 3-paragraph investment recommendation.
+```
+
+---
+
+## Node Fields
+
+| Field | Required | Type | Default | Description |
+|-------|----------|------|---------|-------------|
+| `type` | Yes | `"swrm"` | — | Node type discriminator. Must be `"swrm"`. |
+| `agents` | Yes | list of agent objects | — | Ordered list of agents to run in parallel. At least one required. |
+| `concurrency` | No | integer | all agents | Maximum number of agents to run at the same time. |
+| `on_failure` | No | `"abort"` \| `"continue"` | `"abort"` | Failure policy when an agent raises an error. |
+| `synthesis` | No | synthesis object | none | Step that runs after all agents complete and produces the node's canonical output. |
+
+---
+
+## Agents
+
+Each entry in the `agents` list is a **self-contained LLM call** with its own provider, model, and prompt template.
+
+```yaml
+agents:
+  - id: sentiment          # unique within this swrm node
+    provider: openai       # "openai", "anthropic", or "ollama"
+    model: gpt-4o-mini     # optional; provider default used if omitted
+    prompt: |
+      Analyze the market sentiment in this report:
+      {{ inputs.message }}
+    guardrails:            # optional; overrides workflow-level guardrails
+      - injection
+```
+
+### Agent Fields
+
+| Field | Required | Type | Description |
+|-------|----------|------|-------------|
+| `id` | Yes | string | Unique identifier within the swrm node. Used in template interpolation. |
+| `provider` | Yes | string | LLM provider: `openai`, `anthropic`, or `ollama`. |
+| `model` | No | string | Model name (e.g. `gpt-4o-mini`). Provider default used if omitted. |
+| `prompt` | Yes | string | Prompt template. Supports `{{ variable }}` interpolation. |
+| `guardrails` | No | list of strings | Agent-level guardrail override. |
+
+---
+
+## Template Interpolation
+
+Prompts in `agents` and the `synthesis` block support `{{ variable }}` placeholders. The template namespace includes:
+
+| Path | Description |
+|------|-------------|
+| `{{ inputs.message }}` | The raw user input string passed to the workflow. |
+| `{{ working.* }}` | Any value written to the `working` context by a prior node. |
+| `{{ output.* }}` | Any value written to the `output` context by a prior node. |
+| `{{ <node_id>.agents.<agent_id>.output }}` | Output of a specific agent (available in `synthesis` only). |
+
+### Example
+
+```yaml
+synthesis:
+  provider: anthropic
+  model: claude-haiku-4-5-20251001
+  prompt: |
+    Sentiment analysis: {{ analyze.agents.sentiment.output }}
+    Risk analysis:      {{ analyze.agents.risk.output }}
+    Synthesise a recommendation.
+```
+
+---
+
+## Synthesis
+
+The optional `synthesis` block is a single LLM call that runs **after all agents have completed**. Its prompt can reference every agent's output. The synthesis output becomes the node's canonical `output`.
+
+```yaml
+synthesis:
+  provider: anthropic          # required
+  model: claude-haiku-4-5-20251001  # optional
+  prompt: |
+    ...
+  guardrails:                  # optional
+    - injection
+```
+
+### Synthesis Fields
+
+| Field | Required | Type | Description |
+|-------|----------|------|-------------|
+| `provider` | Yes | string | LLM provider. |
+| `model` | No | string | Model name. |
+| `prompt` | Yes | string | Prompt template. May reference agent outputs. |
+| `guardrails` | No | list of strings | Synthesis-level guardrail override. |
+
+---
+
+## Output Shape
+
+After a swrm node executes, its results are written to the workflow context:
+
+| Context path | Value |
+|---|---|
+| `output.<node_id>` | Synthesis text (if synthesis defined); otherwise a list of agent outputs in definition order. |
+| `working.<node_id>.agents.<agent_id>.output` | Individual agent output text. |
+
+### Accessing Results
+
+In downstream nodes or edges, reference swrm outputs like any other context value:
+
+```yaml
+# In a downstream agent's writes: path or edge when: expression
+edges:
+  - from: analyze
+    to: report
+    when: output.analyze != null
+```
+
+---
+
+## Concurrency
+
+By default, **all agents run in parallel**. Set `concurrency` to limit the number of agents executing simultaneously:
+
+```yaml
+nodes:
+  analyze:
+    type: swrm
+    concurrency: 2    # run at most 2 agents at a time; 3rd waits for a slot
+    agents:
+      - id: a
+        ...
+      - id: b
+        ...
+      - id: c
+        ...
+```
+
+This is useful when you are rate-limited by the provider or want to control cost.
+
+---
+
+## Failure Policy
+
+Control what happens when one or more agents raise an error using `on_failure`:
+
+| Value | Behaviour |
+|-------|-----------|
+| `abort` (default) | Raises `SwrmAgentError` with the agent's id and underlying exception. The swrm node fails and execution stops. |
+| `continue` | Records the error in the trace but continues. Failed agents contribute an empty string to the output list. |
+
+```yaml
+nodes:
+  analyze:
+    type: swrm
+    on_failure: continue   # tolerate individual agent failures
+    agents:
+      ...
+```
+
+### `SwrmAgentError`
+
+When `on_failure: abort` (the default), any agent failure raises `SwrmAgentError`:
+
+```python
+from sirenspec import SwrmAgentError
+
+try:
+    trace = await execute(workflow, user_input)
+except SwrmAgentError as exc:
+    print(f"Agent '{exc.agent_id}' failed: {exc.cause}")
+```
+
+---
+
+## Committee-of-Experts Pattern
+
+The committee-of-experts pattern decomposes a complex analytical task into specialist sub-tasks and then synthesises the results:
+
+```
+           ┌──────────────────────────────┐
+           │          swrm node           │
+           │                              │
+input ─────┤  ┌─────────┐ ┌─────────┐   │
+           │  │sentiment│ │  risk   │   │──── synthesis ──► output
+           │  └─────────┘ └─────────┘   │
+           │  ┌──────────────────────┐   │
+           │  │     opportunity      │   │
+           │  └──────────────────────┘   │
+           └──────────────────────────────┘
+```
+
+**When to use swrm:**
+- Analysing a document from multiple angles (sentiment + risk + opportunity)
+- Generating multiple candidate responses and picking the best
+- Parallelising independent LLM calls to reduce total latency
+- Building a reviewer panel where each agent judges a different criterion
+
+**When NOT to use swrm:**
+- Tasks where agents need to share intermediate state (use sequential nodes with edges)
+- Dynamic agent sets determined at runtime (see `factory:` node type)
+
+---
+
+## Complete Example
+
+See [`examples/market-analysis-swrm.yaml`](https://github.com/TJLSmith0831/sirenspec/blob/main/examples/market-analysis-swrm.yaml) for a full working workflow.
+
+```bash
+sirenspec run examples/market-analysis-swrm.yaml \
+  --input "Q3 earnings exceeded expectations, but macro headwinds persist."
+```
+
+The trace will include a `nodes` entry for the swrm node with:
+- `agents` — per-agent prompt, response, token count, and latency
+- `synthesis` — synthesis prompt, response, token count, and latency
+- `output` — the synthesis text (or list of agent outputs if no synthesis)
+- `tokens` — total token count across all agents and synthesis
+- `duration_ms` — total elapsed time
+
+---
+
+## Trace Structure
+
+A swrm node produces the following trace entry:
+
+```json
+{
+  "id": "analyze",
+  "type": "swrm",
+  "agents": [
+    {
+      "id": "sentiment",
+      "prompt_sent": "Analyze market sentiment in: ...",
+      "response_received": "The market sentiment is cautiously optimistic...",
+      "tokens": 142,
+      "duration_ms": 823.4,
+      "error": null
+    },
+    {
+      "id": "risk",
+      "prompt_sent": "Identify top risks in: ...",
+      "response_received": "1. Rising interest rates...",
+      "tokens": 218,
+      "duration_ms": 1102.7,
+      "error": null
+    }
+  ],
+  "synthesis": {
+    "prompt_sent": "Sentiment: The market sentiment is cautiously optimistic...",
+    "response_received": "Based on the three analyses...",
+    "tokens": 305,
+    "duration_ms": 1450.2,
+    "error": null
+  },
+  "output": "Based on the three analyses...",
+  "tokens": 665,
+  "duration_ms": 1450.2,
+  "error": null
+}
+```
