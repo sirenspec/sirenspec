@@ -281,6 +281,8 @@ def parse_node(raw: Any) -> AgentNode | ToolNode | SwrmNode:
     :param raw: The raw YAML mapping for a single node.
     :returns: A typed node instance.
     """
+    if isinstance(raw, (AgentNode, ToolNode, SwrmNode)):
+        return raw
     if isinstance(raw, dict):
         t = raw.get("type")
         if t == "tool":
