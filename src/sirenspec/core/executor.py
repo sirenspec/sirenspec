@@ -7,7 +7,9 @@ from collections import defaultdict, deque
 from typing import Any
 
 from sirenspec.core.context import WorkflowContext
-from sirenspec.core.models import Workflow
+from sirenspec.core.models import SwrmNode, Workflow
+from sirenspec.core.swrm import execute_swrm
+from sirenspec.exceptions import SwrmAgentError
 from sirenspec.guardrails.base import GuardrailViolation
 from sirenspec.guardrails.registry import build_guardrails
 from sirenspec.providers.registry import resolve_provider
@@ -175,6 +177,81 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
             continue
 
         node = workflow.nodes[node_id]
+
+        # ------------------------------------------------------------------ #
+        # Swrm node — fan-out parallel execution with optional synthesis.     #
+        # ------------------------------------------------------------------ #
+        if isinstance(node, SwrmNode):
+            start_time = time.monotonic()
+            try:
+                swrm_trace = await execute_swrm(
+                    node_id=node_id,
+                    node=node,
+                    user_input=user_input,
+                    working=context.working,
+                    output=context.output,
+                    global_guardrail_names=global_guardrail_names,
+                )
+            except SwrmAgentError as exc:
+                duration_ms = (time.monotonic() - start_time) * 1000
+                error_trace: dict[str, Any] = {
+                    "id": node_id,
+                    "type": "swrm",
+                    "agents": [],
+                    "synthesis": None,
+                    "output": None,
+                    "tokens": 0,
+                    "duration_ms": round(duration_ms, 2),
+                    "error": str(exc),
+                }
+                total_duration_ms += duration_ms
+                status = "failed"
+                trace_nodes.append(error_trace)
+                break
+            except Exception as exc:
+                duration_ms = (time.monotonic() - start_time) * 1000
+                error_trace = {
+                    "id": node_id,
+                    "type": "swrm",
+                    "agents": [],
+                    "synthesis": None,
+                    "output": None,
+                    "tokens": 0,
+                    "duration_ms": round(duration_ms, 2),
+                    "error": str(exc),
+                }
+                total_duration_ms += duration_ms
+                status = "failed"
+                trace_nodes.append(error_trace)
+                break
+
+            # Write per-agent outputs and the node-level output into context.
+            for agent_trace in swrm_trace["agents"]:
+                if agent_trace["response_received"] is not None:
+                    context.write(
+                        f"working.{node_id}.agents.{agent_trace['id']}.output",
+                        agent_trace["response_received"],
+                    )
+            node_output = swrm_trace["output"]
+            context.write(f"output.{node_id}", node_output)
+            last_writes_path = f"output.{node_id}"
+
+            node_tokens: int = swrm_trace["tokens"]
+            node_duration_ms: float = swrm_trace["duration_ms"]
+            total_tokens += node_tokens
+            total_duration_ms += node_duration_ms
+
+            # Activate successors.
+            for target, condition in out_edges[node_id]:
+                if condition is None or evaluate_when_condition(condition, context):
+                    active_nodes.add(target)
+
+            trace_nodes.append(swrm_trace)
+            continue
+
+        # ------------------------------------------------------------------ #
+        # Regular agent node.                                                  #
+        # ------------------------------------------------------------------ #
         agent_def = workflow.agents[node.agent]
 
         # Resolve this node's input: first active node gets raw user input;

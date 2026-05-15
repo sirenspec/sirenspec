@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from sirenspec.core.context import WorkflowContext
-from sirenspec.core.executor import DotDict, evaluate_when_condition, topological_sort, execute
+from sirenspec.core.executor import DotDict, evaluate_when_condition, execute, topological_sort
 from sirenspec.core.models import AgentDefinition, Edge, Node, Workflow
 
 

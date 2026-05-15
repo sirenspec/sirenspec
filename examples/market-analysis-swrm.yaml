@@ -1,0 +1,79 @@
+version: "0.1"
+
+# Market analysis workflow using the swrm (parallel agent fan-out) primitive.
+#
+# Three specialist agents analyze the same report in parallel:
+#   - sentiment: reads market mood from the report
+#   - risk:      identifies top risks
+#   - opportunity: surfaces the top 3 opportunities
+#
+# A synthesis agent then combines all three analyses into a final
+# investment recommendation.
+#
+# Run with:
+#   sirenspec run examples/market-analysis-swrm.yaml \
+#     --input "Q3 earnings were strong, margins expanded, but macro headwinds persist."
+
+nodes:
+  analyze:
+    type: swrm
+    concurrency: 3
+    on_failure: abort
+    agents:
+      - id: sentiment
+        provider: openai
+        model: gpt-4o-mini
+        prompt: |
+          Analyze the market sentiment expressed in this report and summarise it
+          in two to three sentences.
+
+          Report: {{ inputs.message }}
+
+      - id: risk
+        provider: anthropic
+        model: claude-haiku-4-5-20251001
+        prompt: |
+          Identify the top three risks mentioned or implied in this report.
+          Return a numbered list.
+
+          Report: {{ inputs.message }}
+
+      - id: opportunity
+        provider: openai
+        model: gpt-4o-mini
+        prompt: |
+          Find the top three investment opportunities mentioned or implied in
+          this report. Return a numbered list.
+
+          Report: {{ inputs.message }}
+
+    synthesis:
+      provider: anthropic
+      model: claude-haiku-4-5-20251001
+      prompt: |
+        You have received three specialist analyses of the same market report.
+
+        Sentiment analysis:
+        {{ analyze.agents.sentiment.output }}
+
+        Risk analysis:
+        {{ analyze.agents.risk.output }}
+
+        Opportunity analysis:
+        {{ analyze.agents.opportunity.output }}
+
+        Using all three analyses, produce a final 3-paragraph investment
+        recommendation suitable for a portfolio manager.
+
+input:
+  message: >
+    Q3 earnings exceeded expectations with revenue up 18% year-over-year.
+    Gross margins expanded 200 bps driven by operational efficiency gains.
+    However, rising interest rates and a slowing consumer spending environment
+    present headwinds for Q4.  The company has announced a $500 M share
+    buyback programme and is exploring two strategic acquisitions in the
+    APAC region.
+
+guardrails:
+  - injection
+  - length
