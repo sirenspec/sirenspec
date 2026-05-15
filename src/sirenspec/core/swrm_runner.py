@@ -22,13 +22,11 @@ from __future__ import annotations
 
 import asyncio
 import re
-import time
 from typing import Any
 
-from sirenspec.core.models import SwrmAgent, SwrmNode, SwrmSynthesis
+from sirenspec.core.agent_runner import execute_agent_node
+from sirenspec.core.models import RetryPolicy, SwrmAgent, SwrmNode, SwrmSynthesis
 from sirenspec.exceptions import SwrmAgentError
-from sirenspec.guardrails.registry import build_guardrails
-from sirenspec.providers.registry import resolve_provider
 
 _TEMPLATE_RE = re.compile(r"\{\{\s*(.+?)\s*\}\}")
 
@@ -44,17 +42,16 @@ def render_template(template: str, context: dict[str, Any]) -> str:
     :returns: Rendered string.
     """
 
-    def _resolve(path: str, ctx: dict[str, Any]) -> str:
+    def resolve_path(path: str, ctx: dict[str, Any]) -> str:
         parts = path.split(".")
         current: Any = ctx
         for part in parts:
             if not isinstance(current, dict) or part not in current:
-                # Return the original placeholder so missing keys are visible.
                 return "{{ " + path + " }}"
             current = current[part]
         return str(current)
 
-    return _TEMPLATE_RE.sub(lambda m: _resolve(m.group(1).strip(), context), template)
+    return _TEMPLATE_RE.sub(lambda m: resolve_path(m.group(1).strip(), context), template)
 
 
 def build_template_context(
@@ -91,6 +88,9 @@ async def run_single_agent(
 ) -> tuple[str, int, float]:
     """Execute a single swrm agent and return (output, tokens, duration_ms).
 
+    Delegates the provider call and guardrail cycle to :func:`execute_agent_node`.
+    Wraps any exception in :class:`~sirenspec.exceptions.SwrmAgentError`.
+
     :param agent: The :class:`~sirenspec.core.models.SwrmAgent` definition.
     :param prompt: The fully-rendered prompt string.
     :param global_guardrail_names: Workflow-level guardrail names (fallback if
@@ -98,33 +98,22 @@ async def run_single_agent(
     :raises SwrmAgentError: If the provider call or a guardrail raises.
     :returns: Tuple of (response text, token count, elapsed milliseconds).
     """
-    guardrail_names = agent.guardrails if agent.guardrails is not None else global_guardrail_names
-    guardrails = build_guardrails(guardrail_names)
+    guardrail_names = agent.guardrails if agent.guardrails is not None else (global_guardrail_names or [])
+    model_uri = f"{agent.provider}:{agent.model or 'gpt-4o-mini'}"
 
-    model_str = agent.model or "gpt-4o-mini"
-    uri = f"{agent.provider}:{model_str}"
-
-    start = time.monotonic()
     try:
-        checked_input = prompt
-        for g in guardrails:
-            checked_input = g.check_input(checked_input)
-
-        messages = [{"role": "user", "content": checked_input}]
-        provider = resolve_provider(uri)
-        response_text = await provider.complete(messages)
-        tokens: int = provider.last_token_count
-
-        checked_output = response_text
-        for g in guardrails:
-            checked_output = g.check_output(checked_output)
-
-        duration_ms = (time.monotonic() - start) * 1000
-        return checked_output, tokens, duration_ms
+        result = await execute_agent_node(
+            node_id=agent.id,
+            model_uri=model_uri,
+            system_prompt="",
+            user_input=prompt,
+            guardrail_names=guardrail_names,
+            retry_policy=RetryPolicy(max_attempts=1),
+        )
+        return result.output, result.tokens, result.duration_ms
     except SwrmAgentError:
         raise
     except Exception as exc:
-        duration_ms = (time.monotonic() - start) * 1000
         raise SwrmAgentError(agent.id, exc) from exc
 
 
@@ -135,34 +124,26 @@ async def run_synthesis(
 ) -> tuple[str, int, float]:
     """Execute the synthesis step and return (output, tokens, duration_ms).
 
+    Delegates to :func:`execute_agent_node` using the synthesis provider and model.
+
     :param synthesis: The :class:`~sirenspec.core.models.SwrmSynthesis` definition.
     :param prompt: Fully-rendered synthesis prompt.
     :param global_guardrail_names: Workflow-level guardrail names.
     :raises Exception: Propagates any provider or guardrail error directly.
     :returns: Tuple of (response text, token count, elapsed milliseconds).
     """
-    guardrail_names = synthesis.guardrails if synthesis.guardrails is not None else global_guardrail_names
-    guardrails = build_guardrails(guardrail_names)
+    guardrail_names = synthesis.guardrails if synthesis.guardrails is not None else (global_guardrail_names or [])
+    model_uri = f"{synthesis.provider}:{synthesis.model or 'gpt-4o-mini'}"
 
-    model_str = synthesis.model or "gpt-4o-mini"
-    uri = f"{synthesis.provider}:{model_str}"
-
-    start = time.monotonic()
-    checked_input = prompt
-    for g in guardrails:
-        checked_input = g.check_input(checked_input)
-
-    messages = [{"role": "user", "content": checked_input}]
-    provider = resolve_provider(uri)
-    response_text = await provider.complete(messages)
-    tokens: int = provider.last_token_count
-
-    checked_output = response_text
-    for g in guardrails:
-        checked_output = g.check_output(checked_output)
-
-    duration_ms = (time.monotonic() - start) * 1000
-    return checked_output, tokens, duration_ms
+    result = await execute_agent_node(
+        node_id="synthesis",
+        model_uri=model_uri,
+        system_prompt="",
+        user_input=prompt,
+        guardrail_names=guardrail_names,
+        retry_policy=RetryPolicy(max_attempts=1),
+    )
+    return result.output, result.tokens, result.duration_ms
 
 
 async def execute_swrm(
@@ -217,15 +198,11 @@ async def execute_swrm(
     concurrency = node.concurrency if node.concurrency is not None else len(agents)
     semaphore = asyncio.Semaphore(concurrency)
 
-    # Build per-agent prompts from the template context (no agent results yet).
     template_ctx = build_template_context(node_id, user_input, working, output)
 
-    agent_traces: list[dict[str, Any]] = []
-    agent_results: dict[str, str] = {}  # agent_id → output
+    agent_results: dict[str, str] = {}
 
-    # Each coroutine returns (agent_trace_dict, exception_or_None).
-    # We never raise inside gather so we always collect all results.
-    async def _run_with_semaphore(agent: SwrmAgent) -> tuple[dict[str, Any], SwrmAgentError | None]:
+    async def run_with_semaphore(agent: SwrmAgent) -> tuple[dict[str, Any], SwrmAgentError | None]:
         rendered_prompt = render_template(agent.prompt, template_ctx)
         agent_trace: dict[str, Any] = {
             "id": agent.id,
@@ -248,10 +225,10 @@ async def execute_swrm(
                 agent_trace["error"] = str(wrapped)
                 return agent_trace, wrapped
 
-    # Gather all agents concurrently; each coroutine returns a (trace, error) tuple.
-    tasks = [_run_with_semaphore(agent) for agent in agents]
+    tasks = [run_with_semaphore(agent) for agent in agents]
     gathered: list[tuple[dict[str, Any], SwrmAgentError | None]] = await asyncio.gather(*tasks)
 
+    agent_traces: list[dict[str, Any]] = []
     total_tokens = 0
     total_duration_ms = 0.0
     swrm_error: SwrmAgentError | None = None
@@ -261,18 +238,15 @@ async def execute_swrm(
         if exc is not None:
             if node.on_failure == "abort" and swrm_error is None:
                 swrm_error = exc
-            # on_failure == "continue": just record the error in the trace.
         else:
             agent_id = agent_trace["id"]
             agent_results[agent_id] = agent_trace["response_received"] or ""
             total_tokens += agent_trace["tokens"]
             total_duration_ms += agent_trace["duration_ms"]
 
-    # Abort policy: re-raise the first agent error after all results are collected.
     if swrm_error is not None:
         raise swrm_error
 
-    # Build synthesis prompt template context now that all agent outputs are known.
     synthesis_trace: dict[str, Any] | None = None
     final_output: Any
 
@@ -303,9 +277,7 @@ async def execute_swrm(
         except Exception as exc:
             synthesis_trace["error"] = str(exc)
             raise
-
     else:
-        # No synthesis: output is a list of agent outputs in definition order.
         final_output = [agent_results.get(agent.id, "") for agent in agents]
 
     return {

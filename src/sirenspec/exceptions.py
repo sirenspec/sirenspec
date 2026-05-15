@@ -62,10 +62,18 @@ class ToolError(SirenSpecError):
     :param tool_name: The name of the tool adapter that failed (e.g. ``'http'``, ``'python'``).
     :param message: A human-readable description of the failure.
     :param cause: The upstream exception that triggered this error, if any.
+    :param status_code: HTTP status code, if the failure originated from an HTTP response.
     """
 
-    def __init__(self, tool_name: str, message: str, cause: BaseException | None = None) -> None:
+    def __init__(
+        self,
+        tool_name: str,
+        message: str,
+        cause: BaseException | None = None,
+        status_code: int | None = None,
+    ) -> None:
         full_message = f"[tool:{tool_name}] {message}"
         super().__init__(full_message)
         self.tool_name = tool_name
         self.cause = cause
+        self.status_code = status_code

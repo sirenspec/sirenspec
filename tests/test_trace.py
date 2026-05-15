@@ -21,14 +21,14 @@ def _make_mock_provider(response: str = "resp", tokens: int = 5) -> MagicMock:
 class TestTraceStructure:
     @pytest.mark.asyncio
     async def test_top_level_keys(self, minimal_workflow: Workflow) -> None:
-        with patch("sirenspec.core.executor.resolve_provider", return_value=_make_mock_provider()):
+        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=_make_mock_provider()):
             trace = await execute(minimal_workflow, "hi")
 
         assert set(trace.keys()) >= {"workflow", "input", "nodes", "output", "summary"}
 
     @pytest.mark.asyncio
     async def test_summary_keys(self, minimal_workflow: Workflow) -> None:
-        with patch("sirenspec.core.executor.resolve_provider", return_value=_make_mock_provider(tokens=7)):
+        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=_make_mock_provider(tokens=7)):
             trace = await execute(minimal_workflow, "hi")
 
         summary = trace["summary"]
@@ -39,7 +39,7 @@ class TestTraceStructure:
 
     @pytest.mark.asyncio
     async def test_node_entry_keys(self, minimal_workflow: Workflow) -> None:
-        with patch("sirenspec.core.executor.resolve_provider", return_value=_make_mock_provider()):
+        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=_make_mock_provider()):
             trace = await execute(minimal_workflow, "hi")
 
         node = trace["nodes"][0]
@@ -58,7 +58,7 @@ class TestTraceStructure:
 
     @pytest.mark.asyncio
     async def test_trace_is_json_serializable(self, minimal_workflow: Workflow) -> None:
-        with patch("sirenspec.core.executor.resolve_provider", return_value=_make_mock_provider()):
+        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=_make_mock_provider()):
             trace = await execute(minimal_workflow, "hi")
 
         # Should not raise
@@ -70,7 +70,7 @@ class TestTraceStructure:
         mock_provider = MagicMock()
         mock_provider.complete = AsyncMock(side_effect=RuntimeError("API down"))
 
-        with patch("sirenspec.core.executor.resolve_provider", return_value=mock_provider):
+        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider):
             trace = await execute(minimal_workflow, "hi")
 
         assert trace["summary"]["status"] == "failed"
@@ -79,7 +79,7 @@ class TestTraceStructure:
 
     @pytest.mark.asyncio
     async def test_duration_ms_is_numeric(self, minimal_workflow: Workflow) -> None:
-        with patch("sirenspec.core.executor.resolve_provider", return_value=_make_mock_provider()):
+        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=_make_mock_provider()):
             trace = await execute(minimal_workflow, "hi")
 
         assert isinstance(trace["nodes"][0]["duration_ms"], (int, float))
@@ -87,7 +87,7 @@ class TestTraceStructure:
 
     @pytest.mark.asyncio
     async def test_summary_status_success(self, minimal_workflow: Workflow) -> None:
-        with patch("sirenspec.core.executor.resolve_provider", return_value=_make_mock_provider()):
+        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=_make_mock_provider()):
             trace = await execute(minimal_workflow, "hi")
 
         assert trace["summary"]["status"] == "success"

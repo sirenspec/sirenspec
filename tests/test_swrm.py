@@ -8,7 +8,7 @@ import pytest
 
 from sirenspec.core.executor import execute
 from sirenspec.core.models import AgentDefinition, Edge, Node, SwrmAgent, SwrmNode, SwrmSynthesis, Workflow
-from sirenspec.core.swrm import build_template_context, render_template, execute_swrm
+from sirenspec.core.swrm_runner import build_template_context, execute_swrm, render_template
 from sirenspec.exceptions import SwrmAgentError
 
 # ---------------------------------------------------------------------------
@@ -141,7 +141,7 @@ class TestSwrmAllAgentsSucceed:
         mock_provider.complete = mock_complete
         mock_provider.last_token_count = 5
 
-        with patch("sirenspec.core.swrm.resolve_provider", return_value=mock_provider):
+        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider):
             node = SwrmNode(
                 type="swrm",
                 agents=[
@@ -174,7 +174,7 @@ class TestSwrmAllAgentsSucceed:
         mock_provider.complete = mock_complete
         mock_provider.last_token_count = 3
 
-        with patch("sirenspec.core.swrm.resolve_provider", return_value=mock_provider):
+        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider):
             node = SwrmNode(
                 type="swrm",
                 agents=[
@@ -193,7 +193,7 @@ class TestSwrmAllAgentsSucceed:
     async def test_agent_outputs_in_trace(self) -> None:
         """Each agent's output is accessible in the agents list."""
         mock_provider = _make_provider_mock("agent result", tokens=7)
-        with patch("sirenspec.core.swrm.resolve_provider", return_value=mock_provider):
+        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider):
             node = SwrmNode(
                 type="swrm",
                 agents=[SwrmAgent(id="only", provider="openai", model="gpt-4o-mini", prompt="do something")],
@@ -209,7 +209,7 @@ class TestSwrmAllAgentsSucceed:
     async def test_token_and_duration_totals(self) -> None:
         """Total tokens and duration are summed across all agents + synthesis."""
         mock_provider = _make_provider_mock("result", tokens=10)
-        with patch("sirenspec.core.swrm.resolve_provider", return_value=mock_provider):
+        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider):
             node = SwrmNode(
                 type="swrm",
                 agents=[
@@ -252,7 +252,7 @@ class TestSwrmAllAgentsSucceed:
 
         mock_provider.complete = sequenced_complete
 
-        with patch("sirenspec.core.swrm.resolve_provider", return_value=mock_provider):
+        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider):
             node = SwrmNode(
                 type="swrm",
                 agents=[
@@ -293,7 +293,7 @@ class TestSwrmAgentFailureAbort:
         mock_provider.complete = failing_complete
         mock_provider.last_token_count = 0
 
-        with patch("sirenspec.core.swrm.resolve_provider", return_value=mock_provider):
+        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider):
             node = SwrmNode(
                 type="swrm",
                 on_failure="abort",
@@ -329,7 +329,7 @@ class TestSwrmAgentFailureAbort:
             },
         )
 
-        with patch("sirenspec.core.swrm.resolve_provider", return_value=mock_provider):
+        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider):
             trace = await execute(wf, "input")
 
         assert trace["summary"]["status"] == "failed"
@@ -357,7 +357,7 @@ class TestSwrmAgentFailureContinue:
         mock_provider.complete = partial_fail
         mock_provider.last_token_count = 5
 
-        with patch("sirenspec.core.swrm.resolve_provider", return_value=mock_provider):
+        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider):
             node = SwrmNode(
                 type="swrm",
                 on_failure="continue",
@@ -383,7 +383,7 @@ class TestSwrmAgentFailureContinue:
         mock_provider.complete = AsyncMock(side_effect=RuntimeError("fail"))
         mock_provider.last_token_count = 0
 
-        with patch("sirenspec.core.swrm.resolve_provider", return_value=mock_provider):
+        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider):
             node = SwrmNode(
                 type="swrm",
                 on_failure="continue",
@@ -417,7 +417,7 @@ class TestSwrmInWorkflow:
                 )
             },
         )
-        with patch("sirenspec.core.swrm.resolve_provider", return_value=mock_provider):
+        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider):
             trace = await execute(wf, "hello")
 
         assert trace["summary"]["status"] == "success"
@@ -459,10 +459,7 @@ class TestSwrmInWorkflow:
         def resolve_side_effect(uri: str) -> MagicMock:
             return mock_swrm_provider
 
-        with (
-            patch("sirenspec.core.swrm.resolve_provider", side_effect=resolve_side_effect),
-            patch("sirenspec.core.executor.resolve_provider", side_effect=resolve_side_effect),
-        ):
+        with patch("sirenspec.core.agent_runner.resolve_provider", side_effect=resolve_side_effect):
             trace = await execute(wf, "input")
 
         node_ids = [n["id"] for n in trace["nodes"]]
@@ -488,7 +485,7 @@ class TestSwrmInWorkflow:
         mock_provider.complete = concurrency_probe
         mock_provider.last_token_count = 1
 
-        with patch("sirenspec.core.swrm.resolve_provider", return_value=mock_provider):
+        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider):
             node = SwrmNode(
                 type="swrm",
                 concurrency=1,

@@ -1,4 +1,4 @@
-"""Retry engine: backoff calculation and retry-loop execution for provider calls."""
+"""Retry engine: backoff calculation and retry-loop execution."""
 
 from __future__ import annotations
 
@@ -64,22 +64,22 @@ def error_matches_policy(exc: Exception, policy: RetryPolicy) -> bool:
     return False
 
 
-async def run_with_retry(
+async def run_with_retry[T](
     node_id: str,
     policy: RetryPolicy,
-    call: Callable[[], Coroutine[Any, Any, str]],
+    call: Callable[[], Coroutine[Any, Any, T]],
     on_attempt: Callable[[int, float, str], None] | None = None,
-) -> str:
+) -> T:
     """Execute *call* with retries according to *policy*.
 
     :param node_id: Identifier of the node being executed (used in error messages and logs).
     :param policy: The :class:`~sirenspec.core.models.RetryPolicy` governing retry behaviour.
-    :param call: An async callable (no arguments) that performs the provider call and returns a string.
+    :param call: An async callable (no arguments) that performs the call and returns a value.
     :param on_attempt: Optional callback invoked before each retry with
         ``(attempt_number, delay_seconds, error_message)``.  The first attempt (attempt 1)
         does not trigger this callback; it fires only for retries (attempt 2+).
     :raises RetryExhaustedError: When all attempts are exhausted without a successful result.
-    :returns: The string response from the provider on a successful attempt.
+    :returns: The value returned by *call* on a successful attempt.
     """
     last_exc: Exception | None = None
 

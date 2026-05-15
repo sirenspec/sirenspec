@@ -2,10 +2,37 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from sirenspec.guardrails.base import Guardrail
 
 _DEFAULT_GUARDRAILS = ["injection"]
-_KNOWN_GUARDRAILS = {"injection", "length"}
+
+
+def make_injection_guardrail() -> Guardrail:
+    """Instantiate an InjectionGuardrail.
+
+    :returns: Configured :class:`~sirenspec.guardrails.injection.InjectionGuardrail`.
+    """
+    from sirenspec.guardrails.injection import InjectionGuardrail
+
+    return InjectionGuardrail()
+
+
+def make_length_guardrail() -> Guardrail:
+    """Instantiate a LengthGuardrail.
+
+    :returns: Configured :class:`~sirenspec.guardrails.length.LengthGuardrail`.
+    """
+    from sirenspec.guardrails.length import LengthGuardrail
+
+    return LengthGuardrail()
+
+
+_GUARDRAIL_FACTORIES: dict[str, Callable[[], Guardrail]] = {
+    "injection": make_injection_guardrail,
+    "length": make_length_guardrail,
+}
 
 
 def build_guardrails(names: list[str] | None) -> list[Guardrail]:
@@ -21,19 +48,8 @@ def build_guardrails(names: list[str] | None) -> list[Guardrail]:
     if names is None:
         names = list(_DEFAULT_GUARDRAILS)
 
-    for name in names:
-        if name not in _KNOWN_GUARDRAILS:
-            raise ValueError(f"Unknown guardrail '{name}'; supported: {sorted(_KNOWN_GUARDRAILS)}")
+    unknown = [n for n in names if n not in _GUARDRAIL_FACTORIES]
+    if unknown:
+        raise ValueError(f"Unknown guardrail(s) {unknown!r}; supported: {sorted(_GUARDRAIL_FACTORIES)}")
 
-    guardrails: list[Guardrail] = []
-    for name in names:
-        if name == "injection":
-            from sirenspec.guardrails.injection import InjectionGuardrail
-
-            guardrails.append(InjectionGuardrail())
-        elif name == "length":
-            from sirenspec.guardrails.length import LengthGuardrail
-
-            guardrails.append(LengthGuardrail())
-
-    return guardrails
+    return [_GUARDRAIL_FACTORIES[name]() for name in names]

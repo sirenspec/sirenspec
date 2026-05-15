@@ -71,6 +71,7 @@ def sync_request(config: HttpToolConfig) -> Any:
             "http",
             f"HTTP {exc.code} {exc.reason} from {url}: {error_body[:200]}",
             cause=exc,
+            status_code=exc.code,
         ) from exc
     except urllib.error.URLError as exc:
         raise ToolError("http", f"Network error reaching {url}: {exc.reason}", cause=exc) from exc
