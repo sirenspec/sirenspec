@@ -275,7 +275,7 @@ class WorkflowInput(BaseModel):
 
 # Discriminator helper: if raw node dict has ``type == "tool"`` use ToolNode,
 # ``type == "swrm"`` use SwrmNode, else AgentNode.
-def _parse_node(raw: Any) -> AgentNode | ToolNode | SwrmNode:
+def parse_node(raw: Any) -> AgentNode | ToolNode | SwrmNode:
     """Parse a raw node dict into an ``AgentNode``, ``ToolNode``, or ``SwrmNode``.
 
     :param raw: The raw YAML mapping for a single node.

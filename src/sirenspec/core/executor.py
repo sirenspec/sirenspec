@@ -156,6 +156,7 @@ def resolve_on_failure_policy(workflow: Workflow, node_id: str) -> OnFailurePoli
     return OnFailurePolicy()
 
 
+
 async def run_tool_node(node_id: str, node: ToolNode) -> Any:
     """Execute a tool node with retry logic.
 
@@ -360,7 +361,7 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
             }
             start_time = time.monotonic()
             try:
-                result = await _run_tool_node(node_id, node)
+                result = await run_tool_node(node_id, node)
                 context.write(f"working.{node_id}.{node.output_key}", result)
                 duration_ms = (time.monotonic() - start_time) * 1000
                 tool_node_trace["result"] = result

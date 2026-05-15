@@ -25,14 +25,14 @@ async def run_http_tool(config: HttpToolConfig) -> Any:
     """
     try:
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, _sync_request, config)
+        return await loop.run_in_executor(None, sync_request, config)
     except ToolError:
         raise
     except Exception as exc:
         raise ToolError("http", f"Unexpected error during HTTP request: {exc}", cause=exc) from exc
 
 
-def _sync_request(config: HttpToolConfig) -> Any:
+def sync_request(config: HttpToolConfig) -> Any:
     """Execute the HTTP request synchronously.
 
     This is called via ``run_in_executor`` so it does not block the event loop.
