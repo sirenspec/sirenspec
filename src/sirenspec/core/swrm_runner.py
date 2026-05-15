@@ -35,7 +35,9 @@ def render_template(template: str, context: dict[str, Any]) -> str:
     """Render a ``{{ variable }}`` template against a flat context dict.
 
     Supports simple dotted-path lookups (e.g. ``{{ inputs.report }}``,
-    ``{{ analyze.agents.sentiment.output }}``).  Unknown paths are left as-is.
+    ``{{ analyze.agents.sentiment.output }}``).  Unknown paths are left as-is
+    rather than raising, so a typo in a prompt placeholder silently passes through
+    instead of crashing the workflow.
 
     :param template: Template string containing ``{{ … }}`` placeholders.
     :param context: Flat namespace of values to substitute.
@@ -47,6 +49,8 @@ def render_template(template: str, context: dict[str, Any]) -> str:
         current: Any = ctx
         for part in parts:
             if not isinstance(current, dict) or part not in current:
+                # Unknown path: preserve the original placeholder so the LLM
+                # still sees the template syntax and can signal the missing value.
                 return "{{ " + path + " }}"
             current = current[part]
         return str(current)
@@ -98,6 +102,12 @@ async def run_single_agent(
     :raises SwrmAgentError: If the provider call or a guardrail raises.
     :returns: Tuple of (response text, token count, elapsed milliseconds).
     """
+    # Swrm agents resolve guardrails differently from regular agent nodes:
+    # - If the agent defines its own guardrails, use those.
+    # - Otherwise, fall back to the workflow-level list (or [] if that's also None).
+    # Note: we use `or []` here (not `or None`) because swrm agents are designed
+    # to be lightweight fan-out workers — if no guardrails are configured at any
+    # level, disabling them is the intended default for swrm sub-agents.
     guardrail_names = agent.guardrails if agent.guardrails is not None else (global_guardrail_names or [])
     model_uri = f"{agent.provider}:{agent.model or 'gpt-4o-mini'}"
 
@@ -105,13 +115,18 @@ async def run_single_agent(
         result = await execute_agent_node(
             node_id=agent.id,
             model_uri=model_uri,
+            # Swrm agents have no system prompt — the per-agent prompt is the full context.
             system_prompt="",
             user_input=prompt,
             guardrail_names=guardrail_names,
+            # No retries inside swrm fan-out; failure handling is managed by
+            # run_with_semaphore, which lets all agents complete before deciding
+            # whether to abort or continue.
             retry_policy=RetryPolicy(max_attempts=1),
         )
         return result.output, result.tokens, result.duration_ms
     except SwrmAgentError:
+        # Already wrapped — don't double-wrap.
         raise
     except Exception as exc:
         raise SwrmAgentError(agent.id, exc) from exc
@@ -132,6 +147,9 @@ async def run_synthesis(
     :raises Exception: Propagates any provider or guardrail error directly.
     :returns: Tuple of (response text, token count, elapsed milliseconds).
     """
+    # Same guardrail fallback logic as run_single_agent: synthesis also defaults
+    # to [] (not None) because it is a coordinated aggregation step, not a
+    # standalone agent node that inherits workflow defaults.
     guardrail_names = synthesis.guardrails if synthesis.guardrails is not None else (global_guardrail_names or [])
     model_uri = f"{synthesis.provider}:{synthesis.model or 'gpt-4o-mini'}"
 
@@ -216,15 +234,20 @@ async def execute_swrm(
             try:
                 text, tok, dur = await run_single_agent(agent, rendered_prompt, global_guardrail_names)
                 agent_trace.update({"response_received": text, "tokens": tok, "duration_ms": round(dur, 2)})
+                # Return (trace, None) on success — no error to propagate.
                 return agent_trace, None
             except SwrmAgentError as exc:
                 agent_trace["error"] = str(exc)
+                # Return (trace, error) instead of raising so that asyncio.gather
+                # lets all other agents finish before we decide whether to abort.
                 return agent_trace, exc
             except Exception as exc:
                 wrapped = SwrmAgentError(agent.id, exc)
                 agent_trace["error"] = str(wrapped)
                 return agent_trace, wrapped
 
+    # asyncio.gather starts all tasks immediately; the semaphore throttles how
+    # many run concurrently. gather waits for every task before returning.
     tasks = [run_with_semaphore(agent) for agent in agents]
     gathered: list[tuple[dict[str, Any], SwrmAgentError | None]] = await asyncio.gather(*tasks)
 
@@ -236,6 +259,8 @@ async def execute_swrm(
     for agent_trace, exc in gathered:
         agent_traces.append(agent_trace)
         if exc is not None:
+            # Record only the first failure for the abort decision; subsequent
+            # failures are already captured in agent_trace["error"].
             if node.on_failure == "abort" and swrm_error is None:
                 swrm_error = exc
         else:
@@ -244,6 +269,8 @@ async def execute_swrm(
             total_tokens += agent_trace["tokens"]
             total_duration_ms += agent_trace["duration_ms"]
 
+    # Raise after all agents have completed (not inline in run_with_semaphore)
+    # so the trace contains every agent's result even on partial failure.
     if swrm_error is not None:
         raise swrm_error
 

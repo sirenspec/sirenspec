@@ -23,10 +23,14 @@ class DotDict:
 
     Only non-private attribute lookups are forwarded to the underlying dict;
     any ``AttributeError`` propagates naturally when a key is missing.
+
+    We use object.__setattr__ and object.__getattribute__ to bypass any
+    accidental ``__setattr__``/``__getattr__`` override that Python might add,
+    keeping the internal ``_data`` reference isolated from user-defined keys.
     """
 
     def __init__(self, data: dict[str, Any]) -> None:
-        # Store under a mangled name so user keys never shadow it.
+        # Store under a name that's very unlikely to collide with workflow keys.
         object.__setattr__(self, "_data", data)
 
     def __getattr__(self, key: str) -> Any:
@@ -173,6 +177,8 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
     context = WorkflowContext(initial_state=workflow.state)
     node_ids = list(workflow.nodes.keys())
 
+    # Build two graph structures: out_edges for edge traversal after each node
+    # completes, and in_degree for identifying root nodes (those with no predecessors).
     out_edges: dict[str, list[tuple[str, str | None]]] = {n: [] for n in node_ids}
     in_degree: dict[str, int] = dict.fromkeys(node_ids, 0)
     for edge in workflow.edges:
@@ -180,9 +186,17 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
         in_degree[edge.to_node] += 1
 
     edge_pairs = [(e.from_node, e.to_node) for e in workflow.edges]
+    # topological_sort detects cycles up-front and gives a stable node order
+    # that guarantees every node runs after all its predecessors.
     execution_order = topological_sort(node_ids, edge_pairs)
 
+    # Only root nodes (no incoming edges) are active at the start.
+    # Child nodes become active when their predecessors write to active_nodes.
     active_nodes: set[str] = {n for n in node_ids if in_degree[n] == 0}
+
+    # Tracks the dotted path of the most recent agent output so each subsequent
+    # agent in a linear chain automatically receives the prior agent's response.
+    # None means "use the original user_input" (no agent has run yet).
     last_writes_path: str | None = None
 
     trace_nodes: list[dict[str, Any]] = []
@@ -191,13 +205,22 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
     status = "success"
 
     global_guardrail_names = workflow.guardrails
+
+    # Fallback nodes are not reachable via normal edges — they are activated
+    # explicitly when a node's on_failure policy is 'fallback'. We track them
+    # here and inject them into active_nodes when the execution order reaches them.
     pending_fallback_nodes: set[str] = set()
 
     for node_id in execution_order:
+        # Inject fallback nodes into the active set when the topological order
+        # reaches them. This lets fallback routing work without adding edges
+        # to the graph (which would change reachability for topological_sort).
         if node_id in pending_fallback_nodes:
             active_nodes.add(node_id)
             pending_fallback_nodes.discard(node_id)
 
+        # Nodes not in active_nodes were never activated by their predecessors
+        # (e.g. the other branch of a conditional fork). Skip them silently.
         if node_id not in active_nodes:
             continue
 
@@ -306,13 +329,20 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
         agent_def = workflow.agents[node.agent]
 
         if last_writes_path is None:
+            # No prior agent has run yet — use the original workflow input.
             node_input = user_input
         else:
             try:
+                # Chain style: each agent receives the output of the previous agent.
+                # Falls back to user_input if the path doesn't resolve (e.g. a
+                # skipped node that never wrote its output key).
                 node_input = str(context.resolve(last_writes_path))
             except KeyError:
                 node_input = user_input
 
+        # Agent-level guardrails override workflow-level guardrails when set.
+        # Passing None (not []) is intentional — build_guardrails(None) applies
+        # the default injection guardrail, while build_guardrails([]) disables all.
         guardrail_names = agent_def.guardrails if agent_def.guardrails is not None else global_guardrail_names
         retry_policy = resolve_retry_policy(workflow, node_id)
         on_failure_policy = resolve_on_failure_policy(workflow, node_id)

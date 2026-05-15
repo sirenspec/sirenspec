@@ -63,6 +63,8 @@ class ToolError(SirenSpecError):
     :param message: A human-readable description of the failure.
     :param cause: The upstream exception that triggered this error, if any.
     :param status_code: HTTP status code, if the failure originated from an HTTP response.
+        Used by the retry engine to match against numeric triggers in a RetryPolicy
+        (e.g. retry on 429 or 503).  ``None`` for network-level failures (no HTTP response).
     """
 
     def __init__(
@@ -76,4 +78,6 @@ class ToolError(SirenSpecError):
         super().__init__(full_message)
         self.tool_name = tool_name
         self.cause = cause
+        # status_code mirrors the same attribute on ProviderError so that
+        # error_matches_policy() in retry.py can treat both error types uniformly.
         self.status_code = status_code

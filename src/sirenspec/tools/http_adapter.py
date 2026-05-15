@@ -25,8 +25,13 @@ async def run_http_tool(config: HttpToolConfig) -> Any:
     """
     try:
         loop = asyncio.get_event_loop()
+        # urllib is synchronous (blocking I/O). run_in_executor offloads it to a
+        # thread pool so it does not block the asyncio event loop while waiting
+        # for the network. None means "use the default executor" (ThreadPoolExecutor).
         return await loop.run_in_executor(None, sync_request, config)
     except ToolError:
+        # ToolError already has the right message and status_code — re-raise it
+        # unchanged instead of wrapping it in another ToolError.
         raise
     except Exception as exc:
         raise ToolError("http", f"Unexpected error during HTTP request: {exc}", cause=exc) from exc
@@ -67,6 +72,9 @@ def sync_request(config: HttpToolConfig) -> Any:
             content_type = resp.headers.get("Content-Type", "")
     except urllib.error.HTTPError as exc:
         error_body = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
+        # exc.code is the HTTP status code (urllib uses .code, not .status_code).
+        # We store it on ToolError so the retry engine can match it against
+        # numeric triggers in a RetryPolicy (e.g. retry on 429 or 503).
         raise ToolError(
             "http",
             f"HTTP {exc.code} {exc.reason} from {url}: {error_body[:200]}",
@@ -74,15 +82,19 @@ def sync_request(config: HttpToolConfig) -> Any:
             status_code=exc.code,
         ) from exc
     except urllib.error.URLError as exc:
+        # URLError covers DNS failures, refused connections, etc.
+        # status_code is left as None so error_matches_policy treats this as "network_error".
         raise ToolError("http", f"Network error reaching {url}: {exc.reason}", cause=exc) from exc
     except TimeoutError as exc:
         raise ToolError("http", f"Request to {url} timed out after {timeout}s", cause=exc) from exc
 
     # Attempt JSON parse when the response content-type indicates JSON.
+    # If JSON parsing fails despite the content-type header, fall back to raw text
+    # rather than raising — malformed JSON from an external service is not our bug.
     if "application/json" in content_type or "text/json" in content_type:
         try:
             return json.loads(raw_body)
         except json.JSONDecodeError:
-            pass  # Fall back to raw text if JSON parse fails.
+            pass
 
     return raw_body

@@ -45,20 +45,29 @@ async def execute_agent_node(
     :param system_prompt: System prompt text; omitted from messages when empty.
     :param user_input: Already-resolved user input text.
     :param guardrail_names: Names of guardrails to apply on input and output.
+        Pass ``None`` to use the default set (injection detection).
+        Pass ``[]`` to explicitly disable all guardrails.
+        These two cases are NOT the same — None is never silently coerced to [].
     :param retry_policy: Policy governing retry behaviour on provider failure.
     :raises GuardrailViolation: If any guardrail rejects the input or output.
     :raises RetryExhaustedError: If the provider fails on all retry attempts.
     :returns: :class:`AgentRunResult` with output, token count, timing, and audit trail.
     """
+    # None → default guardrails (injection detection); [] → no guardrails.
+    # build_guardrails understands this distinction — do not coerce None to [] here.
     guardrails = build_guardrails(guardrail_names)
     guardrails_passed: list[str] = []
     retry_attempts: list[dict[str, Any]] = []
 
+    # Run each guardrail's input check in order; each check may transform the text
+    # (e.g. stripping detected injections) before passing it to the next guardrail.
     checked_input = user_input
     for g in guardrails:
         checked_input = g.check_input(checked_input)
         guardrails_passed.append(f"{type(g).__name__}.check_input")
 
+    # An empty system_prompt means "no system message" — used by swrm agents,
+    # which always pass "" so the synthesis step can be stateless.
     messages: list[dict[str, str]] = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
@@ -66,18 +75,28 @@ async def execute_agent_node(
 
     provider = resolve_provider(model_uri)
 
+    # log_retry is a closure that captures retry_attempts by reference.
+    # run_with_retry calls it before each retry (not before the first attempt).
     def log_retry(attempt: int, delay: float, error: str) -> None:
         retry_attempts.append({"attempt": attempt, "delay_seconds": round(delay, 3), "error": error})
 
     start = time.monotonic()
 
+    # run_with_retry requires a zero-argument async callable so it can re-invoke
+    # the provider on each retry without needing to know about messages or the provider.
     async def call() -> str:
         return await provider.complete(messages)
 
     output = await run_with_retry(node_id=node_id, policy=retry_policy, call=call, on_attempt=log_retry)
+
+    # Read token count after the retry loop completes; the provider updates
+    # last_token_count after every successful call, so this always reflects the
+    # attempt that actually succeeded.
     tokens = provider.last_token_count
     duration_ms = (time.monotonic() - start) * 1000
 
+    # Output guardrails run after a successful provider response. They may raise
+    # GuardrailViolation (e.g. length exceeded) — this is NOT retried.
     for g in guardrails:
         output = g.check_output(output)
         guardrails_passed.append(f"{type(g).__name__}.check_output")

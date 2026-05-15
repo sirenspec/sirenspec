@@ -212,12 +212,13 @@ All tool failures raise `sirenspec.exceptions.ToolError` (a subclass of `SirenSp
 [tool:python] Cannot import module 'mypackage.tools': No module named 'mypackage'
 ```
 
-`ToolError` exposes two attributes:
+`ToolError` exposes three attributes:
 
 | Attribute | Type | Description |
 |-----------|------|-------------|
 | `tool_name` | `str` | The adapter that raised the error (`"http"` or `"python"`). |
 | `cause` | `BaseException \| None` | The upstream exception, if any. |
+| `status_code` | `int \| None` | HTTP status code when the failure originated from a non-2xx response (e.g. `404`, `503`). `None` for network-level errors (connection refused, DNS failure, timeout). Used by retry policies to match numeric triggers like `on: ["429", "503"]`. |
 
 ---
 

@@ -27,6 +27,10 @@ class ToolRunResult:
 async def dispatch_tool(node: ToolNode) -> Any:
     """Route a tool node to the appropriate adapter and return its result.
 
+    The tool name and config type are always validated together: a mismatch
+    (e.g. tool='http' but config is a PythonToolConfig) is a programming error
+    and raises ToolError immediately without retrying.
+
     :param node: The :class:`~sirenspec.core.models.ToolNode` to execute.
     :raises ToolError: If the tool type is unrecognised or the config type does not match.
     :returns: The value returned by the adapter.
@@ -41,7 +45,9 @@ async def dispatch_tool(node: ToolNode) -> Any:
 async def execute_tool_node(node_id: str, node: ToolNode) -> ToolRunResult:
     """Execute a tool node, retrying on failure up to ``node.retry`` additional times.
 
-    On-failure handling is resolved here:
+    Tool nodes use a simpler retry model than agent nodes: every ToolError triggers
+    a retry (there is no per-error-type matching like the LLM retry policy). The
+    ``on_failure`` behaviour is resolved here after all attempts are exhausted:
 
     * ``on_failure='skip'`` — returns :class:`ToolRunResult` with ``result=None`` instead of raising.
     * ``on_failure='raise'`` (default) — re-raises the last :class:`~sirenspec.exceptions.ToolError`.
@@ -51,10 +57,14 @@ async def execute_tool_node(node_id: str, node: ToolNode) -> ToolRunResult:
     :raises ToolError: If all retry attempts fail and ``on_failure`` is ``'raise'``.
     :returns: :class:`ToolRunResult` with the tool's output and elapsed time.
     """
+    # node.retry is the number of *extra* attempts beyond the first, so
+    # total attempts = retry + 1.  None means no retries (1 attempt total).
     max_attempts = (node.retry or 0) + 1
     last_exc: ToolError | None = None
 
     start = time.monotonic()
+    # The loop variable is named with a leading underscore because it is never
+    # used inside the loop body — ruff (rule B007) would flag an unused variable.
     for _attempt_index in range(max_attempts):
         try:
             result = await dispatch_tool(node)
@@ -62,10 +72,16 @@ async def execute_tool_node(node_id: str, node: ToolNode) -> ToolRunResult:
         except ToolError as exc:
             last_exc = exc
 
+    # We only reach here when every attempt raised ToolError.
     duration_ms = (time.monotonic() - start) * 1000
 
     if node.on_failure == "skip":
+        # Return a sentinel result so the executor can continue the workflow
+        # without treating this as a fatal failure.
         return ToolRunResult(result=None, duration_ms=duration_ms)
 
+    # The type checker cannot prove last_exc is non-None here, but the logic
+    # guarantees it: the loop always runs at least once (max_attempts >= 1) and
+    # we only reach this line when every iteration caught a ToolError.
     assert last_exc is not None
     raise last_exc
