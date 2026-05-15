@@ -1,0 +1,49 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "name": "SirenSpec",
+  "theme": "willow",
+  "logo": {
+    "light": "/docs/logo/light.svg",
+    "dark": "/docs/logo/dark.svg"
+  },
+  "favicon": "/docs/favicon.svg",
+  "colors": {
+    "primary": "#0D9373",
+    "light": "#07C983",
+    "dark": "#0D9373"
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "GitHub",
+        "href": "https://github.com/TJLSmith0831/sirenspec"
+      }
+    ]
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": ["docs/introduction", "docs/quickstart", "docs/examples"]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": ["docs/assistant", "docs/yaml-reference", "docs/providers", "docs/guardrails"]
+          },
+          {
+            "group": "Reference",
+            "pages": ["docs/cli-reference", "docs/sdk"]
+          }
+        ]
+      }
+    ]
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/TJLSmith0831/sirenspec"
+    }
+  }
+}

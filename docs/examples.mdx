@@ -1,0 +1,303 @@
+---
+title: Examples
+description: Three runnable workflow examples that cover the most common SirenSpec patterns.
+---
+
+The repository ships with three ready-to-run examples in the `examples/` directory. Each illustrates a distinct workflow pattern.
+
+```bash
+git clone https://github.com/TJLSmith0831/sirenspec.git
+cd sirenspec
+uv sync
+```
+
+---
+
+## Simple Agent
+
+**File:** `examples/simple-agent.yaml`
+
+A single agent answers one question. This is the smallest valid SirenSpec workflow — one agent, one node, no edges.
+
+```yaml examples/simple-agent.yaml
+version: "0.1"
+
+agents:
+  assistant:
+    model: "openai:gpt-4o-mini"
+    system: "You are a helpful assistant. Answer questions clearly and concisely."
+
+nodes:
+  answer:
+    agent: assistant
+    writes: output.reply
+
+input:
+  message: "What is the capital of France?"
+```
+
+**Run it:**
+
+```bash
+sirenspec run examples/simple-agent.yaml
+# or override the input:
+sirenspec run examples/simple-agent.yaml --input "What is the boiling point of water?"
+```
+
+**Output:**
+
+```json
+{
+  "workflow": { "version": "0.1" },
+  "input": { "message": "What is the capital of France?" },
+  "nodes": [
+    {
+      "id": "answer",
+      "agent": "assistant",
+      "prompt_sent": "What is the capital of France?",
+      "response_received": "Paris is the capital of France.",
+      "writes": "output.reply",
+      "guardrails_passed": ["InjectionGuardrail.check_input", "InjectionGuardrail.check_output"],
+      "tokens": 24,
+      "duration_ms": 310.2,
+      "error": null
+    }
+  ],
+  "output": { "reply": "Paris is the capital of France." },
+  "summary": { "total_tokens": 24, "total_duration_ms": 310.2, "status": "success" }
+}
+```
+
+**Diagram:**
+
+```
+graph TD
+    answer[answer]
+```
+
+---
+
+## Sequential Pipeline
+
+**File:** `examples/sequential-pipeline.yaml`
+
+Two agents run in order. The first classifies the user's intent; the second composes a reply using that classification as its input. This pattern is common for any classify → respond flow.
+
+```yaml examples/sequential-pipeline.yaml
+version: "0.1"
+
+agents:
+  classifier:
+    model: "openai:gpt-4o-mini"
+    system: |
+      Classify the user's message into one of these intents: question, complaint, feedback, other.
+      Respond with ONLY the intent label, nothing else.
+
+  replier:
+    model: "anthropic:claude-haiku-4-5-20251001"
+    system: |
+      You are a customer support agent. The user's intent has been classified.
+      Compose a short, helpful reply appropriate for that intent.
+
+nodes:
+  classify:
+    agent: classifier
+    writes: working.intent
+
+  reply:
+    agent: replier
+    writes: output.reply
+
+edges:
+  - from: classify
+    to: reply
+
+guardrails:
+  - injection
+  - length
+```
+
+<Note>
+This workflow mixes providers: OpenAI handles classification, Anthropic writes the reply. Each agent independently resolves its own provider at runtime.
+</Note>
+
+**Run it:**
+
+```bash
+sirenspec run examples/sequential-pipeline.yaml --input "I need help with my order"
+```
+
+**How data flows:**
+
+1. `classify` receives the user input, outputs `"complaint"` (or similar) to `working.intent`.
+2. `reply` receives the output of `classify` as its user message, then composes a response and writes it to `output.reply`.
+
+**Output:**
+
+```json
+{
+  "nodes": [
+    {
+      "id": "classify",
+      "prompt_sent": "I need help with my order",
+      "response_received": "complaint",
+      "writes": "working.intent"
+    },
+    {
+      "id": "reply",
+      "prompt_sent": "complaint",
+      "response_received": "I'm sorry to hear you're having trouble...",
+      "writes": "output.reply"
+    }
+  ],
+  "output": { "reply": "I'm sorry to hear you're having trouble with your order..." },
+  "summary": { "status": "success" }
+}
+```
+
+**Render the graph:**
+
+```bash
+sirenspec render examples/sequential-pipeline.yaml --target mermaid
+```
+
+```
+graph TD
+    classify[classify]
+    reply[reply]
+    classify --> reply
+```
+
+---
+
+## Conditional Pipeline
+
+**File:** `examples/conditional-pipeline.yaml`
+
+A triage agent routes each request to one of two downstream handlers based on a `when:` expression. Only one branch executes per run — the other node is silently skipped.
+
+```yaml examples/conditional-pipeline.yaml
+version: "0.1"
+
+agents:
+  triage_agent:
+    model: "openai:gpt-4o-mini"
+    system: |
+      Classify the user's message as either a refund request or a general enquiry.
+      Reply with ONLY one word — either "refund" or "general" — and nothing else.
+
+  refund_handler:
+    model: "openai:gpt-4o-mini"
+    system: |
+      You are a customer-support specialist handling refund requests.
+      Acknowledge the request warmly, outline the refund process in two or three
+      sentences, and let the customer know how long it typically takes.
+
+  general_handler:
+    model: "openai:gpt-4o-mini"
+    system: |
+      You are a helpful customer-support agent.
+      Answer the user's question clearly and concisely in two or three sentences.
+
+nodes:
+  triage:
+    agent: triage_agent
+    writes: working.triage.intent
+
+  handle_refund:
+    agent: refund_handler
+    writes: output.reply
+
+  handle_general:
+    agent: general_handler
+    writes: output.reply
+
+edges:
+  - from: triage
+    to: handle_refund
+    when: working.triage.intent == "refund"
+
+  - from: triage
+    to: handle_general
+    when: working.triage.intent == "general"
+
+guardrails:
+  - injection
+  - length
+```
+
+**Run it:**
+
+```bash
+# Triggers handle_refund
+sirenspec run examples/conditional-pipeline.yaml --input "I want a refund on my last order"
+
+# Triggers handle_general
+sirenspec run examples/conditional-pipeline.yaml --input "What are your store hours?"
+```
+
+**How branching works:**
+
+After `triage` writes its one-word classification to `working.triage.intent`, SirenSpec evaluates both outgoing edges:
+
+- `working.triage.intent == "refund"` → activates `handle_refund`
+- `working.triage.intent == "general"` → activates `handle_general`
+
+Only the matching branch runs. If neither expression matches (e.g. the LLM returns an unexpected label), both nodes are skipped and `output.reply` is never written.
+
+**Output (refund path):**
+
+```json
+{
+  "nodes": [
+    {
+      "id": "triage",
+      "prompt_sent": "I want a refund on my last order",
+      "response_received": "refund",
+      "writes": "working.triage.intent"
+    },
+    {
+      "id": "handle_refund",
+      "prompt_sent": "refund",
+      "response_received": "We're sorry to hear that. To process your refund...",
+      "writes": "output.reply"
+    }
+  ],
+  "output": { "reply": "We're sorry to hear that. To process your refund..." },
+  "summary": { "status": "success" }
+}
+```
+
+**Render the graph:**
+
+```bash
+sirenspec render examples/conditional-pipeline.yaml --target mermaid
+```
+
+```
+graph TD
+    triage[triage]
+    handle_refund[handle_refund]
+    handle_general[handle_general]
+    triage -->|"working.triage.intent == 'refund'"| handle_refund
+    triage -->|"working.triage.intent == 'general'"| handle_general
+```
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="YAML Reference" icon="book" href="/yaml-reference">
+    Every field available in a workflow file.
+  </Card>
+  <Card title="CLI Reference" icon="terminal" href="/cli-reference">
+    Full documentation for `run`, `validate`, and `render`.
+  </Card>
+  <Card title="Guardrails" icon="shield" href="/guardrails">
+    Configure injection detection and output length limits.
+  </Card>
+  <Card title="Python SDK" icon="code" href="/sdk">
+    Run workflows programmatically from Python.
+  </Card>
+</CardGroup>
