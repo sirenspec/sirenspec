@@ -31,7 +31,7 @@
           },
           {
             "group": "Core Concepts",
-            "pages": ["docs/assistant", "docs/yaml-reference", "docs/providers", "docs/guardrails"]
+            "pages": ["docs/assistant", "docs/yaml-reference", "docs/providers", "docs/guardrails", "docs/swrm"]
           },
           {
             "group": "Reference",
