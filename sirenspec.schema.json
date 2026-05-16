@@ -116,6 +116,56 @@
           "description": "Optional synthesis step. Its output becomes the node's canonical output."
         }
       }
+    },
+    "FactoryNode": {
+      "type": "object",
+      "description": "A factory node that dynamically spawns agent instances for each item in a runtime list. The for_each expression resolves to a JSON array; one agent call is made per item. Supports {{ item }} and {{ index }} interpolation inside inputs.",
+      "required": ["type", "agent", "for_each", "writes"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["factory"],
+          "description": "Node type discriminator. Must be 'factory'."
+        },
+        "agent": {
+          "type": "string",
+          "description": "Agent ID from the top-level agents map. This agent is instantiated once per list item."
+        },
+        "for_each": {
+          "type": "string",
+          "description": "Template expression that resolves to a JSON list at runtime. Example: \"{{ plan.output }}\". Supports {{ expr }} interpolation.",
+          "x-interpolation": true
+        },
+        "inputs": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Template strings for each input key. Supports {{ item }}, {{ index }}, and all other interpolation namespaces.",
+          "x-interpolation": true
+        },
+        "concurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1,
+          "description": "Maximum number of agent instances to run concurrently."
+        },
+        "timeout_per_instance": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 60,
+          "description": "Per-instance timeout in seconds. Instances exceeding this limit are killed and recorded as errors."
+        },
+        "on_failure": {
+          "type": "string",
+          "enum": ["abort", "continue"],
+          "default": "abort",
+          "description": "Policy when an instance fails: 'abort' raises FactoryNodeError; 'continue' records the error and continues."
+        },
+        "writes": {
+          "type": "string",
+          "description": "Dot-notation context path where the list of instance outputs is stored (e.g. 'working.execute.outputs')."
+        }
+      }
     }
   },
   "properties": {
@@ -138,7 +188,8 @@
           },
           "system": {
             "type": "string",
-            "description": "System prompt for this agent."
+            "description": "System prompt for this agent. Supports {{ expr }} interpolation against the workflow context.",
+            "x-interpolation": true
           },
           "guardrails": {
             "type": "array",
@@ -155,6 +206,7 @@
         "oneOf": [
           { "$ref": "#/definitions/AgentNode" },
           { "$ref": "#/definitions/SwrmNode" },
+          { "$ref": "#/definitions/FactoryNode" },
           {
             "type": "object",
             "description": "Tool node: invokes an HTTP endpoint or a Python callable.",

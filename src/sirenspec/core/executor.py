@@ -8,10 +8,12 @@ from typing import Any
 
 from sirenspec.core.agent_runner import execute_agent_node
 from sirenspec.core.context import WorkflowContext
-from sirenspec.core.models import AgentNode, OnFailurePolicy, RetryPolicy, SwrmNode, ToolNode, Workflow
+from sirenspec.core.factory_runner import execute_factory_node
+from sirenspec.core.interpolation import build_interpolation_context, resolve_template
+from sirenspec.core.models import AgentNode, FactoryNode, OnFailurePolicy, RetryPolicy, SwrmNode, ToolNode, Workflow
 from sirenspec.core.swrm_runner import execute_swrm
 from sirenspec.core.tool_runner import execute_tool_node
-from sirenspec.exceptions import RetryExhaustedError, SwrmAgentError, ToolError
+from sirenspec.exceptions import FactoryNodeError, InterpolationError, RetryExhaustedError, SwrmAgentError, ToolError
 from sirenspec.guardrails.base import GuardrailViolation
 
 
@@ -264,6 +266,7 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
                         agent_trace["response_received"],
                     )
             context.write(f"output.{node_id}", swrm_trace["output"])
+            context.write(f"working.{node_id}.output", swrm_trace["output"])
             last_writes_path = f"output.{node_id}"
 
             total_tokens += swrm_trace["tokens"]
@@ -323,6 +326,53 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
             continue
 
         # ------------------------------------------------------------------ #
+        # Factory node — dynamic agent fan-out over a runtime list.          #
+        # ------------------------------------------------------------------ #
+        if isinstance(node, FactoryNode):
+            start_time = time.monotonic()
+            try:
+                factory_trace = await execute_factory_node(
+                    node_id=node_id,
+                    node=node,
+                    workflow=workflow,
+                    user_input=user_input,
+                    working=context.working,
+                    output=context.output,
+                    guardrail_names=global_guardrail_names,
+                )
+            except (FactoryNodeError, InterpolationError, Exception) as exc:
+                duration_ms = (time.monotonic() - start_time) * 1000
+                error_trace: dict[str, Any] = {
+                    "id": node_id,
+                    "type": "factory",
+                    "instances": [],
+                    "outputs": [],
+                    "tokens": 0,
+                    "duration_ms": round(duration_ms, 2),
+                    "error": str(exc),
+                }
+                total_duration_ms += duration_ms
+                status = "failed"
+                trace_nodes.append(error_trace)
+                break
+
+            outputs_list = factory_trace["outputs"]
+            context.write(node.writes, outputs_list)
+            context.write(f"working.{node_id}.outputs", outputs_list)
+            context.write(f"working.{node_id}.output", "\n".join(s for s in outputs_list if s))
+            last_writes_path = node.writes
+
+            total_tokens += factory_trace["tokens"]
+            total_duration_ms += factory_trace["duration_ms"]
+
+            for target, condition in out_edges[node_id]:
+                if condition is None or evaluate_when_condition(condition, context):
+                    active_nodes.add(target)
+
+            trace_nodes.append(factory_trace)
+            continue
+
+        # ------------------------------------------------------------------ #
         # Agent node — guarded LLM call with retry and on-failure routing.   #
         # ------------------------------------------------------------------ #
         assert isinstance(node, AgentNode)
@@ -347,9 +397,16 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
         retry_policy = resolve_retry_policy(workflow, node_id)
         on_failure_policy = resolve_on_failure_policy(workflow, node_id)
 
+        # Resolve the system prompt with the current context so {{ inputs.* }} and
+        # {{ node_id.output }} expressions in system prompts are evaluated at runtime.
+        interp_ctx = build_interpolation_context(user_input, context.working)
+        resolved_system = resolve_template(agent_def.system, interp_ctx)
+        redacted_system = resolve_template(agent_def.system, interp_ctx, redact_env=True)
+
         agent_node_trace: dict[str, Any] = {
             "id": node_id,
             "agent": node.agent,
+            "system_prompt": redacted_system,
             "prompt_sent": node_input,
             "response_received": None,
             "writes": node.writes,
@@ -365,13 +422,14 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
             run_result = await execute_agent_node(
                 node_id=node_id,
                 model_uri=agent_def.model,
-                system_prompt=agent_def.system,
+                system_prompt=resolved_system,
                 user_input=node_input,
                 guardrail_names=guardrail_names,
                 retry_policy=retry_policy,
             )
 
             context.write(node.writes, run_result.output)
+            context.write(f"working.{node_id}.output", run_result.output)
             last_writes_path = node.writes
 
             for target, condition in out_edges[node_id]:

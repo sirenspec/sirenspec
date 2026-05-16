@@ -21,68 +21,12 @@ The node's canonical output is::
 from __future__ import annotations
 
 import asyncio
-import re
 from typing import Any
 
 from sirenspec.core.agent_runner import execute_agent_node
+from sirenspec.core.interpolation import build_interpolation_context, resolve_template
 from sirenspec.core.models import RetryPolicy, SwrmAgent, SwrmNode, SwrmSynthesis
-from sirenspec.exceptions import SwrmAgentError
-
-_TEMPLATE_RE = re.compile(r"\{\{\s*(.+?)\s*\}\}")
-
-
-def render_template(template: str, context: dict[str, Any]) -> str:
-    """Render a ``{{ variable }}`` template against a flat context dict.
-
-    Supports simple dotted-path lookups (e.g. ``{{ inputs.report }}``,
-    ``{{ analyze.agents.sentiment.output }}``).  Unknown paths are left as-is
-    rather than raising, so a typo in a prompt placeholder silently passes through
-    instead of crashing the workflow.
-
-    :param template: Template string containing ``{{ … }}`` placeholders.
-    :param context: Flat namespace of values to substitute.
-    :returns: Rendered string.
-    """
-
-    def resolve_path(path: str, ctx: dict[str, Any]) -> str:
-        parts = path.split(".")
-        current: Any = ctx
-        for part in parts:
-            if not isinstance(current, dict) or part not in current:
-                # Unknown path: preserve the original placeholder so the LLM
-                # still sees the template syntax and can signal the missing value.
-                return "{{ " + path + " }}"
-            current = current[part]
-        return str(current)
-
-    return _TEMPLATE_RE.sub(lambda m: resolve_path(m.group(1).strip(), context), template)
-
-
-def build_template_context(
-    node_id: str,
-    user_input: str,
-    working: dict[str, Any],
-    output: dict[str, Any],
-    agent_results: dict[str, str] | None = None,
-) -> dict[str, Any]:
-    """Build the interpolation context for swrm prompts.
-
-    :param node_id: The swrm node's identifier.
-    :param user_input: Raw user input string passed to the workflow.
-    :param working: Current ``working`` context dict.
-    :param output: Current ``output`` context dict.
-    :param agent_results: Mapping of agent id → output string (populated after agents run).
-    :returns: Flat namespace dict suitable for :func:`render_template`.
-    """
-    ctx: dict[str, Any] = {
-        "inputs": {"message": user_input},
-        "working": working,
-        "output": output,
-    }
-    if agent_results is not None:
-        agents_ctx: dict[str, Any] = {aid: {"output": out} for aid, out in agent_results.items()}
-        ctx[node_id] = {"agents": agents_ctx}
-    return ctx
+from sirenspec.exceptions import InterpolationError, SwrmAgentError
 
 
 async def run_single_agent(
@@ -216,15 +160,28 @@ async def execute_swrm(
     concurrency = node.concurrency if node.concurrency is not None else len(agents)
     semaphore = asyncio.Semaphore(concurrency)
 
-    template_ctx = build_template_context(node_id, user_input, working, output)
+    interp_ctx = build_interpolation_context(user_input, working)
 
     agent_results: dict[str, str] = {}
 
     async def run_with_semaphore(agent: SwrmAgent) -> tuple[dict[str, Any], SwrmAgentError | None]:
-        rendered_prompt = render_template(agent.prompt, template_ctx)
-        agent_trace: dict[str, Any] = {
+        try:
+            rendered_prompt = resolve_template(agent.prompt, interp_ctx)
+            rendered_prompt_redacted = resolve_template(agent.prompt, interp_ctx, redact_env=True)
+        except InterpolationError as exc:
+            agent_trace: dict[str, Any] = {
+                "id": agent.id,
+                "prompt_sent": agent.prompt,
+                "response_received": None,
+                "tokens": 0,
+                "duration_ms": 0.0,
+                "error": str(exc),
+            }
+            return agent_trace, SwrmAgentError(agent.id, exc)
+
+        agent_trace = {
             "id": agent.id,
-            "prompt_sent": rendered_prompt,
+            "prompt_sent": rendered_prompt_redacted,
             "response_received": None,
             "tokens": 0,
             "duration_ms": 0.0,
@@ -278,10 +235,16 @@ async def execute_swrm(
     final_output: Any
 
     if node.synthesis is not None:
-        synth_ctx = build_template_context(node_id, user_input, working, output, agent_results)
-        rendered_synthesis_prompt = render_template(node.synthesis.prompt, synth_ctx)
+        # Merge agent results into a working snapshot so {{ node_id.agents.X.output }} resolves.
+        synth_working = {
+            **working,
+            node_id: {"agents": {aid: {"output": out} for aid, out in agent_results.items()}},
+        }
+        synth_ctx = build_interpolation_context(user_input, synth_working)
+        rendered_synthesis_prompt = resolve_template(node.synthesis.prompt, synth_ctx)
+        rendered_synthesis_redacted = resolve_template(node.synthesis.prompt, synth_ctx, redact_env=True)
         synthesis_trace = {
-            "prompt_sent": rendered_synthesis_prompt,
+            "prompt_sent": rendered_synthesis_redacted,
             "response_received": None,
             "tokens": 0,
             "duration_ms": 0.0,

@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from ruamel.yaml import YAML
 from ruamel.yaml.constructor import DuplicateKeyError
 
+from sirenspec.core.interpolation import check_circular_template_refs
 from sirenspec.core.models import Workflow
 
 
@@ -36,7 +37,10 @@ def load_workflow(filepath: str | Path) -> Workflow:
         raise ValueError(f"Expected a YAML mapping at the top level of '{filepath}'")
 
     try:
-        return Workflow.model_validate(raw)
+        workflow = Workflow.model_validate(raw)
     except ValidationError as exc:
         field_errors = "; ".join(f"{'.'.join(str(loc) for loc in e['loc'])}: {e['msg']}" for e in exc.errors())
         raise ValueError(f"Workflow validation failed in '{filepath}': {field_errors}") from exc
+
+    check_circular_template_refs(workflow)
+    return workflow

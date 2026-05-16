@@ -225,9 +225,48 @@ class SwrmNode(BaseModel):
     )
 
 
+class FactoryNode(BaseModel):
+    """A factory node that dynamically spawns agent instances for each item in a runtime list.
+
+    The ``for_each:`` expression is resolved at execution time to a JSON list.  One agent
+    instance is spawned per list item, with ``{{ item }}`` and ``{{ index }}`` available
+    inside ``inputs:`` template strings.  All instance outputs are collected and written
+    to the ``writes`` path as a list.
+
+    :Example::
+
+        nodes:
+          execute:
+            type: factory
+            agent: worker_agent
+            for_each: "{{ plan.output }}"
+            inputs:
+              task: "{{ item }}"
+              context: "{{ inputs.message }}"
+            concurrency: 4
+            timeout_per_instance: 60
+            on_failure: abort
+            writes: working.execute.outputs
+    """
+
+    type: Literal["factory"] = "factory"
+    agent: str = Field(..., description="Named agent from the workflow's top-level agents map.")
+    for_each: str = Field(..., description="Template expression that resolves to a JSON list at runtime.")
+    inputs: dict[str, str] = Field(
+        default_factory=dict,
+        description="Template strings for each input. Supports {{ item }} and {{ index }}.",
+    )
+    concurrency: int = Field(default=1, ge=1, description="Max parallel worker instances.")
+    timeout_per_instance: int = Field(default=60, ge=1, description="Per-instance timeout in seconds.")
+    on_failure: Literal["abort", "continue"] = Field(
+        default="abort", description="Policy when an instance fails: abort (raise) or continue (skip)."
+    )
+    writes: str = Field(..., description="Dot-notation path where the outputs list is stored.")
+
+
 # Backward-compatible alias so existing code using ``Node(agent=..., writes=...)`` keeps working.
 Node = AgentNode
-AnyNode = AgentNode | ToolNode | SwrmNode
+AnyNode = AgentNode | ToolNode | SwrmNode | FactoryNode
 
 
 class Edge(BaseModel):
@@ -275,13 +314,13 @@ class WorkflowInput(BaseModel):
 
 # Discriminator helper: if raw node dict has ``type == "tool"`` use ToolNode,
 # ``type == "swrm"`` use SwrmNode, else AgentNode.
-def parse_node(raw: Any) -> AgentNode | ToolNode | SwrmNode:
-    """Parse a raw node dict into an ``AgentNode``, ``ToolNode``, or ``SwrmNode``.
+def parse_node(raw: Any) -> AgentNode | ToolNode | SwrmNode | FactoryNode:
+    """Parse a raw node dict into a typed node model.
 
     :param raw: The raw YAML mapping for a single node.
-    :returns: A typed node instance.
+    :returns: A typed node instance (AgentNode, ToolNode, SwrmNode, or FactoryNode).
     """
-    if isinstance(raw, (AgentNode, ToolNode, SwrmNode)):
+    if isinstance(raw, (AgentNode, ToolNode, SwrmNode, FactoryNode)):
         return raw
     if isinstance(raw, dict):
         t = raw.get("type")
@@ -289,6 +328,8 @@ def parse_node(raw: Any) -> AgentNode | ToolNode | SwrmNode:
             return ToolNode.model_validate(raw)
         if t == "swrm":
             return SwrmNode.model_validate(raw)
+        if t == "factory":
+            return FactoryNode.model_validate(raw)
     return AgentNode.model_validate(raw)
 
 
@@ -297,7 +338,7 @@ class Workflow(BaseModel):
 
     version: str
     agents: dict[str, AgentDefinition] = Field(default_factory=dict)
-    nodes: dict[str, AgentNode | ToolNode | SwrmNode]
+    nodes: dict[str, AgentNode | ToolNode | SwrmNode | FactoryNode]
     edges: list[Edge] = Field(default_factory=list)
     input: WorkflowInput | None = None
     state: dict[str, Any] | None = None
@@ -328,10 +369,10 @@ class Workflow(BaseModel):
 
     @model_validator(mode="after")
     def validate_agent_nodes_reference_valid_agents(self) -> Workflow:
-        """Validate that agent-type nodes reference declared agent IDs."""
+        """Validate that agent-type and factory-type nodes reference declared agent IDs."""
         agent_ids = set(self.agents.keys())
         for node_id, node in self.nodes.items():
-            if isinstance(node, AgentNode) and node.agent not in agent_ids:
+            if isinstance(node, (AgentNode, FactoryNode)) and node.agent not in agent_ids:
                 raise ValueError(f"Node '{node_id}' references unknown agent '{node.agent}'")
         return self
 
