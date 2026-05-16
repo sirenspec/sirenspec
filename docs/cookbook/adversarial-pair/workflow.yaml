@@ -1,4 +1,5 @@
 version: "0.1"
+# env_file: .env
 
 # Adversarial Pair — two agents argue opposing sides of a topic; a judge scores
 # the debate. Also exercises the injection guardrail since prompts get combative.

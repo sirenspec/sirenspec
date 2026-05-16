@@ -11,7 +11,7 @@ import typer
 from rich.console import Console
 
 from sirenspec.core.executor import execute
-from sirenspec.yaml.parser import load_workflow
+from sirenspec.yaml.parser import load_env_file, load_workflow
 
 _err = Console(stderr=True)
 
@@ -29,6 +29,16 @@ def run_command(
     except ValueError as exc:
         _err.print(f"[red]Validation error:[/red] {exc}")
         raise typer.Exit(1) from exc
+
+    if workflow.env_file is not None:
+        from pathlib import Path
+
+        env_path = Path(workflow_file).parent / workflow.env_file
+        try:
+            load_env_file(env_path)
+        except FileNotFoundError as exc:
+            _err.print(f"[red]Error:[/red] {exc}")
+            raise typer.Exit(1) from exc
 
     # Resolve user input: CLI flag takes precedence over workflow.input.message
     user_input = input_message

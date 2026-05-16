@@ -83,13 +83,13 @@ nodes:
             load_workflow(f)
 
     def test_load_simple_agent_example(self) -> None:
-        example = Path(__file__).parent.parent / "examples" / "simple-agent.yaml"
+        example = Path(__file__).parent.parent / "docs" / "cookbook" / "simple-agent" / "workflow.yaml"
         wf = load_workflow(example)
         assert wf.version == "0.1"
         assert "assistant" in wf.agents
 
     def test_load_sequential_pipeline_example(self) -> None:
-        example = Path(__file__).parent.parent / "examples" / "sequential-pipeline.yaml"
+        example = Path(__file__).parent.parent / "docs" / "cookbook" / "sequential-pipeline" / "workflow.yaml"
         wf = load_workflow(example)
         assert len(wf.edges) == 1
         assert "classifier" in wf.agents

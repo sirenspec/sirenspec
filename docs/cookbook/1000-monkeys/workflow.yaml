@@ -1,4 +1,5 @@
 version: "0.1"
+# env_file: .env
 
 # 1000 Monkeys — runs five agents against the same prompt with no temperature
 # constraint, then a curator selects the best output.

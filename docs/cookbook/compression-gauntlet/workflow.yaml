@@ -1,4 +1,5 @@
 version: "0.1"
+# env_file: .env
 
 # Compression Gauntlet — passes a document through four summarizer agents, each
 # halving the length. Demonstrates the length guardrail under sustained pressure

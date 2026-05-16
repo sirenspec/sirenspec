@@ -1,4 +1,5 @@
 version: "0.1"
+# env_file: .env
 
 # News Desk — simulates a real editorial pipeline from raw topic to published lede.
 #

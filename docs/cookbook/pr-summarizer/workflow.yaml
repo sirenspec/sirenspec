@@ -1,4 +1,5 @@
 version: "0.1"
+# env_file: .env
 
 # PR Summarizer — fetches a GitHub pull-request diff via the GitHub API and
 # then asks an LLM to write a concise summary of the changes.

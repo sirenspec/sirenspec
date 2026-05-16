@@ -1,4 +1,5 @@
 version: "0.1"
+# env_file: .env
 
 # Telephone Game — measures semantic drift across a chain of agents.
 #

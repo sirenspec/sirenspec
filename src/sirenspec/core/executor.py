@@ -9,12 +9,56 @@ from typing import Any
 from sirenspec.core.agent_runner import execute_agent_node
 from sirenspec.core.context import WorkflowContext
 from sirenspec.core.factory_runner import execute_factory_node
-from sirenspec.core.interpolation import build_interpolation_context, resolve_template
-from sirenspec.core.models import AgentNode, FactoryNode, OnFailurePolicy, RetryPolicy, SwrmNode, ToolNode, Workflow
+from sirenspec.core.interpolation import InterpolationContext, build_interpolation_context, resolve_template
+from sirenspec.core.models import (
+    AgentNode,
+    FactoryNode,
+    HttpToolConfig,
+    OnFailurePolicy,
+    RetryPolicy,
+    SwrmNode,
+    ToolNode,
+    Workflow,
+)
 from sirenspec.core.swrm_runner import execute_swrm
 from sirenspec.core.tool_runner import execute_tool_node
 from sirenspec.exceptions import FactoryNodeError, InterpolationError, RetryExhaustedError, SwrmAgentError, ToolError
 from sirenspec.guardrails.base import GuardrailViolation
+
+
+def interpolate_tool_config(node: ToolNode, ctx: InterpolationContext) -> ToolNode:
+    """Return a copy of *node* with template strings in its HTTP config resolved.
+
+    Only :class:`~sirenspec.core.models.HttpToolConfig` fields are interpolated
+    (``url``, ``headers``, ``body``). Python tool configs pass through unchanged.
+
+    :param node: The tool node whose config may contain ``{{ expr }}`` placeholders.
+    :param ctx: The interpolation context at the time the node executes.
+    :returns: A new ToolNode with all resolvable placeholders replaced.
+    """
+    if not isinstance(node.config, HttpToolConfig):
+        return node
+    cfg = node.config
+    interpolated_url = resolve_template(cfg.url, ctx)
+    interpolated_headers = (
+        {k: resolve_template(v, ctx) for k, v in cfg.headers.items()} if cfg.headers else None
+    )
+    interpolated_body = resolve_template(cfg.body, ctx) if cfg.body is not None else None
+    new_config = HttpToolConfig(
+        url=interpolated_url,
+        method=cfg.method,
+        headers=interpolated_headers,
+        body=interpolated_body,
+        timeout=cfg.timeout,
+    )
+    return ToolNode(
+        type=node.type,
+        tool=node.tool,
+        config=new_config,
+        output_key=node.output_key,
+        retry=node.retry,
+        on_failure=node.on_failure,
+    )
 
 
 class DotDict:
@@ -294,7 +338,9 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
             }
             start_time = time.monotonic()
             try:
-                run_result = await execute_tool_node(node_id, node)
+                tool_interp_ctx = build_interpolation_context(user_input, context.working)
+                interpolated_node = interpolate_tool_config(node, tool_interp_ctx)
+                run_result = await execute_tool_node(node_id, interpolated_node)
                 context.write(f"working.{node_id}.{node.output_key}", run_result.result)
                 tool_node_trace["result"] = run_result.result
                 tool_node_trace["duration_ms"] = round(run_result.duration_ms, 2)
