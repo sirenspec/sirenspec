@@ -1,5 +1,28 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="120" height="32" viewBox="0 0 120 32">
-  <path d="M4 16 Q6 8 10 16 Q14 24 18 16" stroke="#0D9373" stroke-width="2.5" stroke-linecap="round" fill="none"/>
-  <path d="M18 16 Q22 6 26 16 Q30 26 34 16" stroke="#0D9373" stroke-width="2.5" stroke-linecap="round" fill="none" opacity="0.7"/>
-  <text x="42" y="21" font-family="system-ui, -apple-system, sans-serif" font-weight="600" font-size="14" fill="#111827">SirenSpec</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="160" height="32" viewBox="0 0 160 32">
+  <svg x="0" y="0" width="32" height="32" viewBox="44 11 112 112">
+    <!-- Wings left -->
+    <rect x="44" y="35" width="16" height="8" fill="#0a6b6b"/>
+    <rect x="52" y="43" width="8" height="8" fill="#0a6b6b"/>
+    <rect x="44" y="51" width="24" height="8" fill="#3dd6c8"/>
+    <rect x="52" y="59" width="16" height="8" fill="#3dd6c8"/>
+    <!-- Wings right -->
+    <rect x="140" y="35" width="16" height="8" fill="#0a6b6b"/>
+    <rect x="140" y="43" width="8" height="8" fill="#0a6b6b"/>
+    <rect x="132" y="51" width="24" height="8" fill="#3dd6c8"/>
+    <rect x="132" y="59" width="16" height="8" fill="#3dd6c8"/>
+    <!-- Body -->
+    <rect x="76" y="35" width="48" height="8" fill="#3dd6c8"/>
+    <rect x="76" y="43" width="48" height="8" fill="#3dd6c8"/>
+    <rect x="76" y="51" width="48" height="8" fill="#3dd6c8"/>
+    <rect x="76" y="59" width="48" height="8" fill="#3dd6c8"/>
+    <!-- Eyes -->
+    <rect x="84" y="43" width="8" height="8" fill="#000"/>
+    <rect x="108" y="43" width="8" height="8" fill="#000"/>
+    <!-- Tail -->
+    <rect x="84" y="67" width="32" height="8" fill="#0a6b6b"/>
+    <rect x="88" y="75" width="24" height="8" fill="#0a6b6b"/>
+    <rect x="92" y="83" width="16" height="8" fill="#0a6b6b"/>
+    <rect x="96" y="91" width="8" height="8" fill="#0a6b6b"/>
+  </svg>
+  <text x="40" y="21" font-family="system-ui, -apple-system, sans-serif" font-weight="600" font-size="14" fill="#111827">SirenSpec</text>
 </svg>

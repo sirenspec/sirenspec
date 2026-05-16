@@ -1,4 +1,26 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-  <path d="M4 16 Q7 6 11 16 Q15 26 19 16" stroke="#0D9373" stroke-width="2.5" stroke-linecap="round" fill="none"/>
-  <path d="M14 16 Q18 4 22 16 Q26 28 30 16" stroke="#0D9373" stroke-width="2.5" stroke-linecap="round" fill="none" opacity="0.65"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="44 11 112 112">
+  <title>Crest</title>
+  <!-- Wings left -->
+  <rect x="44" y="35" width="16" height="8" fill="#0a6b6b"/>
+  <rect x="52" y="43" width="8" height="8" fill="#0a6b6b"/>
+  <rect x="44" y="51" width="24" height="8" fill="#3dd6c8"/>
+  <rect x="52" y="59" width="16" height="8" fill="#3dd6c8"/>
+  <!-- Wings right -->
+  <rect x="140" y="35" width="16" height="8" fill="#0a6b6b"/>
+  <rect x="140" y="43" width="8" height="8" fill="#0a6b6b"/>
+  <rect x="132" y="51" width="24" height="8" fill="#3dd6c8"/>
+  <rect x="132" y="59" width="16" height="8" fill="#3dd6c8"/>
+  <!-- Body -->
+  <rect x="76" y="35" width="48" height="8" fill="#3dd6c8"/>
+  <rect x="76" y="43" width="48" height="8" fill="#3dd6c8"/>
+  <rect x="76" y="51" width="48" height="8" fill="#3dd6c8"/>
+  <rect x="76" y="59" width="48" height="8" fill="#3dd6c8"/>
+  <!-- Eyes -->
+  <rect x="84" y="43" width="8" height="8" fill="#000"/>
+  <rect x="108" y="43" width="8" height="8" fill="#000"/>
+  <!-- Tail -->
+  <rect x="84" y="67" width="32" height="8" fill="#0a6b6b"/>
+  <rect x="88" y="75" width="24" height="8" fill="#0a6b6b"/>
+  <rect x="92" y="83" width="16" height="8" fill="#0a6b6b"/>
+  <rect x="96" y="91" width="8" height="8" fill="#0a6b6b"/>
 </svg>
