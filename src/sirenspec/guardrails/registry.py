@@ -34,11 +34,26 @@ def make_length_guardrail() -> Guardrail:
     return LengthGuardrail()
 
 
+def make_schema_guardrail() -> Guardrail:
+    """Instantiate a SchemaGuardrail with an empty (pass-all) schema.
+
+    When used via the registry by name only, the schema accepts any valid JSON.
+    For schema-constrained validation, instantiate :class:`~sirenspec.guardrails.schema.SchemaGuardrail`
+    directly with the desired schema dict.
+
+    :returns: Configured :class:`~sirenspec.guardrails.schema.SchemaGuardrail`.
+    """
+    from sirenspec.guardrails.schema import SchemaGuardrail
+
+    return SchemaGuardrail(schema={})
+
+
 # Maps guardrail names (as used in YAML) to factory functions.
 # To add a new guardrail, add one factory function above and one entry here.
 _GUARDRAIL_FACTORIES: dict[str, Callable[[], Guardrail]] = {
     "injection": make_injection_guardrail,
     "length": make_length_guardrail,
+    "schema": make_schema_guardrail,
 }
 
 
