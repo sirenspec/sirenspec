@@ -1,0 +1,60 @@
+version: "0.1"
+
+# Adversarial Pair — two agents argue opposing sides of a topic; a judge scores
+# the debate. Also exercises the injection guardrail since prompts get combative.
+#
+# Run:
+#   sirenspec run docs/cookbook/adversarial-pair/workflow.yaml
+#   sirenspec run docs/cookbook/adversarial-pair/workflow.yaml \
+#     --input "tabs vs spaces"
+
+agents:
+  side_a:
+    model: "openai:gpt-4o-mini"
+    system: |
+      You are a passionate advocate. You will be given a debate topic.
+      Argue forcefully FOR the first position implied by the topic in 3-4 sentences.
+      Be direct, confident, and use concrete reasoning. No hedging.
+    guardrails:
+      - injection
+
+  side_b:
+    model: "anthropic:claude-haiku-4-5-20251001"
+    system: |
+      You are a passionate advocate. You will be given a debate topic and the
+      opposing argument. Argue forcefully AGAINST the first position in 3-4 sentences.
+      Be direct, confident, and use concrete reasoning. No hedging.
+    guardrails:
+      - injection
+
+  judge:
+    model: "anthropic:claude-haiku-4-5-20251001"
+    system: |
+      You are an impartial debate judge. You will receive two arguments on a topic.
+      Score each argument on: clarity (1-5), evidence (1-5), persuasiveness (1-5).
+      Declare a winner and give a one-sentence rationale. Be decisive.
+
+nodes:
+  argue_a:
+    agent: side_a
+    writes: working.argument_a
+
+  argue_b:
+    agent: side_b
+    writes: working.argument_b
+
+  adjudicate:
+    agent: judge
+    writes: output.verdict
+
+edges:
+  - from: argue_a
+    to: argue_b
+  - from: argue_b
+    to: adjudicate
+
+input:
+  message: "tabs vs spaces"
+
+guardrails:
+  - injection

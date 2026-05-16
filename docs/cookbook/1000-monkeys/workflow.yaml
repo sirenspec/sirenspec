@@ -1,0 +1,74 @@
+version: "0.1"
+
+# 1000 Monkeys — runs five agents against the same prompt with no temperature
+# constraint, then a curator selects the best output.
+#
+# Demonstrates: swrm fan-out, output variance, emergent quality from randomness.
+#
+# Run:
+#   sirenspec run docs/cookbook/1000-monkeys/workflow.yaml
+#   sirenspec run docs/cookbook/1000-monkeys/workflow.yaml \
+#     --input "Write a three-line poem about the ocean."
+
+nodes:
+  generate:
+    type: swrm
+    concurrency: 5
+    on_failure: continue
+    agents:
+      - id: monkey_1
+        provider: openai
+        model: gpt-4o-mini
+        prompt: "{{ inputs.message }}"
+
+      - id: monkey_2
+        provider: openai
+        model: gpt-4o-mini
+        prompt: "{{ inputs.message }}"
+
+      - id: monkey_3
+        provider: anthropic
+        model: claude-haiku-4-5-20251001
+        prompt: "{{ inputs.message }}"
+
+      - id: monkey_4
+        provider: anthropic
+        model: claude-haiku-4-5-20251001
+        prompt: "{{ inputs.message }}"
+
+      - id: monkey_5
+        provider: openai
+        model: gpt-4o-mini
+        prompt: "{{ inputs.message }}"
+
+    synthesis:
+      provider: anthropic
+      model: claude-haiku-4-5-20251001
+      prompt: |
+        You are a curator selecting the single best response from five candidates.
+        The original prompt was: {{ inputs.message }}
+
+        Candidate 1:
+        {{ generate.agents.monkey_1.output }}
+
+        Candidate 2:
+        {{ generate.agents.monkey_2.output }}
+
+        Candidate 3:
+        {{ generate.agents.monkey_3.output }}
+
+        Candidate 4:
+        {{ generate.agents.monkey_4.output }}
+
+        Candidate 5:
+        {{ generate.agents.monkey_5.output }}
+
+        Select the single best candidate and return it verbatim. Do not explain
+        your choice, do not modify the text — just return the winning response.
+
+input:
+  message: "Write a three-line poem about the relationship between chaos and creativity."
+
+guardrails:
+  - injection
+  - length

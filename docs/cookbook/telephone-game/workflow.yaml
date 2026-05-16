@@ -1,0 +1,62 @@
+version: "0.1"
+
+# Telephone Game — measures semantic drift across a chain of agents.
+#
+# Each agent receives only the previous agent's output, never the original
+# prompt. Watch how the meaning shifts (or holds) across 5 hops.
+#
+# Run:
+#   sirenspec run docs/cookbook/telephone-game/workflow.yaml
+#   sirenspec run docs/cookbook/telephone-game/workflow.yaml \
+#     --input "Your own starting message here."
+
+agents:
+  relay:
+    model: "openai:gpt-4o-mini"
+    system: |
+      You will receive a message. Restate it in your own words — change the
+      phrasing, sentence structure, and vocabulary completely, but preserve
+      the core meaning. Do not add, remove, or invent any facts. Reply with
+      only the restated message, nothing else.
+
+nodes:
+  hop_1:
+    agent: relay
+    writes: working.hop_1
+
+  hop_2:
+    agent: relay
+    writes: working.hop_2
+
+  hop_3:
+    agent: relay
+    writes: working.hop_3
+
+  hop_4:
+    agent: relay
+    writes: working.hop_4
+
+  hop_5:
+    agent: relay
+    writes: output.final
+
+edges:
+  - from: hop_1
+    to: hop_2
+  - from: hop_2
+    to: hop_3
+  - from: hop_3
+    to: hop_4
+  - from: hop_4
+    to: hop_5
+
+input:
+  message: >
+    The James Webb Space Telescope orbits the Sun at the second Lagrange point,
+    approximately 1.5 million kilometres from Earth, where it uses a tennis-court-
+    sized sunshield to maintain the cryogenic temperatures required by its
+    infrared detectors.
+
+guardrails:
+  - injection
+  - length

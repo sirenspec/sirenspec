@@ -1,0 +1,98 @@
+---
+title: News Desk
+description: Reporter → editor → headline writer → publisher. A clean editorial pipeline that newcomers can follow at a glance.
+---
+
+A four-agent editorial pipeline that mirrors a real newsroom handoff. A reporter drafts the story, an editor tightens it, a headline writer produces three options, and a publisher selects one and assembles the final package.
+
+## What it demonstrates
+
+- A four-node sequential pipeline with role-specialized agents
+- Each agent building on all accumulated `working.*` context from prior nodes
+- Output formatting conventions: the publisher labels `Headline:`, `Lede:`, and `Body:`
+- A real-world analogy that maps directly onto the SirenSpec node/edge model
+
+## Run it
+
+```bash
+sirenspec run docs/cookbook/news-desk/workflow.yaml
+# Try a different story:
+sirenspec run docs/cookbook/news-desk/workflow.yaml \
+  --input "A city council vote approved a ban on single-use plastics starting next year."
+```
+
+## Workflow
+
+```yaml docs/cookbook/news-desk/workflow.yaml
+version: "0.1"
+
+agents:
+  reporter:
+    model: "openai:gpt-4o-mini"
+    system: |
+      You are a news reporter. Write a raw 150-word first draft covering
+      who, what, when, where, and why. Focus on facts, not polish.
+
+  editor:
+    model: "anthropic:claude-haiku-4-5-20251001"
+    system: |
+      You are a newspaper editor. Rewrite the draft for clarity,
+      cut it to under 100 words. Preserve all facts. No new information.
+
+  headline_writer:
+    model: "openai:gpt-4o-mini"
+    system: |
+      Write exactly three headline options. Each: punchy, accurate, under 10 words.
+      Return as a numbered list, nothing else.
+
+  publisher:
+    model: "anthropic:claude-haiku-4-5-20251001"
+    system: |
+      Choose the strongest headline and write the final package:
+      Headline: [chosen headline]
+      Lede: [one-sentence hook]
+      Body: [edited article]
+
+nodes:
+  report:
+    agent: reporter
+    writes: working.draft
+  edit:
+    agent: editor
+    writes: working.edited
+  headline:
+    agent: headline_writer
+    writes: working.headlines
+  publish:
+    agent: publisher
+    writes: output.article
+
+edges:
+  - from: report
+    to: edit
+  - from: edit
+    to: headline
+  - from: headline
+    to: publish
+
+guardrails:
+  - injection
+  - length
+```
+
+## Graph
+
+```
+report → edit → headline → publish
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Graphic Design Firm" href="/cookbook/graphic-design-firm">
+    A five-agent creative pipeline with a critique and revision step.
+  </Card>
+  <Card title="Blind Code Review" href="/cookbook/blind-code-review">
+    Write, review, revise — the engineering equivalent.
+  </Card>
+</CardGroup>

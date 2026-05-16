@@ -1,19 +1,5 @@
 version: "0.1"
 
-# Market analysis workflow using the swrm (parallel agent fan-out) primitive.
-#
-# Three specialist agents analyze the same report in parallel:
-#   - sentiment: reads market mood from the report
-#   - risk:      identifies top risks
-#   - opportunity: surfaces the top 3 opportunities
-#
-# A synthesis agent then combines all three analyses into a final
-# investment recommendation.
-#
-# Run with:
-#   sirenspec run examples/market-analysis-swrm.yaml \
-#     --input "Q3 earnings were strong, margins expanded, but macro headwinds persist."
-
 nodes:
   analyze:
     type: swrm
@@ -70,7 +56,7 @@ input:
     Q3 earnings exceeded expectations with revenue up 18% year-over-year.
     Gross margins expanded 200 bps driven by operational efficiency gains.
     However, rising interest rates and a slowing consumer spending environment
-    present headwinds for Q4.  The company has announced a $500 M share
+    present headwinds for Q4. The company has announced a $500M share
     buyback programme and is exploring two strategic acquisitions in the
     APAC region.
 

@@ -1,0 +1,97 @@
+version: "0.1"
+
+# Graphic Design Firm — simulates a real agency creative handoff chain.
+#
+# Graph:
+#   creative_director → copywriter → designer → critic → final_editor
+#
+# Stress-tests context passing through working.* paths across a 5-node pipeline.
+# Each agent receives the accumulated context from all previous steps.
+#
+# Run:
+#   sirenspec run docs/cookbook/graphic-design-firm/workflow.yaml
+#   sirenspec run docs/cookbook/graphic-design-firm/workflow.yaml \
+#     --input "A new productivity app for remote teams called Canopy."
+
+agents:
+  creative_director:
+    model: "anthropic:claude-haiku-4-5-20251001"
+    system: |
+      You are a creative director at a design agency. You will receive a product brief.
+      Write a one-page creative brief that defines:
+      - Brand voice (3 adjectives)
+      - Target audience (one sentence)
+      - Core value proposition (one sentence)
+      - Visual direction (colour palette suggestion, mood)
+      Keep it tight — this brief drives everything downstream.
+
+  copywriter:
+    model: "openai:gpt-4o-mini"
+    system: |
+      You are a senior copywriter. You will receive a creative brief.
+      Write the hero section copy for a landing page:
+      - Headline (max 8 words)
+      - Subheadline (max 20 words)
+      - Three CTAs (short, punchy button labels)
+      Return only the copy, formatted clearly.
+
+  designer:
+    model: "openai:gpt-4o-mini"
+    system: |
+      You are a UI designer. You will receive a creative brief and landing page copy.
+      Write the HTML and inline CSS for the hero section using the brand colours from
+      the brief and the copy provided. Use a clean, modern layout. Return only the
+      HTML — no explanation, no markdown fences.
+
+  critic:
+    model: "anthropic:claude-haiku-4-5-20251001"
+    system: |
+      You are a design critic reviewing a hero section. You will receive the creative
+      brief, the copy, and the HTML output from the designer.
+      Provide three specific, actionable improvement suggestions — one for copy,
+      one for layout, one for visual design. Be direct and concrete.
+
+  final_editor:
+    model: "anthropic:claude-haiku-4-5-20251001"
+    system: |
+      You are the final editor. You have the original creative brief, copy, HTML output,
+      and a critic's three suggestions. Apply the copy and layout suggestions to produce
+      a revised HTML hero section. Return only the revised HTML.
+
+nodes:
+  brief:
+    agent: creative_director
+    writes: working.brief
+
+  copy:
+    agent: copywriter
+    writes: working.copy
+
+  design:
+    agent: designer
+    writes: working.html
+
+  critique:
+    agent: critic
+    writes: working.critique
+
+  revise:
+    agent: final_editor
+    writes: output.final_html
+
+edges:
+  - from: brief
+    to: copy
+  - from: copy
+    to: design
+  - from: design
+    to: critique
+  - from: critique
+    to: revise
+
+input:
+  message: "A new productivity app for remote teams called Canopy. It helps distributed teams stay in sync without meetings."
+
+guardrails:
+  - injection
+  - length
