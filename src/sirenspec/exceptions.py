@@ -81,3 +81,34 @@ class ToolError(SirenSpecError):
         # status_code mirrors the same attribute on ProviderError so that
         # error_matches_policy() in retry.py can treat both error types uniformly.
         self.status_code = status_code
+
+
+class InterpolationError(SirenSpecError):
+    """Raised when ``{{ expr }}`` template resolution fails.
+
+    :param expression: The full expression string (without braces), e.g. ``inputs.message``.
+    :param namespace: The namespace prefix that failed (e.g. ``'inputs'``, ``'env'``, ``'node_id'``).
+    :param reason: Human-readable description of what went wrong.
+    """
+
+    def __init__(self, expression: str, namespace: str, reason: str) -> None:
+        super().__init__(f"InterpolationError in '{{{{ {expression} }}}}' [{namespace}]: {reason}")
+        self.expression = expression
+        self.namespace = namespace
+        self.reason = reason
+
+
+class FactoryNodeError(SirenSpecError):
+    """Raised when a factory node instance fails and ``on_failure`` is ``'abort'``.
+
+    :param node_id: The factory node's identifier.
+    :param instance_index: Zero-based index of the failing instance, or ``None`` for setup failures.
+    :param cause: The original exception raised by the instance.
+    """
+
+    def __init__(self, node_id: str, instance_index: int | None, cause: BaseException) -> None:
+        idx_str = f"[{instance_index}]" if instance_index is not None else ""
+        super().__init__(f"Factory node '{node_id}'{idx_str} failed: {cause}")
+        self.node_id = node_id
+        self.instance_index = instance_index
+        self.cause = cause

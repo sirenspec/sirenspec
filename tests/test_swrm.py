@@ -7,9 +7,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from sirenspec.core.executor import execute
+from sirenspec.core.interpolation import InterpolationContext, build_interpolation_context, resolve_template
 from sirenspec.core.models import AgentDefinition, Edge, Node, SwrmAgent, SwrmNode, SwrmSynthesis, Workflow
-from sirenspec.core.swrm_runner import build_template_context, execute_swrm, render_template
-from sirenspec.exceptions import SwrmAgentError
+from sirenspec.core.swrm_runner import execute_swrm
+from sirenspec.exceptions import InterpolationError, SwrmAgentError
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -63,60 +64,67 @@ def _make_swrm_workflow(
 
 
 # ---------------------------------------------------------------------------
-# Template rendering
+# Template rendering (now backed by the interpolation engine)
 # ---------------------------------------------------------------------------
 
 
-class TestRenderTemplate:
-    def test_simple_substitution(self) -> None:
-        result = render_template("Hello {{ name }}", {"name": "World"})
+class TestResolveTemplate:
+    def _ctx(self, nodes: dict | None = None, inputs: dict | None = None) -> InterpolationContext:
+        return InterpolationContext(
+            inputs=inputs or {"message": "test input"},
+            nodes=nodes or {},
+        )
+
+    def test_simple_node_substitution(self) -> None:
+        ctx = self._ctx(nodes={"plan": {"output": "World"}})
+        result = resolve_template("Hello {{ plan.output }}", ctx)
         assert result == "Hello World"
 
     def test_dotted_path(self) -> None:
-        ctx = {"inputs": {"message": "test report"}}
-        result = render_template("Report: {{ inputs.message }}", ctx)
+        ctx = self._ctx(inputs={"message": "test report"})
+        result = resolve_template("Report: {{ inputs.message }}", ctx)
         assert result == "Report: test report"
 
     def test_deeply_nested_path(self) -> None:
-        ctx = {"analyze": {"agents": {"sentiment": {"output": "bullish"}}}}
-        result = render_template("Sentiment: {{ analyze.agents.sentiment.output }}", ctx)
+        ctx = self._ctx(nodes={"analyze": {"agents": {"sentiment": {"output": "bullish"}}}})
+        result = resolve_template("Sentiment: {{ analyze.agents.sentiment.output }}", ctx)
         assert result == "Sentiment: bullish"
 
-    def test_missing_key_leaves_placeholder(self) -> None:
-        result = render_template("{{ missing.key }}", {})
-        assert "missing.key" in result
+    def test_missing_key_raises_interpolation_error(self) -> None:
+        ctx = self._ctx()
+        with pytest.raises(InterpolationError):
+            resolve_template("{{ missing.key }}", ctx)
 
     def test_no_placeholders(self) -> None:
-        result = render_template("No placeholders here", {"x": 1})
+        ctx = self._ctx()
+        result = resolve_template("No placeholders here", ctx)
         assert result == "No placeholders here"
 
     def test_multiple_placeholders(self) -> None:
-        ctx = {"a": "first", "b": "second"}
-        result = render_template("{{ a }} and {{ b }}", ctx)
+        ctx = self._ctx(nodes={"a": {"v": "first"}, "b": {"v": "second"}})
+        result = resolve_template("{{ a.v }} and {{ b.v }}", ctx)
         assert result == "first and second"
 
 
-class TestBuildTemplateContext:
-    def test_includes_inputs(self) -> None:
-        ctx = build_template_context("node1", "hello world", {}, {})
-        assert ctx["inputs"]["message"] == "hello world"
+class TestBuildInterpolationContext:
+    def test_includes_inputs_message(self) -> None:
+        ctx = build_interpolation_context("hello world", {})
+        assert ctx.inputs["message"] == "hello world"
 
-    def test_includes_working_and_output(self) -> None:
-        working = {"x": 1}
-        output = {"y": 2}
-        ctx = build_template_context("node1", "input", working, output)
-        assert ctx["working"]["x"] == 1
-        assert ctx["output"]["y"] == 2
+    def test_nodes_is_working_dict(self) -> None:
+        working = {"plan": {"output": "some output"}}
+        ctx = build_interpolation_context("input", working)
+        assert ctx.nodes["plan"]["output"] == "some output"
 
-    def test_agent_results_injected(self) -> None:
-        agent_results = {"sentiment": "bullish", "risk": "high"}
-        ctx = build_template_context("analyze", "input", {}, {}, agent_results)
-        assert ctx["analyze"]["agents"]["sentiment"]["output"] == "bullish"
-        assert ctx["analyze"]["agents"]["risk"]["output"] == "high"
+    def test_item_and_index_default_to_none(self) -> None:
+        ctx = build_interpolation_context("input", {})
+        assert ctx.item is None
+        assert ctx.index is None
 
-    def test_no_agent_results_by_default(self) -> None:
-        ctx = build_template_context("node1", "input", {}, {})
-        assert "node1" not in ctx
+    def test_item_and_index_can_be_set(self) -> None:
+        ctx = build_interpolation_context("input", {}, item="task A", index=2)
+        assert ctx.item == "task A"
+        assert ctx.index == 2
 
 
 # ---------------------------------------------------------------------------
