@@ -1,0 +1,93 @@
+---
+title: Blind Code Review
+description: Write, review, revise — a three-agent refinement loop where the reviewer never sees the original spec.
+---
+
+A coder writes a function from a plain-English spec. A reviewer critiques the code without seeing the original spec — only the implementation. The coder then revises based on the feedback. The reviewer's blindness makes the critique reflect only what the code communicates on its own.
+
+## What it demonstrates
+
+- Multi-turn refinement within a linear sequential pipeline
+- Agent specialization: one writes, one reviews, one revises
+- Context accumulation: `working.code_v1` and `working.review` are both visible to the final node
+- How to model a real-world workflow (write → review → revise) in SirenSpec
+
+## Run it
+
+```bash
+sirenspec run docs/cookbook/blind-code-review/workflow.yaml
+# Try a different problem:
+sirenspec run docs/cookbook/blind-code-review/workflow.yaml \
+  --input "Write a Python function that checks whether a string is a valid palindrome."
+```
+
+Check `working.code_v1`, `working.review`, and `output.code_final` in the trace to follow the refinement.
+
+## Workflow
+
+```yaml docs/cookbook/blind-code-review/workflow.yaml
+version: "0.1"
+
+agents:
+  coder:
+    model: "openai:gpt-4o-mini"
+    system: |
+      You are a software engineer. Write a clean Python implementation of the
+      described function. Include a docstring. Return only the code.
+
+  reviewer:
+    model: "anthropic:claude-haiku-4-5-20251001"
+    system: |
+      You are a senior engineer doing a code review. You have NOT seen the original
+      spec — evaluate the code solely on what it does. Cover: correctness, edge cases,
+      readability, and one concrete improvement suggestion. Under 150 words.
+
+  coder_revised:
+    model: "openai:gpt-4o-mini"
+    system: |
+      You submitted a function for review and received feedback. Incorporate the
+      reviewer's suggestions and return a revised Python implementation. Code only.
+
+nodes:
+  write_code:
+    agent: coder
+    writes: working.code_v1
+  review_code:
+    agent: reviewer
+    writes: working.review
+  revise_code:
+    agent: coder_revised
+    writes: output.code_final
+
+edges:
+  - from: write_code
+    to: review_code
+  - from: review_code
+    to: revise_code
+
+guardrails:
+  - injection
+  - length
+```
+
+## Graph
+
+```mermaid
+graph TD
+    write_code[write_code]
+    review_code[review_code]
+    revise_code[revise_code]
+    write_code --> review_code
+    review_code --> revise_code
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Graphic Design Firm" href="/cookbook/graphic-design-firm">
+    A five-agent creative handoff chain with the same refinement pattern.
+  </Card>
+  <Card title="PR Summarizer" href="/cookbook/pr-summarizer">
+    Fetch real code from GitHub and summarize it.
+  </Card>
+</CardGroup>

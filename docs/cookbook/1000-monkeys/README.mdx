@@ -1,0 +1,98 @@
+---
+title: 1000 Monkeys
+description: Five agents tackle the same prompt independently; a curator picks the best result. Tests output variance and emergent quality from parallelism.
+---
+
+Five agents receive the identical prompt with no coordination. Their outputs diverge because LLMs are nondeterministic. A curator agent then reads all five candidates and selects the strongest one. Run it twice — you'll get different winners.
+
+## What it demonstrates
+
+- `swrm` fan-out: all five agents run concurrently
+- `on_failure: continue` — the swrm proceeds even if an individual agent fails
+- Synthesis referencing each agent's output via `{{ generate.agents.<id>.output }}`
+- Output variance as a feature, not a bug
+- Mixing OpenAI and Anthropic within a single swrm node
+
+## Run it
+
+```bash
+sirenspec run docs/cookbook/1000-monkeys/workflow.yaml
+# Try a different prompt:
+sirenspec run docs/cookbook/1000-monkeys/workflow.yaml \
+  --input "Write a one-sentence product tagline for a note-taking app."
+```
+
+## Workflow
+
+```yaml docs/cookbook/1000-monkeys/workflow.yaml
+version: "0.1"
+
+nodes:
+  generate:
+    type: swrm
+    concurrency: 5
+    on_failure: continue
+    agents:
+      - id: monkey_1
+        provider: openai
+        model: gpt-4o-mini
+        prompt: "{{ inputs.message }}"
+      - id: monkey_2
+        provider: openai
+        model: gpt-4o-mini
+        prompt: "{{ inputs.message }}"
+      - id: monkey_3
+        provider: anthropic
+        model: claude-haiku-4-5-20251001
+        prompt: "{{ inputs.message }}"
+      - id: monkey_4
+        provider: anthropic
+        model: claude-haiku-4-5-20251001
+        prompt: "{{ inputs.message }}"
+      - id: monkey_5
+        provider: openai
+        model: gpt-4o-mini
+        prompt: "{{ inputs.message }}"
+
+    synthesis:
+      provider: anthropic
+      model: claude-haiku-4-5-20251001
+      prompt: |
+        Select the single best candidate response to: {{ inputs.message }}
+        Candidates: [1] {{ generate.agents.monkey_1.output }}
+                    [2] {{ generate.agents.monkey_2.output }}
+                    [3] {{ generate.agents.monkey_3.output }}
+                    [4] {{ generate.agents.monkey_4.output }}
+                    [5] {{ generate.agents.monkey_5.output }}
+        Return the winning response verbatim. No explanation.
+```
+
+## Graph
+
+```mermaid
+graph TD
+    subgraph generate
+        generate_monkey_1[monkey_1]
+        generate_monkey_2[monkey_2]
+        generate_monkey_3[monkey_3]
+        generate_monkey_4[monkey_4]
+        generate_monkey_5[monkey_5]
+        generate_synthesis([synthesis])
+        generate_monkey_1 --> generate_synthesis
+        generate_monkey_2 --> generate_synthesis
+        generate_monkey_3 --> generate_synthesis
+        generate_monkey_4 --> generate_synthesis
+        generate_monkey_5 --> generate_synthesis
+    end
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Market Analysis" href="/cookbook/market-analysis">
+    Parallel specialists, each with a different task.
+  </Card>
+  <Card title="Swrm Reference" href="/swrm">
+    Full swrm node documentation.
+  </Card>
+</CardGroup>

@@ -1,25 +1,17 @@
 version: "0.1"
+# env_file: .env
 
 # PR Summarizer — fetches a GitHub pull-request diff via the GitHub API and
 # then asks an LLM to write a concise summary of the changes.
 #
-# Graph structure:
-#
-#   [fetch_diff] ---> [summarize]
-#
 # Prerequisites
 # -------------
 # Set GITHUB_TOKEN in your environment (a classic PAT with repo:read scope).
-# Set the GITHUB_API_URL to the specific pull request diff endpoint.
 #
-# Example:
+# Run:
 #   export GITHUB_TOKEN=ghp_...
-#   sirenspec run examples/pr-summarizer.yaml \
+#   sirenspec run docs/cookbook/pr-summarizer/workflow.yaml \
 #     --input "Summarise this pull request for me."
-#
-# Note: Template placeholders ({{ env.GITHUB_TOKEN }}) are resolved by the
-# executor before the HTTP request is made.  The diff text is then available
-# to the downstream summarize node via the workflow context.
 
 agents:
   summarizer:
@@ -39,8 +31,6 @@ nodes:
     type: tool
     tool: http
     config:
-      # Replace the URL with the actual GitHub API diff endpoint for your PR.
-      # Format: https://api.github.com/repos/{owner}/{repo}/pulls/{number}
       url: "https://api.github.com/repos/TJLSmith0831/sirenspec/pulls/1"
       method: GET
       headers:

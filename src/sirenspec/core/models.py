@@ -344,6 +344,13 @@ class Workflow(BaseModel):
     state: dict[str, Any] | None = None
     guardrails: list[str] | None = None
     defaults: WorkflowDefaults | None = None
+    env_file: str | None = Field(
+        default=None,
+        description=(
+            "Path to a .env file to load before execution, relative to the workflow file. "
+            "Variables are set in os.environ so provider clients pick them up automatically."
+        ),
+    )
 
     @model_validator(mode="before")
     @classmethod

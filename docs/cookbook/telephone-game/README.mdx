@@ -1,0 +1,96 @@
+---
+title: Telephone Game
+description: Five agents relay a message in sequence — each rewriting only what it received. Watch semantic drift accumulate across hops.
+---
+
+A chain of five agents where each reads only the previous agent's output, never the original prompt. Compare the final output to the starting message to measure how much (or how little) meaning drifted across five hops.
+
+## What it demonstrates
+
+- Long sequential chains and accumulated `working.*` context
+- Why careful `writes:` path design matters — each hop is traceable
+- How meaning degrades (or holds) under repeated paraphrase
+- Reusing the same agent definition across multiple nodes
+
+## Run it
+
+```bash
+sirenspec run docs/cookbook/telephone-game/workflow.yaml
+# Try your own starting message:
+sirenspec run docs/cookbook/telephone-game/workflow.yaml \
+  --input "A short, fact-dense sentence of your choice."
+```
+
+Compare `working.hop_1` through `working.hop_4` against `output.final` in the trace to see drift at each step.
+
+## Workflow
+
+```yaml docs/cookbook/telephone-game/workflow.yaml
+version: "0.1"
+
+agents:
+  relay:
+    model: "openai:gpt-4o-mini"
+    system: |
+      You will receive a message. Restate it in your own words — change the
+      phrasing, sentence structure, and vocabulary completely, but preserve
+      the core meaning. Do not add, remove, or invent any facts. Reply with
+      only the restated message, nothing else.
+
+nodes:
+  hop_1:
+    agent: relay
+    writes: working.hop_1
+  hop_2:
+    agent: relay
+    writes: working.hop_2
+  hop_3:
+    agent: relay
+    writes: working.hop_3
+  hop_4:
+    agent: relay
+    writes: working.hop_4
+  hop_5:
+    agent: relay
+    writes: output.final
+
+edges:
+  - from: hop_1
+    to: hop_2
+  - from: hop_2
+    to: hop_3
+  - from: hop_3
+    to: hop_4
+  - from: hop_4
+    to: hop_5
+
+guardrails:
+  - injection
+  - length
+```
+
+## Graph
+
+```mermaid
+graph TD
+    hop_1[hop_1]
+    hop_2[hop_2]
+    hop_3[hop_3]
+    hop_4[hop_4]
+    hop_5[hop_5]
+    hop_1 --> hop_2
+    hop_2 --> hop_3
+    hop_3 --> hop_4
+    hop_4 --> hop_5
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Compression Gauntlet" href="/cookbook/compression-gauntlet">
+    A chain that halves the text each step — how much can survive?
+  </Card>
+  <Card title="Sequential Pipeline" href="/cookbook/sequential-pipeline">
+    The two-node version of this pattern.
+  </Card>
+</CardGroup>

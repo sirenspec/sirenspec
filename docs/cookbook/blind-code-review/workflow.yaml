@@ -1,0 +1,72 @@
+version: "0.1"
+# env_file: .env
+
+# Blind Code Review — demonstrates multi-turn refinement within a sequential pipeline.
+#
+# 1. coder writes a function from a plain-English spec.
+# 2. reviewer critiques it without seeing the original spec — only the code.
+# 3. coder_revised rewrites the function incorporating the feedback.
+#
+# The reviewer is "blind" to the original intent, so the critique reflects only
+# what the code communicates on its own — a realistic proxy for a real code review.
+#
+# Run:
+#   sirenspec run docs/cookbook/blind-code-review/workflow.yaml
+#   sirenspec run docs/cookbook/blind-code-review/workflow.yaml \
+#     --input "Write a Python function that merges two sorted lists."
+
+agents:
+  coder:
+    model: "openai:gpt-4o-mini"
+    system: |
+      You are a software engineer. You will receive a plain-English description of
+      a function. Write a clean Python implementation. Include a docstring.
+      Return only the code, no explanation.
+
+  reviewer:
+    model: "anthropic:claude-haiku-4-5-20251001"
+    system: |
+      You are a senior software engineer conducting a code review. You will receive
+      a Python function. You have NOT seen the original specification — evaluate the
+      code solely on what it does and how it does it.
+
+      Provide a concise review covering:
+      - Correctness: does the implementation appear logically sound?
+      - Edge cases: what inputs could cause incorrect behaviour?
+      - Readability and style: is it clear and idiomatic?
+      - One concrete suggestion for improvement.
+
+      Keep the review under 150 words.
+
+  coder_revised:
+    model: "openai:gpt-4o-mini"
+    system: |
+      You are a software engineer. You submitted a function for review and received
+      feedback. Incorporate the reviewer's suggestions and return a revised, clean
+      Python implementation. Return only the code, no explanation.
+
+nodes:
+  write_code:
+    agent: coder
+    writes: working.code_v1
+
+  review_code:
+    agent: reviewer
+    writes: working.review
+
+  revise_code:
+    agent: coder_revised
+    writes: output.code_final
+
+edges:
+  - from: write_code
+    to: review_code
+  - from: review_code
+    to: revise_code
+
+input:
+  message: "Write a Python function that finds the two numbers in a list that sum to a given target value, returning their indices."
+
+guardrails:
+  - injection
+  - length

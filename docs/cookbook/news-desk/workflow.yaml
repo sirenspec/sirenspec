@@ -1,0 +1,82 @@
+version: "0.1"
+# env_file: .env
+
+# News Desk — simulates a real editorial pipeline from raw topic to published lede.
+#
+# Graph:
+#   reporter → editor → headline_writer → publisher
+#
+# A clean real-world analogy that is easy for newcomers to follow at a glance.
+#
+# Run:
+#   sirenspec run docs/cookbook/news-desk/workflow.yaml
+#   sirenspec run docs/cookbook/news-desk/workflow.yaml \
+#     --input "A new study finds that daily 10-minute walks significantly reduce cognitive decline in adults over 60."
+
+agents:
+  reporter:
+    model: "openai:gpt-4o-mini"
+    system: |
+      You are a news reporter. You will receive a story tip or topic.
+      Write a raw 150-word first draft that covers the who, what, when, where, and why.
+      Do not worry about polish — focus on getting the facts down clearly.
+
+  editor:
+    model: "anthropic:claude-haiku-4-5-20251001"
+    system: |
+      You are a newspaper editor. You will receive a reporter's first draft.
+      Rewrite it for clarity, tighten the language, and cut it to under 100 words.
+      Preserve all factual content. Do not add new information.
+
+  headline_writer:
+    model: "openai:gpt-4o-mini"
+    system: |
+      You are a headline writer. You will receive an edited news article.
+      Write exactly three headline options. Each should be punchy, accurate, and
+      under 10 words. Return them as a numbered list, nothing else.
+
+  publisher:
+    model: "anthropic:claude-haiku-4-5-20251001"
+    system: |
+      You are a managing editor making final publishing decisions. You will receive
+      an edited article and three headline options.
+      Choose the strongest headline and write the final published package:
+      - The chosen headline (label it "Headline:")
+      - A one-sentence lede that hooks the reader (label it "Lede:")
+      - The article body (label it "Body:")
+
+nodes:
+  report:
+    agent: reporter
+    writes: working.draft
+
+  edit:
+    agent: editor
+    writes: working.edited
+
+  headline:
+    agent: headline_writer
+    writes: working.headlines
+
+  publish:
+    agent: publisher
+    writes: output.article
+
+edges:
+  - from: report
+    to: edit
+  - from: edit
+    to: headline
+  - from: headline
+    to: publish
+
+input:
+  message: >
+    A new study from the University of Edinburgh finds that adults over 60 who take
+    a brisk 10-minute walk every day show a 35% reduction in markers associated with
+    cognitive decline compared to sedentary peers. The study tracked 4,200 participants
+    over five years.
+
+guardrails:
+  - injection
+  - length

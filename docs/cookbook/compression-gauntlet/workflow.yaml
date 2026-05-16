@@ -1,0 +1,70 @@
+version: "0.1"
+# env_file: .env
+
+# Compression Gauntlet — passes a document through four summarizer agents, each
+# halving the length. Demonstrates the length guardrail under sustained pressure
+# and tracks how many rounds of compression a text can survive before meaning collapses.
+#
+# Run:
+#   sirenspec run docs/cookbook/compression-gauntlet/workflow.yaml
+#   sirenspec run docs/cookbook/compression-gauntlet/workflow.yaml \
+#     --input "Your long document here."
+
+agents:
+  summarizer:
+    model: "openai:gpt-4o-mini"
+    system: |
+      You are a ruthless editor. You will receive a passage of text.
+      Rewrite it at exactly half the word count of the input — no more, no less.
+      Preserve the most important facts and relationships. Drop examples, qualifiers,
+      and elaboration first. Never add new information.
+    guardrails:
+      - length
+
+nodes:
+  round_1:
+    agent: summarizer
+    writes: working.round_1
+
+  round_2:
+    agent: summarizer
+    writes: working.round_2
+
+  round_3:
+    agent: summarizer
+    writes: working.round_3
+
+  round_4:
+    agent: summarizer
+    writes: output.final
+
+edges:
+  - from: round_1
+    to: round_2
+  - from: round_2
+    to: round_3
+  - from: round_3
+    to: round_4
+
+input:
+  message: >
+    The invention of the printing press by Johannes Gutenberg around 1440 is widely
+    considered one of the most transformative events in human history. Before its
+    introduction, books were painstakingly copied by hand, a process that made them
+    extraordinarily expensive and confined literacy primarily to the clergy and
+    nobility. Gutenberg's movable-type system allowed pages to be composed quickly
+    and reproduced in large quantities at a fraction of the previous cost. Within
+    fifty years of its invention, an estimated twenty million volumes had been
+    printed across Europe — more books than had been produced in the entire preceding
+    millennium. This sudden abundance of written material accelerated the spread of
+    the Renaissance, fuelled the Protestant Reformation by enabling Martin Luther's
+    ideas to circulate before authorities could suppress them, and laid the intellectual
+    groundwork for the Scientific Revolution by making research findings accessible
+    across borders and disciplines. The press did not merely change how information
+    was distributed; it fundamentally altered who had the power to create and consume
+    knowledge, shifting authority away from institutions and toward individuals in ways
+    that still shape modern society.
+
+guardrails:
+  - injection
+  - length

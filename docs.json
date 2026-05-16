@@ -27,7 +27,7 @@
         "groups": [
           {
             "group": "Getting Started",
-            "pages": ["docs/introduction", "docs/quickstart", "docs/examples"]
+            "pages": ["docs/introduction", "docs/quickstart"]
           },
           {
             "group": "Core Concepts",
@@ -36,6 +36,43 @@
           {
             "group": "Reference",
             "pages": ["docs/cli-reference", "docs/sdk"]
+          }
+        ]
+      },
+      {
+        "tab": "Cookbook",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "docs/cookbook/simple-agent/README",
+              "docs/cookbook/sequential-pipeline/README",
+              "docs/cookbook/conditional-pipeline/README"
+            ]
+          },
+          {
+            "group": "Parallel Workflows",
+            "pages": [
+              "docs/cookbook/market-analysis/README",
+              "docs/cookbook/1000-monkeys/README"
+            ]
+          },
+          {
+            "group": "Real-World Pipelines",
+            "pages": [
+              "docs/cookbook/news-desk/README",
+              "docs/cookbook/graphic-design-firm/README",
+              "docs/cookbook/blind-code-review/README",
+              "docs/cookbook/pr-summarizer/README"
+            ]
+          },
+          {
+            "group": "Testing Limits",
+            "pages": [
+              "docs/cookbook/telephone-game/README",
+              "docs/cookbook/compression-gauntlet/README",
+              "docs/cookbook/adversarial-pair/README"
+            ]
           }
         ]
       }

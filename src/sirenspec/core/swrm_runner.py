@@ -241,16 +241,17 @@ async def execute_swrm(
             node_id: {"agents": {aid: {"output": out} for aid, out in agent_results.items()}},
         }
         synth_ctx = build_interpolation_context(user_input, synth_working)
-        rendered_synthesis_prompt = resolve_template(node.synthesis.prompt, synth_ctx)
-        rendered_synthesis_redacted = resolve_template(node.synthesis.prompt, synth_ctx, redact_env=True)
         synthesis_trace = {
-            "prompt_sent": rendered_synthesis_redacted,
+            "prompt_sent": None,
             "response_received": None,
             "tokens": 0,
             "duration_ms": 0.0,
             "error": None,
         }
         try:
+            rendered_synthesis_prompt = resolve_template(node.synthesis.prompt, synth_ctx)
+            rendered_synthesis_redacted = resolve_template(node.synthesis.prompt, synth_ctx, redact_env=True)
+            synthesis_trace["prompt_sent"] = rendered_synthesis_redacted
             synth_text, synth_tok, synth_dur = await run_synthesis(
                 node.synthesis, rendered_synthesis_prompt, global_guardrail_names
             )
@@ -266,7 +267,7 @@ async def execute_swrm(
             final_output = synth_text
         except Exception as exc:
             synthesis_trace["error"] = str(exc)
-            raise
+            final_output = [agent_results.get(agent.id, "") for agent in agents]
     else:
         final_output = [agent_results.get(agent.id, "") for agent in agents]
 
