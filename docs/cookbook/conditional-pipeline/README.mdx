@@ -84,9 +84,13 @@ After `triage` writes its one-word label to `working.triage.intent`, the executo
 
 ## Graph
 
-```
-triage ──when: intent=="refund"──► handle_refund
-       ──when: intent=="general"─► handle_general
+```mermaid
+graph TD
+    triage[triage]
+    handle_refund[handle_refund]
+    handle_general[handle_general]
+    triage -->|"working.triage.intent == 'refund'"| handle_refund
+    triage -->|"working.triage.intent == 'general'"| handle_general
 ```
 
 ## Next steps

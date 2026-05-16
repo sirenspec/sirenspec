@@ -66,8 +66,15 @@ guardrails:
 
 ## Graph
 
-```
-round_1 → round_2 → round_3 → round_4
+```mermaid
+graph TD
+    round_1[round_1]
+    round_2[round_2]
+    round_3[round_3]
+    round_4[round_4]
+    round_1 --> round_2
+    round_2 --> round_3
+    round_3 --> round_4
 ```
 
 ## Next steps

@@ -7,7 +7,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from sirenspec.cli import app
-from sirenspec.core.models import AgentDefinition, Edge, Node, Workflow
+from sirenspec.core.models import AgentDefinition, Edge, Node, SwrmAgent, SwrmNode, SwrmSynthesis, Workflow
 from sirenspec.render.mermaid import workflow_to_mermaid
 
 runner = CliRunner()
@@ -102,6 +102,72 @@ class TestWorkflowToMermaid:
         result = workflow_to_mermaid(_make_workflow())
         lines = result.strip().split("\n")
         assert len(lines) == 2
+
+
+def _make_swrm_node(
+    agent_ids: list[str],
+    with_synthesis: bool = True,
+) -> SwrmNode:
+    agents = [SwrmAgent(id=aid, provider="openai", model="gpt-4o-mini", prompt="p") for aid in agent_ids]
+    synthesis = SwrmSynthesis(provider="openai", model="gpt-4o-mini", prompt="s") if with_synthesis else None
+    return SwrmNode(agents=agents, synthesis=synthesis)
+
+
+def _make_swrm_workflow(
+    node_id: str,
+    agent_ids: list[str],
+    with_synthesis: bool = True,
+) -> Workflow:
+    swrm = _make_swrm_node(agent_ids, with_synthesis=with_synthesis)
+    return Workflow(version="0.1", agents={}, nodes={node_id: swrm}, edges=[])
+
+
+class TestSwrmMermaid:
+    def test_swrm_renders_as_subgraph(self) -> None:
+        result = workflow_to_mermaid(_make_swrm_workflow("fan", ["a", "b"]))
+        assert "subgraph fan" in result
+
+    def test_swrm_agents_appear_inside_subgraph(self) -> None:
+        result = workflow_to_mermaid(_make_swrm_workflow("fan", ["a", "b"]))
+        assert "fan_a[a]" in result
+        assert "fan_b[b]" in result
+
+    def test_swrm_synthesis_node_present(self) -> None:
+        result = workflow_to_mermaid(_make_swrm_workflow("fan", ["a", "b"], with_synthesis=True))
+        assert "fan_synthesis" in result
+
+    def test_swrm_agents_connect_to_synthesis(self) -> None:
+        result = workflow_to_mermaid(_make_swrm_workflow("fan", ["a", "b"], with_synthesis=True))
+        assert "fan_a --> fan_synthesis" in result
+        assert "fan_b --> fan_synthesis" in result
+
+    def test_swrm_without_synthesis_has_no_synthesis_node(self) -> None:
+        result = workflow_to_mermaid(_make_swrm_workflow("fan", ["a"], with_synthesis=False))
+        assert "synthesis" not in result
+
+    def test_workflow_edge_from_swrm_with_synthesis_exits_synthesis(self) -> None:
+        swrm = _make_swrm_node(["a"], with_synthesis=True)
+        downstream = Node(agent="a", writes="output.x")
+        wf = Workflow(
+            version="0.1",
+            agents={"a": _AGENT},
+            nodes={"fan": swrm, "next": downstream},
+            edges=[Edge(**{"from": "fan", "to": "next"})],
+        )
+        result = workflow_to_mermaid(wf)
+        assert "fan_synthesis --> next" in result
+
+    def test_workflow_edge_from_swrm_without_synthesis_uses_node_id(self) -> None:
+        swrm = _make_swrm_node(["a"], with_synthesis=False)
+        downstream = Node(agent="a", writes="output.x")
+        wf = Workflow(
+            version="0.1",
+            agents={"a": _AGENT},
+            nodes={"fan": swrm, "next": downstream},
+            edges=[Edge(**{"from": "fan", "to": "next"})],
+        )
+        result = workflow_to_mermaid(wf)
+        assert "fan --> next" in result
 
 
 class TestRenderCommand:

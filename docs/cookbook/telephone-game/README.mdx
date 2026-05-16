@@ -71,8 +71,17 @@ guardrails:
 
 ## Graph
 
-```
-hop_1 → hop_2 → hop_3 → hop_4 → hop_5
+```mermaid
+graph TD
+    hop_1[hop_1]
+    hop_2[hop_2]
+    hop_3[hop_3]
+    hop_4[hop_4]
+    hop_5[hop_5]
+    hop_1 --> hop_2
+    hop_2 --> hop_3
+    hop_3 --> hop_4
+    hop_4 --> hop_5
 ```
 
 ## Next steps

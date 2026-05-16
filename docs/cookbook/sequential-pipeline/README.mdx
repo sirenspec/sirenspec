@@ -65,8 +65,11 @@ This workflow mixes providers: OpenAI handles classification, Anthropic writes t
 
 ## Graph
 
-```
-classify → reply
+```mermaid
+graph TD
+    classify[classify]
+    reply[reply]
+    classify --> reply
 ```
 
 ## Next steps

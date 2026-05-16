@@ -72,11 +72,17 @@ guardrails:
 
 ## Graph
 
-```
-analyze (swrm)
-  ├── sentiment  ─┐
-  ├── risk       ─┼─► synthesis
-  └── opportunity─┘
+```mermaid
+graph TD
+    subgraph analyze
+        analyze_sentiment[sentiment]
+        analyze_risk[risk]
+        analyze_opportunity[opportunity]
+        analyze_synthesis([synthesis])
+        analyze_sentiment --> analyze_synthesis
+        analyze_risk --> analyze_synthesis
+        analyze_opportunity --> analyze_synthesis
+    end
 ```
 
 ## Next steps

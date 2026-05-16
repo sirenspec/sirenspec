@@ -69,13 +69,21 @@ nodes:
 
 ## Graph
 
-```
-generate (swrm)
-  ├── monkey_1 ─┐
-  ├── monkey_2  │
-  ├── monkey_3  ├─► synthesis (curator)
-  ├── monkey_4  │
-  └── monkey_5 ─┘
+```mermaid
+graph TD
+    subgraph generate
+        generate_monkey_1[monkey_1]
+        generate_monkey_2[monkey_2]
+        generate_monkey_3[monkey_3]
+        generate_monkey_4[monkey_4]
+        generate_monkey_5[monkey_5]
+        generate_synthesis([synthesis])
+        generate_monkey_1 --> generate_synthesis
+        generate_monkey_2 --> generate_synthesis
+        generate_monkey_3 --> generate_synthesis
+        generate_monkey_4 --> generate_synthesis
+        generate_monkey_5 --> generate_synthesis
+    end
 ```
 
 ## Next steps

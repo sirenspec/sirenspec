@@ -82,8 +82,15 @@ guardrails:
 
 ## Graph
 
-```
-report → edit → headline → publish
+```mermaid
+graph TD
+    report[report]
+    edit[edit]
+    headline[headline]
+    publish[publish]
+    report --> edit
+    edit --> headline
+    headline --> publish
 ```
 
 ## Next steps

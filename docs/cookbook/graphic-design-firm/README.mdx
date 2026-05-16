@@ -94,8 +94,17 @@ guardrails:
 
 ## Graph
 
-```
-brief → copy → design → critique → revise
+```mermaid
+graph TD
+    brief[brief]
+    copy[copy]
+    design[design]
+    critique[critique]
+    revise[revise]
+    brief --> copy
+    copy --> design
+    design --> critique
+    critique --> revise
 ```
 
 ## Next steps

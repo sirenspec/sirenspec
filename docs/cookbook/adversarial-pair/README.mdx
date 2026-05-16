@@ -74,8 +74,13 @@ guardrails:
 
 ## Graph
 
-```
-argue_a → argue_b → adjudicate
+```mermaid
+graph TD
+    argue_a[argue_a]
+    argue_b[argue_b]
+    adjudicate[adjudicate]
+    argue_a --> argue_b
+    argue_b --> adjudicate
 ```
 
 ## Next steps

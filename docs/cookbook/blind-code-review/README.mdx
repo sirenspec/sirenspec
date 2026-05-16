@@ -72,8 +72,13 @@ guardrails:
 
 ## Graph
 
-```
-write_code → review_code → revise_code
+```mermaid
+graph TD
+    write_code[write_code]
+    review_code[review_code]
+    revise_code[revise_code]
+    write_code --> review_code
+    review_code --> revise_code
 ```
 
 ## Next steps
