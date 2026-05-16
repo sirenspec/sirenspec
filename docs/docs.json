@@ -31,11 +31,53 @@
           },
           {
             "group": "Core Concepts",
-            "pages": ["assistant", "yaml-reference", "providers", "guardrails", "retry-policies"]
+            "pages": ["assistant", "yaml-reference", "providers", "guardrails", "retry-policies", "swrm"]
           },
           {
             "group": "Reference",
-            "pages": ["cli-reference", "sdk"]
+            "pages": ["cli-reference", "sdk", "tool-nodes"]
+          }
+        ]
+      },
+      {
+        "tab": "Cookbook",
+        "groups": [
+          {
+            "group": "Basics",
+            "pages": [
+              "cookbook/simple-agent/README",
+              "cookbook/sequential-pipeline/README",
+              "cookbook/conditional-pipeline/README"
+            ]
+          },
+          {
+            "group": "Multi-Agent Patterns",
+            "pages": [
+              "cookbook/adversarial-pair/README",
+              "cookbook/blind-code-review/README",
+              "cookbook/graphic-design-firm/README",
+              "cookbook/news-desk/README"
+            ]
+          },
+          {
+            "group": "Swrm & Fan-Out",
+            "pages": [
+              "cookbook/1000-monkeys/README",
+              "cookbook/market-analysis/README"
+            ]
+          },
+          {
+            "group": "Stress Tests",
+            "pages": [
+              "cookbook/telephone-game/README",
+              "cookbook/compression-gauntlet/README"
+            ]
+          },
+          {
+            "group": "Tool Nodes",
+            "pages": [
+              "cookbook/pr-summarizer/README"
+            ]
           }
         ]
       }

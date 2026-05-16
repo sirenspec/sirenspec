@@ -1,35 +1,26 @@
-<svg viewBox="0 0 210 170" xmlns="http://www.w3.org/2000/svg" style="">
-<title style="fill:rgb(0, 0, 0);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto">Pixel crab with wings</title>
-<rect width="200" height="160" fill="transparent" style="fill:rgba(0, 0, 0, 0);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
-<g transform="translate(100,75)" style="fill:rgb(0, 0, 0);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto">
-<!-- pixel size = 8px, grid centered -->
-<!-- WINGS LEFT -->
-<!-- upper wing tip -->
-<rect x="-56" y="-40" width="16" height="8" fill="#0a6b6b" style="fill:rgb(10, 107, 107);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
-<rect x="-48" y="-32" width="8" height="8" fill="#0a6b6b" style="fill:rgb(10, 107, 107);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
-<!-- wing body left -->
-<rect x="-56" y="-24" width="24" height="8" fill="#3dd6c8" style="fill:rgb(61, 214, 200);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
-<rect x="-48" y="-16" width="16" height="8" fill="#3dd6c8" style="fill:rgb(61, 214, 200);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
-<!-- WINGS RIGHT -->
-<rect x="40" y="-40" width="16" height="8" fill="#0a6b6b" style="fill:rgb(10, 107, 107);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
-<rect x="40" y="-32" width="8" height="8" fill="#0a6b6b" style="fill:rgb(10, 107, 107);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
-<rect x="32" y="-24" width="24" height="8" fill="#3dd6c8" style="fill:rgb(61, 214, 200);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
-<rect x="32" y="-16" width="16" height="8" fill="#3dd6c8" style="fill:rgb(61, 214, 200);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
-
-<!-- BODY -->
-<rect x="-24" y="-40" width="48" height="8" fill="#3dd6c8" style="fill:rgb(61, 214, 200);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
-<rect x="-24" y="-32" width="48" height="8" fill="#3dd6c8" style="fill:rgb(61, 214, 200);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
-<!-- eyes -->
-<rect x="-16" y="-32" width="8" height="8" fill="#000" style="fill:rgb(0, 0, 0);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
-<rect x="8" y="-32" width="8" height="8" fill="#000" style="fill:rgb(0, 0, 0);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
-
-<rect x="-24" y="-24" width="48" height="8" fill="#3dd6c8" style="fill:rgb(61, 214, 200);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
-<rect x="-24" y="-16" width="48" height="8" fill="#3dd6c8" style="fill:rgb(61, 214, 200);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
-
-<!-- LOWER BODY / TAIL -->
-<rect x="-16" y="-8" width="32" height="8" fill="#0a6b6b" style="fill:rgb(10, 107, 107);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
-<rect x="-12" y="0" width="24" height="8" fill="#0a6b6b" style="fill:rgb(10, 107, 107);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
-<rect x="-8" y="8" width="16" height="8" fill="#0a6b6b" style="fill:rgb(10, 107, 107);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
-<rect x="-4" y="16" width="8" height="8" fill="#0a6b6b" style="fill:rgb(10, 107, 107);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, &quot;system-ui&quot;, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
-</g>
+<svg viewBox="44 11 112 112" xmlns="http://www.w3.org/2000/svg">
+<title>Crest</title>
+<!-- Wings left -->
+<rect x="44" y="35" width="16" height="8" fill="#0a6b6b"/>
+<rect x="52" y="43" width="8" height="8" fill="#0a6b6b"/>
+<rect x="44" y="51" width="24" height="8" fill="#3dd6c8"/>
+<rect x="52" y="59" width="16" height="8" fill="#3dd6c8"/>
+<!-- Wings right -->
+<rect x="140" y="35" width="16" height="8" fill="#0a6b6b"/>
+<rect x="140" y="43" width="8" height="8" fill="#0a6b6b"/>
+<rect x="132" y="51" width="24" height="8" fill="#3dd6c8"/>
+<rect x="132" y="59" width="16" height="8" fill="#3dd6c8"/>
+<!-- Body -->
+<rect x="76" y="35" width="48" height="8" fill="#3dd6c8"/>
+<rect x="76" y="43" width="48" height="8" fill="#3dd6c8"/>
+<rect x="76" y="51" width="48" height="8" fill="#3dd6c8"/>
+<rect x="76" y="59" width="48" height="8" fill="#3dd6c8"/>
+<!-- Eyes -->
+<rect x="84" y="43" width="8" height="8" fill="#000"/>
+<rect x="108" y="43" width="8" height="8" fill="#000"/>
+<!-- Tail -->
+<rect x="84" y="67" width="32" height="8" fill="#0a6b6b"/>
+<rect x="88" y="75" width="24" height="8" fill="#0a6b6b"/>
+<rect x="92" y="83" width="16" height="8" fill="#0a6b6b"/>
+<rect x="96" y="91" width="8" height="8" fill="#0a6b6b"/>
 </svg>
