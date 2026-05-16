@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from sirenspec.exceptions import ProviderError
 from sirenspec.providers.registry import resolve_provider
 
 
@@ -25,17 +26,17 @@ class TestResolveProvider:
         assert provider.model == "claude-haiku-4-5-20251001"
 
     def test_unknown_provider_raises(self) -> None:
-        with pytest.raises(ValueError, match="Unknown provider"):
+        with pytest.raises(ProviderError, match="Unknown provider"):
             resolve_provider("vertex:gemini-pro")
 
     def test_malformed_no_colon_raises(self) -> None:
-        with pytest.raises(ValueError, match="Malformed"):
+        with pytest.raises(ProviderError, match="Malformed"):
             resolve_provider("openai-gpt4")
 
     def test_malformed_empty_model_raises(self) -> None:
-        with pytest.raises(ValueError, match="Malformed"):
+        with pytest.raises(ProviderError, match="Malformed"):
             resolve_provider("openai:")
 
     def test_malformed_empty_provider_raises(self) -> None:
-        with pytest.raises(ValueError, match="Malformed"):
+        with pytest.raises(ProviderError, match="Malformed"):
             resolve_provider(":gpt-4o")

@@ -427,7 +427,7 @@ class TestExecutorToolNodes:
 
         mock_provider = _make_provider_mock("fallback response")
         with patch("urllib.request.urlopen", side_effect=http_error):
-            with patch("sirenspec.core.executor.resolve_provider", return_value=mock_provider):
+            with patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider):
                 trace = await execute(wf, "start")
 
         assert trace["summary"]["status"] == "success"

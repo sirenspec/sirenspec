@@ -24,6 +24,9 @@ openspec/
 .hypothesis/
 skills-lock.json
 
+# Worktrees
+.worktrees/
+
 # Environment variables
 .env
 

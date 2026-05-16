@@ -219,7 +219,7 @@ class TestExecutorRetryIntegration:
 
         wf = _minimal_workflow(retry=RetryPolicy(max_attempts=2, backoff="constant", base_delay=0.0, on=["429"]))
 
-        with patch("sirenspec.core.executor.resolve_provider", return_value=mock_provider):
+        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider):
             trace = await execute(wf, "hello")
 
         assert trace["summary"]["status"] == "success"
@@ -247,7 +247,7 @@ class TestExecutorRetryIntegration:
             on_failure=OnFailurePolicy(action="abort"),
         )
 
-        with patch("sirenspec.core.executor.resolve_provider", return_value=mock_provider):
+        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider):
             trace = await execute(wf, "hello")
 
         node = trace["nodes"][0]
@@ -267,7 +267,7 @@ class TestExecutorRetryIntegration:
             on_failure=OnFailurePolicy(action="abort"),
         )
 
-        with patch("sirenspec.core.executor.resolve_provider", return_value=mock_provider):
+        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider):
             trace = await execute(wf, "hello")
 
         assert trace["summary"]["status"] == "failed"
@@ -307,7 +307,7 @@ class TestExecutorRetryIntegration:
         mock_provider.complete = _complete
         mock_provider.last_token_count = 5
 
-        with patch("sirenspec.core.executor.resolve_provider", return_value=mock_provider):
+        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider):
             trace = await execute(wf, "hello")
 
         node_ids = [n["id"] for n in trace["nodes"]]
@@ -327,7 +327,7 @@ class TestExecutorRetryIntegration:
             on_failure=OnFailurePolicy(action="use_default", default_output="unknown"),
         )
 
-        with patch("sirenspec.core.executor.resolve_provider", return_value=mock_provider):
+        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider):
             trace = await execute(wf, "hello")
 
         assert trace["output"]["reply"] == "unknown"
@@ -367,7 +367,7 @@ class TestExecutorRetryIntegration:
         mock_provider.complete = _complete
         mock_provider.last_token_count = 5
 
-        with patch("sirenspec.core.executor.resolve_provider", return_value=mock_provider):
+        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider):
             trace = await execute(wf, "hello")
 
         node_ids = [n["id"] for n in trace["nodes"]]
@@ -396,7 +396,7 @@ class TestExecutorRetryIntegration:
             defaults=WorkflowDefaults(retry=RetryPolicy(max_attempts=2, backoff="constant", base_delay=0.0, on=["429"]))
         )
 
-        with patch("sirenspec.core.executor.resolve_provider", return_value=mock_provider):
+        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider):
             trace = await execute(wf, "hello")
 
         assert trace["summary"]["status"] == "success"
@@ -427,7 +427,7 @@ class TestExecutorRetryIntegration:
             ),
         )
 
-        with patch("sirenspec.core.executor.resolve_provider", return_value=mock_provider):
+        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider):
             trace = await execute(wf, "hello")
 
         assert trace["summary"]["status"] == "failed"

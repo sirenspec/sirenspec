@@ -152,6 +152,29 @@ This workflow calls OpenAI for classification and Anthropic for the final respon
 
 ---
 
+## Error Handling
+
+Provider URIs are validated when the workflow is executed. An invalid URI raises `sirenspec.exceptions.ProviderError` (a subclass of `SirenSpecError`):
+
+```python
+from sirenspec.exceptions import ProviderError
+
+try:
+    sirenspec.run(workflow, "hello")
+except ProviderError as exc:
+    print(exc)  # e.g. "Unknown provider 'vertex'; supported: ['anthropic', 'ollama', 'openai']"
+```
+
+Common reasons a `ProviderError` is raised:
+
+| Cause | Example URI | Error message |
+|-------|-------------|---------------|
+| Missing colon separator | `openai-gpt4o` | `Malformed provider URI '...'; expected 'provider:model' format` |
+| Empty model name | `openai:` | `Malformed provider URI '...'; expected 'provider:model' format` |
+| Unknown provider | `vertex:gemini-pro` | `Unknown provider 'vertex'; supported: [...]` |
+
+---
+
 ## Token Tracking
 
 Each provider records the total token count from its most recent call. This is surfaced in the execution trace:
