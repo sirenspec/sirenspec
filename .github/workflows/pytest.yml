@@ -21,7 +21,7 @@ jobs:
           enable-cache: true
 
       - name: Install dependencies
-        run: uv sync --frozen
+        run: uv sync --frozen --extra dev
 
       - name: Run Pytest
         run: uv run pytest --tb=short -v
