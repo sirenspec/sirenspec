@@ -1,4 +1,7 @@
-# <img src="docs/logo/crest.svg" alt="Crest, the SirenSpec mascot" width="180" align="right" style="vertical-align: middle;"/> SirenSpec
+<div align="center">
+  <h1>SirenSpec</h1>
+  <img src="docs/logo/crest.svg" alt="Crest, the SirenSpec mascot" width="180"/>
+</div>
 
 YAML-first agent orchestration SDK. Define multi-agent workflows in human-readable YAML and execute them against OpenAI or Anthropic backends.
 
