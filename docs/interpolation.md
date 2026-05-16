@@ -49,12 +49,13 @@ The `message` field is always present.  Additional fields defined in `input:` ar
 Reads `os.environ` **at node execution time**, not at parse time.
 
 ```yaml
-config:
-  url: "https://api.example.com?key={{ env.API_KEY }}"
+system: "You are operating in the {{ env.APP_ENVIRONMENT }} environment."
 ```
 
-> **Security note:** `env.*` values are **redacted** (`***`) in execution traces to prevent
-> credentials from appearing in logs.  The resolved value is passed to the LLM as normal.
+> **Security note:** `env.*` values are **redacted** (`***`) in execution traces.  Use env vars
+> for non-sensitive runtime configuration — feature flags, environment names, region identifiers.
+> **Never inject secrets or API keys into `system:` or `prompt:` fields**; use HTTP `headers:`
+> in tool nodes instead.
 
 Unset variables raise `InterpolationError`.  Use a default if the variable is optional:
 
@@ -229,13 +230,31 @@ nodes:
     writes: output.report
 ```
 
-### Environment variable injection
+### Environment variables for runtime configuration
+
+Use `env.*` to inject non-sensitive configuration into prompts — environment names,
+feature flags, locale identifiers, and similar non-secret values:
 
 ```yaml
 agents:
-  api_caller:
+  analyzer:
     model: "openai:gpt-4o-mini"
     system: |
-      You have access to the analytics API.
-      Auth header: Bearer {{ env.ANALYTICS_API_KEY }}
+      You are operating in {{ env.APP_ENVIRONMENT | default('production') }} mode.
+      Be concise and focus on actionable findings.
+```
+
+> **Credentials and API keys must never appear in `system:` or `prompt:` fields.**  Prompt
+> content can surface in logs, traces, and model context windows.  Pass secrets via HTTP
+> `headers:` in tool nodes instead:
+
+```yaml
+nodes:
+  fetch_data:
+    type: tool
+    tool: http
+    config:
+      url: "https://api.example.com/data"
+      headers:
+        Authorization: "Bearer {{ env.SERVICE_TOKEN }}"
 ```
