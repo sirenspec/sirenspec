@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import pytest
 
@@ -12,7 +13,7 @@ from sirenspec.guardrails.base import GuardrailViolation
 from sirenspec.guardrails.registry import build_guardrails
 from sirenspec.guardrails.schema import SchemaGuardrail
 
-_SCHEMA: dict = {
+_SCHEMA: dict[str, Any] = {
     "type": "object",
     "required": ["intent", "confidence"],
     "properties": {
@@ -39,6 +40,7 @@ class TestSchemaGuardrailCheckOutput:
         guardrail = SchemaGuardrail(schema=_SCHEMA)
         result = guardrail.check_output(_VALID_OUTPUT)
         assert result == _VALID_OUTPUT
+        assert isinstance(result, str)
 
     def test_missing_required_field_raises_violation(self) -> None:
         """Output missing a required field raises GuardrailViolation with the field path."""
@@ -70,6 +72,7 @@ class TestSchemaGuardrailCheckOutput:
         with pytest.raises(GuardrailViolation) as exc_info:
             guardrail.check_output("this is not json")
         assert "not valid JSON" in str(exc_info.value)
+        assert exc_info.type is GuardrailViolation
 
 
 class TestSchemaGuardrailCheckInput:
@@ -79,12 +82,16 @@ class TestSchemaGuardrailCheckInput:
         """check_input returns the input string unchanged regardless of content."""
         guardrail = SchemaGuardrail(schema=_SCHEMA)
         text = "some arbitrary input {{ not json }}"
-        assert guardrail.check_input(text) == text
+        result = guardrail.check_input(text)
+        assert result == text
+        assert isinstance(result, str)
 
     def test_check_input_passes_through_empty_string(self) -> None:
         """check_input returns an empty string unchanged."""
         guardrail = SchemaGuardrail(schema=_SCHEMA)
-        assert guardrail.check_input("") == ""
+        result = guardrail.check_input("")
+        assert result == ""
+        assert isinstance(result, str)
 
 
 class TestBuildGuardrailsSchemaIntegration:
@@ -92,8 +99,9 @@ class TestBuildGuardrailsSchemaIntegration:
 
     def test_build_guardrails_bare_schema_name_raises_value_error(self) -> None:
         """build_guardrails(['schema']) raises ValueError because no config is provided."""
-        with pytest.raises(ValueError, match="config"):
+        with pytest.raises(ValueError, match="config") as exc_info:
             build_guardrails(["schema"])
+        assert "schema" in str(exc_info.value)
 
     def test_build_guardrails_with_guardrail_spec_returns_schema_guardrail(self) -> None:
         """build_guardrails with a GuardrailSpec returns a SchemaGuardrail instance."""
@@ -105,14 +113,16 @@ class TestBuildGuardrailsSchemaIntegration:
     def test_build_guardrails_schema_spec_none_config_raises_value_error(self) -> None:
         """build_guardrails with GuardrailSpec(name='schema', config=None) raises ValueError."""
         spec = GuardrailSpec(name="schema", config=None)
-        with pytest.raises(ValueError, match="config"):
+        with pytest.raises(ValueError, match="config") as exc_info:
             build_guardrails([spec])
+        assert "schema" in str(exc_info.value)
 
     def test_build_guardrails_schema_spec_missing_schema_key_raises_value_error(self) -> None:
         """build_guardrails with config dict lacking 'schema' key raises ValueError."""
         spec = GuardrailSpec(name="schema", config={"not_schema": {}})
-        with pytest.raises(ValueError, match="schema"):
+        with pytest.raises(ValueError, match="schema") as exc_info:
             build_guardrails([spec])
+        assert "config" in str(exc_info.value)
 
 
 class TestGuardrailViolationHierarchy:
@@ -122,14 +132,17 @@ class TestGuardrailViolationHierarchy:
         """GuardrailViolation is an instance of GuardrailError."""
         exc = GuardrailViolation("test reason")
         assert isinstance(exc, GuardrailError)
+        assert isinstance(exc, SirenSpecError)
 
     def test_guardrail_violation_is_siren_spec_error(self) -> None:
         """GuardrailViolation is an instance of SirenSpecError."""
         exc = GuardrailViolation("test reason")
         assert isinstance(exc, SirenSpecError)
+        assert isinstance(exc, GuardrailError)
 
     def test_guardrail_violation_raised_by_schema_guardrail_is_guardrail_error(self) -> None:
         """GuardrailViolation raised by SchemaGuardrail is catchable as GuardrailError."""
         guardrail = SchemaGuardrail(schema=_SCHEMA)
-        with pytest.raises(GuardrailError):
+        with pytest.raises(GuardrailError) as exc_info:
             guardrail.check_output("not json")
+        assert exc_info.type is GuardrailViolation

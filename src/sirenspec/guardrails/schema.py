@@ -9,8 +9,10 @@ import jsonschema
 
 from sirenspec.guardrails.base import Guardrail, GuardrailViolation
 
+type JsonValue = dict[str, Any] | list[Any] | str | int | float | bool | None
 
-def parse_json_output(text: str) -> Any:
+
+def parse_json_output(text: str) -> JsonValue:
     """Attempt to parse *text* as JSON.
 
     :param text: The raw text to parse.
@@ -23,7 +25,7 @@ def parse_json_output(text: str) -> Any:
         raise GuardrailViolation(f"Output is not valid JSON: {exc}") from exc
 
 
-def validate_against_schema(data: Any, schema: dict[str, Any]) -> None:
+def validate_against_schema(data: JsonValue, schema: dict[str, Any]) -> None:
     """Validate *data* against *schema* using JSON Schema Draft 7.
 
     :param data: The parsed Python object to validate.
@@ -54,6 +56,10 @@ class SchemaGuardrail(Guardrail):
     """
 
     def __init__(self, schema: dict[str, Any]) -> None:
+        """Initialize with the JSON Schema Draft 7 definition to validate against.
+
+        :param schema: A JSON Schema Draft 7 dict.
+        """
         self.schema = schema
 
     def check_input(self, text: str) -> str:
