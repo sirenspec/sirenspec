@@ -34,14 +34,20 @@ def make_length_guardrail(config: dict | None = None) -> Guardrail:
     return LengthGuardrail()
 
 
-def make_schema_guardrail(config: dict | None) -> Guardrail:
-    """Instantiate a SchemaGuardrail from a config dict containing a ``schema`` key.
+def make_schema_guardrail(config: dict | None = None) -> Guardrail:
+    """Instantiate a SchemaGuardrail from an optional config dict.
 
-    :param config: Must be a dict with a ``schema`` key containing a JSON Schema dict.
-    :raises ValueError: If ``config`` is ``None`` or does not contain a ``schema`` key.
+    When ``config`` is ``None`` (i.e. guardrail referenced by name only), an empty schema
+    is used which accepts any valid JSON. When ``config`` is provided it must contain a
+    ``schema`` key with a JSON Schema dict.
+
+    :param config: Optional dict with a ``schema`` key containing a JSON Schema dict.
+    :raises ValueError: If ``config`` is provided but does not contain a ``schema`` key.
     :returns: Configured :class:`~sirenspec.guardrails.schema.SchemaGuardrail`.
     """
-    if config is None or "schema" not in config:
+    if config is None:
+        return SchemaGuardrail(schema={})
+    if "schema" not in config:
         raise ValueError("schema guardrail requires config with a 'schema' key")
     return SchemaGuardrail(schema=config["schema"])
 
