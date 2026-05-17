@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import time
 from collections import defaultdict, deque
+from collections.abc import AsyncGenerator
 from typing import Any
 
 from sirenspec.core.agent_runner import execute_agent_node
 from sirenspec.core.context import WorkflowContext
+from sirenspec.core.events import NodeCompleteEvent, SummaryEvent
 from sirenspec.core.factory_runner import execute_factory_node
 from sirenspec.core.interpolation import InterpolationContext, build_interpolation_context, resolve_template
 from sirenspec.core.models import (
@@ -23,7 +25,7 @@ from sirenspec.core.models import (
 from sirenspec.core.swrm_runner import execute_swrm
 from sirenspec.core.tool_runner import execute_tool_node
 from sirenspec.core.usage import TokenUsage
-from sirenspec.exceptions import FactoryNodeError, InterpolationError, RetryExhaustedError, SwrmAgentError, ToolError
+from sirenspec.exceptions import RetryExhaustedError
 from sirenspec.guardrails.base import GuardrailViolation
 
 
@@ -285,7 +287,7 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
                     output=context.output,
                     global_guardrail_names=global_guardrail_names,
                 )
-            except (SwrmAgentError, Exception) as exc:
+            except Exception as exc:
                 duration_ms = (time.monotonic() - start_time) * 1000
                 error_trace: dict[str, Any] = {
                     "id": node_id,
@@ -349,15 +351,6 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
                     if condition is None or evaluate_when_condition(condition, context):
                         active_nodes.add(target)
 
-            except ToolError as exc:
-                duration_ms = (time.monotonic() - start_time) * 1000
-                tool_node_trace["error"] = str(exc)
-                tool_node_trace["duration_ms"] = round(duration_ms, 2)
-                total_duration_ms += duration_ms
-                status = "failed"
-                trace_nodes.append(tool_node_trace)
-                break
-
             except Exception as exc:
                 duration_ms = (time.monotonic() - start_time) * 1000
                 tool_node_trace["error"] = str(exc)
@@ -385,7 +378,7 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
                     output=context.output,
                     guardrail_names=global_guardrail_names,
                 )
-            except (FactoryNodeError, InterpolationError, Exception) as exc:
+            except Exception as exc:
                 duration_ms = (time.monotonic() - start_time) * 1000
                 error_trace: dict[str, Any] = {
                     "id": node_id,
@@ -457,7 +450,7 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
             "writes": node.writes,
             "guardrails_passed": [],
             "tokens": 0,
-            "usage": None,
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "estimated_usd": None},
             "duration_ms": 0,
             "error": None,
             "retry_attempts": [],
@@ -578,3 +571,328 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
             "status": status,
         },
     }
+
+
+async def execute_streaming(workflow: Workflow, user_input: str) -> AsyncGenerator[NodeCompleteEvent | SummaryEvent]:
+    """Execute a workflow and yield typed events as each node completes.
+
+    This is the streaming counterpart to :func:`execute`.  It walks the same
+    node/edge graph with identical semantics — topological ordering, conditional
+    branching, retry and on-failure policies — but instead of collecting all
+    results and returning them at once, it yields a :class:`~sirenspec.core.events.NodeCompleteEvent`
+    immediately after each node finishes.  Nodes that are never activated yield a
+    ``NodeCompleteEvent`` with ``status="skipped"``.  At the very end a single
+    :class:`~sirenspec.core.events.SummaryEvent` is yielded.
+
+    :param workflow: Validated :class:`~sirenspec.core.models.Workflow` instance.
+    :param user_input: The initial user message.
+    :returns: An async generator of ``NodeCompleteEvent`` (one per node) followed
+        by a final ``SummaryEvent``.
+    """
+    start_wall = time.monotonic()
+    context = WorkflowContext(initial_state=workflow.state)
+    node_ids = list(workflow.nodes.keys())
+
+    out_edges: dict[str, list[tuple[str, str | None]]] = {n: [] for n in node_ids}
+    in_degree: dict[str, int] = dict.fromkeys(node_ids, 0)
+    for edge in workflow.edges:
+        out_edges[edge.from_node].append((edge.to_node, edge.when))
+        in_degree[edge.to_node] += 1
+
+    edge_pairs = [(e.from_node, e.to_node) for e in workflow.edges]
+    execution_order = topological_sort(node_ids, edge_pairs)
+
+    active_nodes: set[str] = {n for n in node_ids if in_degree[n] == 0}
+    last_writes_path: str | None = None
+
+    total_usage = TokenUsage(prompt_tokens=0, completion_tokens=0)
+    total_duration_ms = 0.0
+    status = "success"
+    active_node_count = 0
+
+    global_guardrail_names = workflow.guardrails
+    pending_fallback_nodes: set[str] = set()
+
+    for node_id in execution_order:
+        if node_id in pending_fallback_nodes:
+            active_nodes.add(node_id)
+            pending_fallback_nodes.discard(node_id)
+
+        if node_id not in active_nodes:
+            yield NodeCompleteEvent(
+                node_id=node_id,
+                node_type=type(workflow.nodes[node_id]).__name__.lower().removesuffix("node"),
+                status="skipped",
+            )
+            continue
+
+        active_node_count += 1
+        node = workflow.nodes[node_id]
+
+        if isinstance(node, SwrmNode):
+            node_start = time.monotonic()
+            try:
+                swrm_trace = await execute_swrm(
+                    node_id=node_id,
+                    node=node,
+                    user_input=user_input,
+                    working=context.working,
+                    output=context.output,
+                    global_guardrail_names=global_guardrail_names,
+                )
+            except Exception as exc:
+                duration_ms = (time.monotonic() - node_start) * 1000
+                total_duration_ms += duration_ms
+                status = "failed"
+                yield NodeCompleteEvent(
+                    node_id=node_id,
+                    node_type="swrm",
+                    status="failed",
+                    error=str(exc),
+                )
+                break
+
+            for agent_trace in swrm_trace["agents"]:
+                if agent_trace["response_received"] is not None:
+                    context.write(
+                        f"working.{node_id}.agents.{agent_trace['id']}.output",
+                        agent_trace["response_received"],
+                    )
+            context.write(f"output.{node_id}", swrm_trace["output"])
+            context.write(f"working.{node_id}.output", swrm_trace["output"])
+            last_writes_path = f"output.{node_id}"
+
+            total_usage += TokenUsage(prompt_tokens=0, completion_tokens=swrm_trace["tokens"])
+            total_duration_ms += swrm_trace["duration_ms"]
+
+            for target, condition in out_edges[node_id]:
+                if condition is None or evaluate_when_condition(condition, context):
+                    active_nodes.add(target)
+
+            yield NodeCompleteEvent(
+                node_id=node_id,
+                node_type="swrm",
+                output=swrm_trace["output"],
+                writes=f"output.{node_id}",
+                status="success",
+                tokens=swrm_trace["tokens"],
+            )
+            continue
+
+        if isinstance(node, ToolNode):
+            node_start = time.monotonic()
+            try:
+                tool_interp_ctx = build_interpolation_context(user_input, context.working)
+                interpolated_node = interpolate_tool_config(node, tool_interp_ctx)
+                run_result = await execute_tool_node(node_id, interpolated_node)
+                context.write(f"working.{node_id}.{node.output_key}", run_result.result)
+                total_duration_ms += run_result.duration_ms
+
+                for target, condition in out_edges[node_id]:
+                    if condition is None or evaluate_when_condition(condition, context):
+                        active_nodes.add(target)
+
+                yield NodeCompleteEvent(
+                    node_id=node_id,
+                    node_type="tool",
+                    output=run_result.result,
+                    writes=f"working.{node_id}.{node.output_key}",
+                    status="success",
+                )
+
+            except Exception as exc:
+                duration_ms = (time.monotonic() - node_start) * 1000
+                total_duration_ms += duration_ms
+                status = "failed"
+                yield NodeCompleteEvent(
+                    node_id=node_id,
+                    node_type="tool",
+                    status="failed",
+                    error=str(exc),
+                )
+                break
+            continue
+
+        if isinstance(node, FactoryNode):
+            node_start = time.monotonic()
+            try:
+                factory_trace = await execute_factory_node(
+                    node_id=node_id,
+                    node=node,
+                    workflow=workflow,
+                    user_input=user_input,
+                    working=context.working,
+                    output=context.output,
+                    guardrail_names=global_guardrail_names,
+                )
+            except Exception as exc:
+                duration_ms = (time.monotonic() - node_start) * 1000
+                total_duration_ms += duration_ms
+                status = "failed"
+                yield NodeCompleteEvent(
+                    node_id=node_id,
+                    node_type="factory",
+                    status="failed",
+                    error=str(exc),
+                )
+                break
+
+            outputs_list = factory_trace["outputs"]
+            context.write(node.writes, outputs_list)
+            context.write(f"working.{node_id}.outputs", outputs_list)
+            context.write(f"working.{node_id}.output", "\n".join(s for s in outputs_list if s))
+            last_writes_path = node.writes
+
+            total_usage += TokenUsage(prompt_tokens=0, completion_tokens=factory_trace["tokens"])
+            total_duration_ms += factory_trace["duration_ms"]
+
+            for target, condition in out_edges[node_id]:
+                if condition is None or evaluate_when_condition(condition, context):
+                    active_nodes.add(target)
+
+            yield NodeCompleteEvent(
+                node_id=node_id,
+                node_type="factory",
+                output=outputs_list,
+                writes=node.writes,
+                status="success",
+                tokens=factory_trace["tokens"],
+            )
+            continue
+
+        if not isinstance(node, AgentNode):
+            raise TypeError(f"Unhandled node type: {type(node).__name__}")
+        agent_def = workflow.agents[node.agent]
+
+        if last_writes_path is None:
+            node_input = user_input
+        else:
+            try:
+                node_input = str(context.resolve(last_writes_path))
+            except KeyError:
+                node_input = user_input
+
+        guardrail_names = agent_def.guardrails if agent_def.guardrails is not None else global_guardrail_names
+        retry_policy = resolve_retry_policy(workflow, node_id)
+        on_failure_policy = resolve_on_failure_policy(workflow, node_id)
+
+        interp_ctx = build_interpolation_context(user_input, context.working)
+        resolved_system = resolve_template(agent_def.system, interp_ctx)
+
+        node_start = time.monotonic()
+        try:
+            run_result = await execute_agent_node(
+                node_id=node_id,
+                model_uri=agent_def.model,
+                system_prompt=resolved_system,
+                user_input=node_input,
+                guardrail_names=guardrail_names,
+                retry_policy=retry_policy,
+            )
+
+            context.write(node.writes, run_result.output)
+            context.write(f"working.{node_id}.output", run_result.output)
+            last_writes_path = node.writes
+
+            for target, condition in out_edges[node_id]:
+                if condition is None or evaluate_when_condition(condition, context):
+                    active_nodes.add(target)
+
+            duration_ms = (time.monotonic() - node_start) * 1000
+            total_usage = total_usage + run_result.token_usage
+            total_duration_ms += duration_ms
+
+            yield NodeCompleteEvent(
+                node_id=node_id,
+                node_type="agent",
+                output=run_result.output,
+                writes=node.writes,
+                status="success",
+                tokens=run_result.token_usage.total,
+            )
+
+        except GuardrailViolation as exc:
+            duration_ms = (time.monotonic() - node_start) * 1000
+            total_duration_ms += duration_ms
+            status = "failed"
+            yield NodeCompleteEvent(
+                node_id=node_id,
+                node_type="agent",
+                status="failed",
+                error=f"GuardrailViolation: {exc.reason}",
+            )
+            break
+
+        except RetryExhaustedError as exc:
+            duration_ms = (time.monotonic() - node_start) * 1000
+            total_duration_ms += duration_ms
+            action = on_failure_policy.action
+
+            if action == "abort":
+                status = "failed"
+                yield NodeCompleteEvent(
+                    node_id=node_id,
+                    node_type="agent",
+                    status="failed",
+                    error=str(exc),
+                )
+                break
+
+            elif action == "fallback":
+                yield NodeCompleteEvent(
+                    node_id=node_id,
+                    node_type="agent",
+                    status="failed",
+                    error=str(exc),
+                    writes=node.writes,
+                )
+                if on_failure_policy.fallback_node:
+                    pending_fallback_nodes.add(on_failure_policy.fallback_node)
+                continue
+
+            elif action == "skip":
+                yield NodeCompleteEvent(
+                    node_id=node_id,
+                    node_type="agent",
+                    status="skipped",
+                    error=str(exc),
+                )
+                for target, condition in out_edges[node_id]:
+                    if condition is None or evaluate_when_condition(condition, context):
+                        active_nodes.add(target)
+                continue
+
+            elif action == "use_default":
+                default_val = on_failure_policy.default_output or ""
+                context.write(node.writes, default_val)
+                last_writes_path = node.writes
+                for target, condition in out_edges[node_id]:
+                    if condition is None or evaluate_when_condition(condition, context):
+                        active_nodes.add(target)
+                yield NodeCompleteEvent(
+                    node_id=node_id,
+                    node_type="agent",
+                    output=default_val,
+                    writes=node.writes,
+                    status="success",
+                )
+                continue
+
+        except Exception as exc:
+            duration_ms = (time.monotonic() - node_start) * 1000
+            total_duration_ms += duration_ms
+            status = "failed"
+            yield NodeCompleteEvent(
+                node_id=node_id,
+                node_type="agent",
+                status="failed",
+                error=str(exc),
+            )
+            break
+
+    yield SummaryEvent(
+        total_nodes=active_node_count,
+        total_tokens=total_usage.total,
+        status=status,
+        duration_ms=round((time.monotonic() - start_wall) * 1000, 2),
+    )
