@@ -110,6 +110,21 @@ class PIIDetectedError(GuardrailError):
         self.entity_types = entity_types
 
 
+class BudgetExceededError(GuardrailError):
+    """Raised when a workflow run exceeds its configured token or USD budget.
+
+    :param reason: Human-readable description of which ceiling was hit.
+    :param tokens_used: Total tokens consumed at the point of the violation.
+    :param estimated_usd: Accumulated USD estimate at the point of the violation, or ``None``
+        if cost could not be estimated (e.g. local/Ollama models).
+    """
+
+    def __init__(self, reason: str, tokens_used: int, estimated_usd: float | None) -> None:
+        super().__init__(reason)
+        self.tokens_used = tokens_used
+        self.estimated_usd = estimated_usd
+
+
 class FactoryNodeError(SirenSpecError):
     """Raised when a factory node instance fails and ``on_failure`` is ``'abort'``.
 

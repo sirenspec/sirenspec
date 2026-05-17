@@ -6,6 +6,7 @@ from collections.abc import Callable
 
 from sirenspec.core.models import GuardrailSpec
 from sirenspec.guardrails.base import Guardrail
+from sirenspec.guardrails.cost_cap import CostCapGuardrail
 from sirenspec.guardrails.injection import InjectionGuardrail
 from sirenspec.guardrails.length import LengthGuardrail
 from sirenspec.guardrails.pii import PIIGuardrail
@@ -74,9 +75,27 @@ def make_pii_guardrail(config: dict | None = None) -> Guardrail:
     return PIIGuardrail(entities=entities, action=action, replacement=replacement)
 
 
+def make_cost_cap_guardrail(config: dict | None) -> Guardrail:
+    """Instantiate a CostCapGuardrail from a config dict.
+
+    :param config: Must be a dict with at least one of ``max_usd`` or ``max_tokens``.
+        Optional key ``action`` controls behaviour (``'abort'`` or ``'warn'``).
+    :raises ValueError: If ``config`` is ``None`` or lacks both ``max_usd`` and ``max_tokens``.
+    :returns: Configured :class:`~sirenspec.guardrails.cost_cap.CostCapGuardrail`.
+    """
+    if config is None:
+        raise ValueError("cost_cap guardrail requires a config dict with 'max_usd' and/or 'max_tokens'")
+    return CostCapGuardrail(
+        max_usd=config.get("max_usd"),
+        max_tokens=config.get("max_tokens"),
+        action=config.get("action", "abort"),
+    )
+
+
 # Maps guardrail names (as used in YAML) to factory functions.
 # To add a new guardrail, add one factory function above and one entry here.
 _GUARDRAIL_FACTORIES: dict[str, Callable[[dict | None], Guardrail]] = {
+    "cost_cap": make_cost_cap_guardrail,
     "injection": make_injection_guardrail,
     "length": make_length_guardrail,
     "pii": make_pii_guardrail,

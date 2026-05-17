@@ -14,8 +14,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from sirenspec.core.executor import execute
-from sirenspec.yaml.parser import load_workflow
 from sirenspec.core.usage import TokenUsage
+from sirenspec.yaml.parser import load_workflow
 
 COOKBOOK = Path(__file__).parent.parent / "docs" / "cookbook"
 

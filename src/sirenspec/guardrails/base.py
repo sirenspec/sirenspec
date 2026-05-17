@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import Protocol, runtime_checkable
 
+from sirenspec.core.usage import TokenUsage
 from sirenspec.exceptions import GuardrailError
 
 
@@ -35,3 +37,25 @@ class Guardrail(ABC):
         :raises GuardrailViolation: If the text violates the guardrail policy.
         :returns: The (possibly transformed) output text.
         """
+
+
+@runtime_checkable
+class WorkflowGuardrail(Protocol):
+    """Structural interface for guardrails that operate at the workflow level.
+
+    Unlike :class:`Guardrail`, which checks individual inputs and outputs, a
+    ``WorkflowGuardrail`` is checked after each node completes and has access to
+    the accumulated :class:`~sirenspec.core.usage.TokenUsage` across all nodes so far.
+
+    Any object that implements :meth:`check_budget` satisfies this protocol.
+    """
+
+    def check_budget(self, usage: TokenUsage, estimated_usd: float | None) -> None:
+        """Assert that the accumulated spend is within the configured budget.
+
+        :param usage: Combined token usage accumulated across all completed nodes.
+        :param estimated_usd: Running USD estimate, or ``None`` if the models in use
+            do not have pricing entries (e.g. Ollama/local models).
+        :raises BudgetExceededError: If the accumulated spend exceeds the configured ceiling.
+        """
+        ...

@@ -22,11 +22,13 @@ from sirenspec.core.models import (
     ToolNode,
     Workflow,
 )
+from sirenspec.core.pricing import estimate_usd
 from sirenspec.core.swrm_runner import execute_swrm
 from sirenspec.core.tool_runner import execute_tool_node
 from sirenspec.core.usage import TokenUsage
-from sirenspec.exceptions import RetryExhaustedError
-from sirenspec.guardrails.base import GuardrailViolation
+from sirenspec.exceptions import BudgetExceededError, RetryExhaustedError
+from sirenspec.guardrails.base import GuardrailViolation, WorkflowGuardrail
+from sirenspec.guardrails.registry import build_guardrails
 
 
 def interpolate_tool_config(node: ToolNode, ctx: InterpolationContext) -> ToolNode:
@@ -161,6 +163,32 @@ def topological_sort(node_ids: list[str], edges: list[tuple[str, str]]) -> list[
     return order
 
 
+def extract_workflow_guardrails(names: list | None) -> list[WorkflowGuardrail]:
+    """Return only the :class:`~sirenspec.guardrails.base.WorkflowGuardrail` instances from *names*.
+
+    :param names: Raw guardrail name list from the workflow definition (may be ``None``).
+    :returns: List of guardrails that implement the WorkflowGuardrail protocol.
+    """
+    all_guardrails = build_guardrails(names)
+    return [g for g in all_guardrails if isinstance(g, WorkflowGuardrail)]
+
+
+def check_workflow_budget(
+    workflow_guardrails: list[WorkflowGuardrail],
+    usage: TokenUsage,
+    estimated_usd: float | None,
+) -> None:
+    """Run all workflow-level guardrails against the current accumulated spend.
+
+    :param workflow_guardrails: Guardrail instances that implement ``check_budget``.
+    :param usage: Accumulated token usage across all completed nodes.
+    :param estimated_usd: Running USD estimate, or ``None`` for local models.
+    :raises BudgetExceededError: If any workflow guardrail raises it.
+    """
+    for guardrail in workflow_guardrails:
+        guardrail.check_budget(usage, estimated_usd)
+
+
 def resolve_retry_policy(workflow: Workflow, node_id: str) -> RetryPolicy:
     """Return the effective :class:`~sirenspec.core.models.RetryPolicy` for *node_id*.
 
@@ -248,10 +276,12 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
 
     trace_nodes: list[dict[str, Any]] = []
     total_usage = TokenUsage(prompt_tokens=0, completion_tokens=0)
+    total_estimated_usd: float | None = None
     total_duration_ms = 0.0
     status = "success"
 
     global_guardrail_names = workflow.guardrails
+    workflow_guardrails = extract_workflow_guardrails(global_guardrail_names)
 
     # Fallback nodes are not reachable via normal edges — they are activated
     # explicitly when a node's on_failure policy is 'fallback'. We track them
@@ -316,6 +346,17 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
 
             total_usage += TokenUsage(prompt_tokens=0, completion_tokens=swrm_trace["tokens"])
             total_duration_ms += swrm_trace["duration_ms"]
+
+            context.write("working._budget.total_tokens", total_usage.total)
+            context.write("working._budget.estimated_usd", total_estimated_usd)
+
+            try:
+                check_workflow_budget(workflow_guardrails, total_usage, total_estimated_usd)
+            except BudgetExceededError as exc:
+                status = "failed"
+                swrm_trace["error"] = str(exc)
+                trace_nodes.append(swrm_trace)
+                break
 
             for target, condition in out_edges[node_id]:
                 if condition is None or evaluate_when_condition(condition, context):
@@ -403,6 +444,17 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
             total_usage += TokenUsage(prompt_tokens=0, completion_tokens=factory_trace["tokens"])
             total_duration_ms += factory_trace["duration_ms"]
 
+            context.write("working._budget.total_tokens", total_usage.total)
+            context.write("working._budget.estimated_usd", total_estimated_usd)
+
+            try:
+                check_workflow_budget(workflow_guardrails, total_usage, total_estimated_usd)
+            except BudgetExceededError as exc:
+                status = "failed"
+                factory_trace["error"] = str(exc)
+                trace_nodes.append(factory_trace)
+                break
+
             for target, condition in out_edges[node_id]:
                 if condition is None or evaluate_when_condition(condition, context):
                     active_nodes.add(target)
@@ -476,6 +528,11 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
                     active_nodes.add(target)
 
             duration_ms = (time.monotonic() - start_time) * 1000
+            node_estimated_usd = estimate_usd(
+                run_result.token_usage.prompt_tokens,
+                run_result.token_usage.completion_tokens,
+                agent_def.model,
+            )
             agent_node_trace.update(
                 {
                     "response_received": run_result.output,
@@ -483,7 +540,7 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
                     "usage": {
                         "prompt_tokens": run_result.token_usage.prompt_tokens,
                         "completion_tokens": run_result.token_usage.completion_tokens,
-                        "estimated_usd": None,
+                        "estimated_usd": node_estimated_usd,
                     },
                     "duration_ms": round(duration_ms, 2),
                     "guardrails_passed": run_result.guardrails_passed,
@@ -491,7 +548,20 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
                 }
             )
             total_usage += run_result.token_usage
+            if node_estimated_usd is not None:
+                total_estimated_usd = (total_estimated_usd or 0.0) + node_estimated_usd
             total_duration_ms += duration_ms
+
+            context.write("working._budget.total_tokens", total_usage.total)
+            context.write("working._budget.estimated_usd", total_estimated_usd)
+
+            try:
+                check_workflow_budget(workflow_guardrails, total_usage, total_estimated_usd)
+            except BudgetExceededError as exc:
+                agent_node_trace["error"] = str(exc)
+                status = "failed"
+                trace_nodes.append(agent_node_trace)
+                break
 
         except GuardrailViolation as exc:
             duration_ms = (time.monotonic() - start_time) * 1000
@@ -565,7 +635,7 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
                 "prompt_tokens": total_usage.prompt_tokens,
                 "completion_tokens": total_usage.completion_tokens,
                 "total_tokens": total_usage.total,
-                "estimated_usd": None,
+                "estimated_usd": total_estimated_usd,
             },
             "total_duration_ms": round(total_duration_ms, 2),
             "status": status,
@@ -606,11 +676,13 @@ async def execute_streaming(workflow: Workflow, user_input: str) -> AsyncGenerat
     last_writes_path: str | None = None
 
     total_usage = TokenUsage(prompt_tokens=0, completion_tokens=0)
+    total_estimated_usd: float | None = None
     total_duration_ms = 0.0
     status = "success"
     active_node_count = 0
 
     global_guardrail_names = workflow.guardrails
+    workflow_guardrails = extract_workflow_guardrails(global_guardrail_names)
     pending_fallback_nodes: set[str] = set()
 
     for node_id in execution_order:
@@ -664,6 +736,21 @@ async def execute_streaming(workflow: Workflow, user_input: str) -> AsyncGenerat
 
             total_usage += TokenUsage(prompt_tokens=0, completion_tokens=swrm_trace["tokens"])
             total_duration_ms += swrm_trace["duration_ms"]
+
+            context.write("working._budget.total_tokens", total_usage.total)
+            context.write("working._budget.estimated_usd", total_estimated_usd)
+
+            try:
+                check_workflow_budget(workflow_guardrails, total_usage, total_estimated_usd)
+            except BudgetExceededError as exc:
+                status = "failed"
+                yield NodeCompleteEvent(
+                    node_id=node_id,
+                    node_type="swrm",
+                    status="failed",
+                    error=str(exc),
+                )
+                break
 
             for target, condition in out_edges[node_id]:
                 if condition is None or evaluate_when_condition(condition, context):
@@ -746,6 +833,21 @@ async def execute_streaming(workflow: Workflow, user_input: str) -> AsyncGenerat
             total_usage += TokenUsage(prompt_tokens=0, completion_tokens=factory_trace["tokens"])
             total_duration_ms += factory_trace["duration_ms"]
 
+            context.write("working._budget.total_tokens", total_usage.total)
+            context.write("working._budget.estimated_usd", total_estimated_usd)
+
+            try:
+                check_workflow_budget(workflow_guardrails, total_usage, total_estimated_usd)
+            except BudgetExceededError as exc:
+                status = "failed"
+                yield NodeCompleteEvent(
+                    node_id=node_id,
+                    node_type="factory",
+                    status="failed",
+                    error=str(exc),
+                )
+                break
+
             for target, condition in out_edges[node_id]:
                 if condition is None or evaluate_when_condition(condition, context):
                     active_nodes.add(target)
@@ -800,7 +902,29 @@ async def execute_streaming(workflow: Workflow, user_input: str) -> AsyncGenerat
 
             duration_ms = (time.monotonic() - node_start) * 1000
             total_usage = total_usage + run_result.token_usage
+            node_estimated_usd = estimate_usd(
+                run_result.token_usage.prompt_tokens,
+                run_result.token_usage.completion_tokens,
+                agent_def.model,
+            )
+            if node_estimated_usd is not None:
+                total_estimated_usd = (total_estimated_usd or 0.0) + node_estimated_usd
             total_duration_ms += duration_ms
+
+            context.write("working._budget.total_tokens", total_usage.total)
+            context.write("working._budget.estimated_usd", total_estimated_usd)
+
+            try:
+                check_workflow_budget(workflow_guardrails, total_usage, total_estimated_usd)
+            except BudgetExceededError as exc:
+                status = "failed"
+                yield NodeCompleteEvent(
+                    node_id=node_id,
+                    node_type="agent",
+                    status="failed",
+                    error=str(exc),
+                )
+                break
 
             yield NodeCompleteEvent(
                 node_id=node_id,
