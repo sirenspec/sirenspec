@@ -11,10 +11,9 @@ import typer
 from rich.console import Console
 
 from sirenspec.core.executor import topological_sort
-from sirenspec.core.models import AgentNode, AnyNode, Edge, FactoryNode, GuardrailSpec, SwrmNode, ToolNode, Workflow
+from sirenspec.core.models import AgentNode, AnyNode, Edge, FactoryNode, SwrmNode, ToolNode, Workflow
 from sirenspec.yaml.parser import load_workflow
 
-_console = Console()
 _err = Console(stderr=True)
 
 
@@ -23,32 +22,7 @@ _err = Console(stderr=True)
 # ---------------------------------------------------------------------------
 
 
-def guardrail_label(entry: str | GuardrailSpec | dict[str, Any]) -> str:
-    """Return a display label for a single guardrail entry.
-
-    Handles bare strings, GuardrailSpec objects, and raw dicts defensively.
-
-    :param entry: A guardrail entry — str, GuardrailSpec, or dict.
-    :returns: A short human-readable label such as ``"injection"`` or ``"schema(keys)"`.
-    """
-    if isinstance(entry, str):
-        return entry
-    if isinstance(entry, GuardrailSpec):
-        if entry.config:
-            keys = ",".join(entry.config.keys())
-            return f"{entry.name}({keys})"
-        return entry.name
-    if isinstance(entry, dict):
-        name = entry.get("name", "unknown")
-        config = entry.get("config")
-        if config and isinstance(config, dict):
-            keys = ",".join(config.keys())
-            return f"{name}({keys})"
-        return str(name)
-    return str(entry)
-
-
-def guardrail_labels(entries: list[str | GuardrailSpec] | None) -> list[str]:
+def guardrail_labels(entries: list[str] | None) -> list[str]:
     """Convert a list of guardrail entries to display labels.
 
     :param entries: The raw guardrail list from the model, or None.
@@ -56,7 +30,7 @@ def guardrail_labels(entries: list[str | GuardrailSpec] | None) -> list[str]:
     """
     if not entries:
         return []
-    return [guardrail_label(e) for e in entries]
+    return list(entries)
 
 
 # ---------------------------------------------------------------------------
@@ -64,10 +38,9 @@ def guardrail_labels(entries: list[str | GuardrailSpec] | None) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def node_type_info(node_id: str, node: AnyNode, workflow: Workflow) -> str:
+def node_type_info(node: AnyNode, workflow: Workflow) -> str:
     """Return a compact type description string for a node.
 
-    :param node_id: The node's identifier in the workflow.
     :param node: The typed node object.
     :param workflow: The containing workflow (used to look up agent definitions).
     :returns: A string such as ``"agent=router (openai:gpt-4o-mini)"`` or ``"tool=http"``.
@@ -102,13 +75,12 @@ def node_writes_path(node: AnyNode) -> str | None:
     return None
 
 
-def node_guardrails(node_id: str, node: AnyNode, workflow: Workflow) -> list[str]:
+def node_guardrails(node: AnyNode, workflow: Workflow) -> list[str]:
     """Return the effective guardrail labels for a node.
 
     For AgentNodes, uses agent-level guardrails when set, otherwise workflow-level.
     ToolNodes, SwrmNodes, and FactoryNodes use workflow-level guardrails.
 
-    :param node_id: The node's identifier.
     :param node: The typed node object.
     :param workflow: The containing workflow.
     :returns: A list of guardrail label strings.
@@ -233,7 +205,7 @@ def build_plan(workflow: Workflow, workflow_name: str) -> dict[str, Any]:
                 else "swrm"
                 if isinstance(node, SwrmNode)
                 else "factory",
-                "type_info": node_type_info(node_id, node, workflow),
+                "type_info": node_type_info(node, workflow),
                 "agent": node.agent if isinstance(node, (AgentNode, FactoryNode)) else None,
                 "model": (
                     workflow.agents[node.agent].model
@@ -241,7 +213,7 @@ def build_plan(workflow: Workflow, workflow_name: str) -> dict[str, Any]:
                     else None
                 ),
                 "writes": node_writes_path(node),
-                "guardrails": node_guardrails(node_id, node, workflow),
+                "guardrails": node_guardrails(node, workflow),
                 "outgoing_edges": edge_dicts,
             }
         )
@@ -322,12 +294,12 @@ def render_text(plan: dict[str, Any]) -> str:
 
 def explain_command(
     workflow_file: Annotated[str, typer.Argument(help="Path to the workflow YAML file")],
-    format: Annotated[str, typer.Option("--format", "-f", help="Output format: 'text' or 'json'")] = "text",
+    output_format: Annotated[str, typer.Option("--format", "-f", help="Output format: 'text' or 'json'")] = "text",
 ) -> None:
     """Print a human-readable execution plan for a workflow without making any LLM calls.
 
     :param workflow_file: Path to the workflow YAML file to explain.
-    :param format: Output format — ``"text"`` for human-readable output or ``"json"`` for
+    :param output_format: Output format — ``"text"`` for human-readable output or ``"json"`` for
         machine-readable JSON.
     :returns: None. Exits with code 1 if the workflow has validation errors.
     """
@@ -341,14 +313,9 @@ def explain_command(
         raise typer.Exit(1) from exc
 
     workflow_name = Path(workflow_file).stem
+    plan = build_plan(workflow, workflow_name)
 
-    try:
-        plan = build_plan(workflow, workflow_name)
-    except Exception as exc:
-        _err.print(f"[red]Error:[/red] {exc}")
-        raise typer.Exit(1) from exc
-
-    if format == "json":
+    if output_format == "json":
         print(json.dumps(plan, indent=2))  # noqa: T201
     else:
         print(render_text(plan))  # noqa: T201
