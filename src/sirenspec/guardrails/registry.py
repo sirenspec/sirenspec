@@ -9,6 +9,7 @@ from sirenspec.guardrails.base import Guardrail
 from sirenspec.guardrails.injection import InjectionGuardrail
 from sirenspec.guardrails.length import LengthGuardrail
 from sirenspec.guardrails.pii import PIIGuardrail
+from sirenspec.guardrails.schema import SchemaGuardrail
 
 # Names of guardrails that are applied when a node does not configure guardrails
 # explicitly (i.e. when guardrail_names is None, not []).
@@ -42,8 +43,6 @@ def make_schema_guardrail(config: dict | None) -> Guardrail:
     """
     if config is None or "schema" not in config:
         raise ValueError("schema guardrail requires config with a 'schema' key")
-    from sirenspec.guardrails.schema import SchemaGuardrail
-
     return SchemaGuardrail(schema=config["schema"])
 
 
