@@ -17,8 +17,8 @@ from sirenspec.core.models import (
     Workflow,
     WorkflowDefaults,
 )
-from sirenspec.core.usage import TokenUsage
 from sirenspec.core.retry import compute_delay, run_with_retry
+from sirenspec.core.usage import TokenUsage
 from sirenspec.exceptions import ProviderError, RetryExhaustedError
 
 # ---------------------------------------------------------------------------

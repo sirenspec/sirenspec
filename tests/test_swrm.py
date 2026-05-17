@@ -10,8 +10,8 @@ from sirenspec.core.executor import execute
 from sirenspec.core.interpolation import InterpolationContext, build_interpolation_context, resolve_template
 from sirenspec.core.models import AgentDefinition, Edge, Node, SwrmAgent, SwrmNode, SwrmSynthesis, Workflow
 from sirenspec.core.swrm_runner import execute_swrm
-from sirenspec.exceptions import InterpolationError, SwrmAgentError
 from sirenspec.core.usage import TokenUsage
+from sirenspec.exceptions import InterpolationError, SwrmAgentError
 
 # ---------------------------------------------------------------------------
 # Helpers
