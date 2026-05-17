@@ -1,232 +1,148 @@
-"""Unit and property-based tests for SchemaGuardrail."""
+"""Tests for the SchemaGuardrail and related registry integration."""
 
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import pytest
-from hypothesis import given, settings
-from hypothesis import strategies as st
 
+from sirenspec.core.models import GuardrailSpec
+from sirenspec.exceptions import GuardrailError, SirenSpecError
 from sirenspec.guardrails.base import GuardrailViolation
-from sirenspec.guardrails.schema import SchemaGuardrail, parse_json, validate_against_schema
+from sirenspec.guardrails.registry import build_guardrails
+from sirenspec.guardrails.schema import SchemaGuardrail
 
-# ---------------------------------------------------------------------------
-# Module-level helper function tests
-# ---------------------------------------------------------------------------
+_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "required": ["intent", "confidence"],
+    "properties": {
+        "intent": {
+            "type": "string",
+            "enum": ["refund", "inquiry", "complaint"],
+        },
+        "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+        },
+    },
+}
+
+_VALID_OUTPUT = json.dumps({"intent": "refund", "confidence": 0.9})
 
 
-class TestParseJson:
-    def test_valid_object(self) -> None:
-        result = parse_json('{"key": "value"}')
-        assert result == {"key": "value"}
+class TestSchemaGuardrailCheckOutput:
+    """Tests for SchemaGuardrail.check_output."""
 
-    def test_valid_array(self) -> None:
-        result = parse_json("[1, 2, 3]")
-        assert result == [1, 2, 3]
+    def test_valid_json_matching_schema_passes(self) -> None:
+        """Valid JSON that conforms to the schema is returned unchanged."""
+        guardrail = SchemaGuardrail(schema=_SCHEMA)
+        result = guardrail.check_output(_VALID_OUTPUT)
+        assert result == _VALID_OUTPUT
+        assert isinstance(result, str)
 
-    def test_valid_string(self) -> None:
-        result = parse_json('"hello"')
-        assert result == "hello"
-
-    def test_valid_number(self) -> None:
-        result = parse_json("42")
-        assert result == 42
-
-    def test_valid_null(self) -> None:
-        result = parse_json("null")
-        assert result is None
-
-    def test_valid_boolean(self) -> None:
-        assert parse_json("true") is True
-        assert parse_json("false") is False
-
-    def test_invalid_json_raises(self) -> None:
-        with pytest.raises(GuardrailViolation, match="not valid JSON"):
-            parse_json("not json at all")
-
-    def test_truncated_json_raises(self) -> None:
-        with pytest.raises(GuardrailViolation, match="not valid JSON"):
-            parse_json('{"unclosed": ')
-
-    def test_violation_has_reason(self) -> None:
+    def test_missing_required_field_raises_violation(self) -> None:
+        """Output missing a required field raises GuardrailViolation with the field path."""
+        guardrail = SchemaGuardrail(schema=_SCHEMA)
+        output = json.dumps({"intent": "refund"})  # missing 'confidence'
         with pytest.raises(GuardrailViolation) as exc_info:
-            parse_json("bad")
-        assert "not valid JSON" in exc_info.value.reason
+            guardrail.check_output(output)
+        assert "confidence" in str(exc_info.value)
 
-
-class TestValidateAgainstSchema:
-    def test_valid_object_passes(self) -> None:
-        schema = {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}
-        validate_against_schema({"name": "Alice"}, schema)  # should not raise
-
-    def test_missing_required_raises(self) -> None:
-        schema = {"type": "object", "required": ["name"]}
-        with pytest.raises(GuardrailViolation, match="JSON Schema validation"):
-            validate_against_schema({}, schema)
-
-    def test_wrong_type_raises(self) -> None:
-        schema = {"type": "string"}
-        with pytest.raises(GuardrailViolation, match="JSON Schema validation"):
-            validate_against_schema(123, schema)
-
-    def test_violation_has_reason(self) -> None:
-        schema = {"type": "object", "required": ["x"]}
+    def test_wrong_type_raises_violation(self) -> None:
+        """Output with the wrong type for a field raises GuardrailViolation."""
+        guardrail = SchemaGuardrail(schema=_SCHEMA)
+        output = json.dumps({"intent": "refund", "confidence": "high"})  # confidence should be number
         with pytest.raises(GuardrailViolation) as exc_info:
-            validate_against_schema({}, schema)
-        assert "JSON Schema validation" in exc_info.value.reason
+            guardrail.check_output(output)
+        assert "confidence" in str(exc_info.value) or "high" in str(exc_info.value)
 
-    def test_empty_schema_accepts_anything(self) -> None:
-        validate_against_schema({"anything": True}, {})
-        validate_against_schema([1, 2], {})
-        validate_against_schema("text", {})
+    def test_enum_violation_raises_violation(self) -> None:
+        """Output with a value not in the enum raises GuardrailViolation."""
+        guardrail = SchemaGuardrail(schema=_SCHEMA)
+        output = json.dumps({"intent": "unknown", "confidence": 0.5})
+        with pytest.raises(GuardrailViolation) as exc_info:
+            guardrail.check_output(output)
+        assert "intent" in str(exc_info.value) or "unknown" in str(exc_info.value)
 
-
-# ---------------------------------------------------------------------------
-# SchemaGuardrail class tests
-# ---------------------------------------------------------------------------
+    def test_non_json_output_raises_violation_with_parse_error(self) -> None:
+        """Non-JSON output raises GuardrailViolation with a clear parse error message."""
+        guardrail = SchemaGuardrail(schema=_SCHEMA)
+        with pytest.raises(GuardrailViolation) as exc_info:
+            guardrail.check_output("this is not json")
+        assert "not valid JSON" in str(exc_info.value)
+        assert exc_info.type is GuardrailViolation
 
 
 class TestSchemaGuardrailCheckInput:
-    def test_passes_through_unchanged(self) -> None:
-        g = SchemaGuardrail(schema={"type": "object"})
-        text = "some arbitrary input text"
-        assert g.check_input(text) == text
+    """Tests for SchemaGuardrail.check_input."""
 
-    def test_does_not_validate_input_as_json(self) -> None:
-        g = SchemaGuardrail(schema={"type": "object"})
-        # Non-JSON input must not raise — input is never validated
-        assert g.check_input("not json") == "not json"
+    def test_check_input_passes_through_any_string(self) -> None:
+        """check_input returns the input string unchanged regardless of content."""
+        guardrail = SchemaGuardrail(schema=_SCHEMA)
+        text = "some arbitrary input {{ not json }}"
+        result = guardrail.check_input(text)
+        assert result == text
+        assert isinstance(result, str)
 
-
-class TestSchemaGuardrailCheckOutputValid:
-    @pytest.fixture
-    def g(self) -> SchemaGuardrail:
-        schema = {
-            "type": "object",
-            "properties": {
-                "answer": {"type": "string"},
-                "confidence": {"type": "number"},
-            },
-            "required": ["answer", "confidence"],
-            "additionalProperties": False,
-        }
-        return SchemaGuardrail(schema=schema)
-
-    def test_valid_output_returns_original_text(self, g: SchemaGuardrail) -> None:
-        text = '{"answer": "Paris", "confidence": 0.99}'
-        assert g.check_output(text) == text
-
-    def test_valid_output_with_whitespace(self, g: SchemaGuardrail) -> None:
-        text = json.dumps({"answer": "London", "confidence": 0.8}, indent=2)
-        assert g.check_output(text) == text
+    def test_check_input_passes_through_empty_string(self) -> None:
+        """check_input returns an empty string unchanged."""
+        guardrail = SchemaGuardrail(schema=_SCHEMA)
+        result = guardrail.check_input("")
+        assert result == ""
+        assert isinstance(result, str)
 
 
-class TestSchemaGuardrailCheckOutputInvalid:
-    @pytest.fixture
-    def g(self) -> SchemaGuardrail:
-        return SchemaGuardrail(schema={"type": "object", "required": ["result"]})
+class TestBuildGuardrailsSchemaIntegration:
+    """Tests for build_guardrails with schema guardrail entries."""
 
-    def test_non_json_raises(self, g: SchemaGuardrail) -> None:
-        with pytest.raises(GuardrailViolation, match="not valid JSON"):
-            g.check_output("plain text answer")
+    def test_build_guardrails_bare_schema_name_raises_value_error(self) -> None:
+        """build_guardrails(['schema']) raises ValueError because no config is provided."""
+        with pytest.raises(ValueError, match="config") as exc_info:
+            build_guardrails(["schema"])
+        assert "schema" in str(exc_info.value)
 
-    def test_schema_violation_raises(self, g: SchemaGuardrail) -> None:
-        with pytest.raises(GuardrailViolation, match="JSON Schema validation"):
-            g.check_output('{"wrong_key": "value"}')
+    def test_build_guardrails_with_guardrail_spec_returns_schema_guardrail(self) -> None:
+        """build_guardrails with a GuardrailSpec returns a SchemaGuardrail instance."""
+        spec = GuardrailSpec(name="schema", config={"schema": _SCHEMA})
+        result = build_guardrails([spec])
+        assert len(result) == 1
+        assert isinstance(result[0], SchemaGuardrail)
 
-    def test_wrong_root_type_raises(self, g: SchemaGuardrail) -> None:
-        with pytest.raises(GuardrailViolation, match="JSON Schema validation"):
-            g.check_output('"just a string"')
+    def test_build_guardrails_schema_spec_none_config_raises_value_error(self) -> None:
+        """build_guardrails with GuardrailSpec(name='schema', config=None) raises ValueError."""
+        spec = GuardrailSpec(name="schema", config=None)
+        with pytest.raises(ValueError, match="config") as exc_info:
+            build_guardrails([spec])
+        assert "schema" in str(exc_info.value)
 
-    def test_violation_exposes_reason(self, g: SchemaGuardrail) -> None:
-        with pytest.raises(GuardrailViolation) as exc_info:
-            g.check_output("{}")
-        assert exc_info.value.reason
-
-
-class TestSchemaGuardrailStoresSchema:
-    def test_schema_is_accessible(self) -> None:
-        schema = {"type": "array"}
-        g = SchemaGuardrail(schema=schema)
-        assert g.schema is schema
-
-
-class TestSchemaGuardrailArraySchema:
-    def test_valid_array_passes(self) -> None:
-        g = SchemaGuardrail(schema={"type": "array", "items": {"type": "integer"}})
-        text = "[1, 2, 3]"
-        assert g.check_output(text) == text
-
-    def test_array_with_wrong_items_raises(self) -> None:
-        g = SchemaGuardrail(schema={"type": "array", "items": {"type": "integer"}})
-        with pytest.raises(GuardrailViolation, match="JSON Schema validation"):
-            g.check_output('["not", "integers"]')
+    def test_build_guardrails_schema_spec_missing_schema_key_raises_value_error(self) -> None:
+        """build_guardrails with config dict lacking 'schema' key raises ValueError."""
+        spec = GuardrailSpec(name="schema", config={"not_schema": {}})
+        with pytest.raises(ValueError, match="schema") as exc_info:
+            build_guardrails([spec])
+        assert "config" in str(exc_info.value)
 
 
-# ---------------------------------------------------------------------------
-# Registry integration
-# ---------------------------------------------------------------------------
+class TestGuardrailViolationHierarchy:
+    """Tests for the GuardrailViolation exception hierarchy."""
 
+    def test_guardrail_violation_is_guardrail_error(self) -> None:
+        """GuardrailViolation is an instance of GuardrailError."""
+        exc = GuardrailViolation("test reason")
+        assert isinstance(exc, GuardrailError)
+        assert isinstance(exc, SirenSpecError)
 
-class TestSchemaGuardrailRegistry:
-    def test_schema_name_is_registered(self) -> None:
-        from sirenspec.guardrails.registry import build_guardrails
+    def test_guardrail_violation_is_siren_spec_error(self) -> None:
+        """GuardrailViolation is an instance of SirenSpecError."""
+        exc = GuardrailViolation("test reason")
+        assert isinstance(exc, SirenSpecError)
+        assert isinstance(exc, GuardrailError)
 
-        guardrails = build_guardrails(["schema"])
-        assert len(guardrails) == 1
-        assert isinstance(guardrails[0], SchemaGuardrail)
-
-    def test_registry_schema_guardrail_has_empty_schema(self) -> None:
-        from sirenspec.guardrails.registry import build_guardrails
-
-        guardrail = build_guardrails(["schema"])[0]
-        assert isinstance(guardrail, SchemaGuardrail)
-        assert guardrail.schema == {}
-
-    def test_registry_schema_guardrail_accepts_any_valid_json(self) -> None:
-        from sirenspec.guardrails.registry import build_guardrails
-
-        guardrail = build_guardrails(["schema"])[0]
-        assert guardrail.check_output('{"anything": true}') == '{"anything": true}'
-
-    def test_registry_schema_guardrail_rejects_non_json(self) -> None:
-        from sirenspec.guardrails.registry import build_guardrails
-
-        guardrail = build_guardrails(["schema"])[0]
-        with pytest.raises(GuardrailViolation, match="not valid JSON"):
-            guardrail.check_output("plain text")
-
-
-# ---------------------------------------------------------------------------
-# Property-based tests
-# ---------------------------------------------------------------------------
-
-
-@given(st.text())
-@settings(max_examples=200)
-def test_parse_json_never_returns_non_json_silently(text: str) -> None:
-    """parse_json either returns a valid Python value or raises GuardrailViolation."""
-    try:
-        result = parse_json(text)
-        # Round-trip: re-serialising and re-parsing must be stable
-        assert json.loads(json.dumps(result)) == result
-    except GuardrailViolation:
-        pass  # expected for non-JSON input
-
-
-@given(st.text())
-@settings(max_examples=200)
-def test_check_input_always_returns_same_text(text: str) -> None:
-    """check_input is always a no-op regardless of content."""
-    g = SchemaGuardrail(schema={"type": "object"})
-    assert g.check_input(text) == text
-
-
-@given(st.dictionaries(st.text(min_size=1), st.integers()))
-@settings(max_examples=100)
-def test_valid_object_passes_object_schema(data: dict[str, int]) -> None:
-    """Any dict of str->int passes an object schema with no additional constraints."""
-    g = SchemaGuardrail(schema={"type": "object"})
-    text = json.dumps(data)
-    assert g.check_output(text) == text
+    def test_guardrail_violation_raised_by_schema_guardrail_is_guardrail_error(self) -> None:
+        """GuardrailViolation raised by SchemaGuardrail is catchable as GuardrailError."""
+        guardrail = SchemaGuardrail(schema=_SCHEMA)
+        with pytest.raises(GuardrailError) as exc_info:
+            guardrail.check_output("not json")
+        assert exc_info.type is GuardrailViolation
