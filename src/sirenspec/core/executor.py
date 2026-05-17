@@ -40,9 +40,7 @@ def interpolate_tool_config(node: ToolNode, ctx: InterpolationContext) -> ToolNo
         return node
     cfg = node.config
     interpolated_url = resolve_template(cfg.url, ctx)
-    interpolated_headers = (
-        {k: resolve_template(v, ctx) for k, v in cfg.headers.items()} if cfg.headers else None
-    )
+    interpolated_headers = {k: resolve_template(v, ctx) for k, v in cfg.headers.items()} if cfg.headers else None
     interpolated_body = resolve_template(cfg.body, ctx) if cfg.body is not None else None
     new_config = HttpToolConfig(
         url=interpolated_url,

@@ -7,6 +7,21 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, model_validator
 
 
+class GuardrailSpec(BaseModel):
+    """A named guardrail with optional configuration dict.
+
+    Used when a guardrail requires configuration parameters (e.g. a JSON Schema
+    for the ``schema`` guardrail).  Zero-config guardrails may still be specified
+    as bare strings anywhere a ``list[str | GuardrailSpec]`` is accepted.
+
+    :param name: The guardrail identifier as registered in the guardrail registry.
+    :param config: Optional dict of configuration values passed to the guardrail factory.
+    """
+
+    name: str
+    config: dict[str, Any] | None = None
+
+
 class RetryPolicy(BaseModel):
     """Retry policy for a provider node or workflow-level defaults.
 
@@ -67,7 +82,7 @@ class AgentDefinition(BaseModel):
 
     model: str
     system: str
-    guardrails: list[str] | None = None
+    guardrails: list[str | GuardrailSpec] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +186,7 @@ class SwrmAgent(BaseModel):
     provider: str
     model: str | None = None
     prompt: str
-    guardrails: list[str] | None = None
+    guardrails: list[str | GuardrailSpec] | None = None
 
 
 class SwrmSynthesis(BaseModel):
@@ -185,7 +200,7 @@ class SwrmSynthesis(BaseModel):
     provider: str
     model: str | None = None
     prompt: str
-    guardrails: list[str] | None = None
+    guardrails: list[str | GuardrailSpec] | None = None
 
 
 class SwrmNode(BaseModel):
@@ -342,7 +357,7 @@ class Workflow(BaseModel):
     edges: list[Edge] = Field(default_factory=list)
     input: WorkflowInput | None = None
     state: dict[str, Any] | None = None
-    guardrails: list[str] | None = None
+    guardrails: list[str | GuardrailSpec] | None = None
     defaults: WorkflowDefaults | None = None
     env_file: str | None = Field(
         default=None,
