@@ -57,7 +57,22 @@ input:
 sirenspec run hello.yaml
 ```
 
-You'll see a JSON execution trace:
+By default, SirenSpec displays a streaming view of node execution:
+
+```
+╭─ answer ──────────────────────────────╮
+│ Paris is the capital of France.       │
+╰────────────────────────────────────────╯
+  ↓ output.reply
+
+Run complete  │  1 node  │  24 tokens  │  cost unavailable (pricing not configured)
+```
+
+To see the full JSON execution trace, use the `--trace` flag:
+
+```bash
+sirenspec run hello.yaml --trace
+```
 
 ```json
 {
@@ -66,19 +81,30 @@ You'll see a JSON execution trace:
   "nodes": [
     {
       "id": "answer",
-      "agent": "assistant",
-      "prompt_sent": "What is the capital of France?",
-      "response_received": "Paris is the capital of France.",
+      "type": "agent",
+      "output": "Paris is the capital of France.",
       "writes": "output.reply",
-      "guardrails_passed": ["InjectionGuardrail.check_input", "InjectionGuardrail.check_output"],
+      "status": "success",
+      "error": null,
       "tokens": 24,
-      "duration_ms": 312.5,
-      "error": null
+      "usage": {
+        "prompt_tokens": 18,
+        "completion_tokens": 6,
+        "estimated_usd": null
+      },
+      "guardrails_passed": ["InjectionGuardrail.check_input", "InjectionGuardrail.check_output"],
+      "duration_ms": 312.5
     }
   ],
   "output": { "reply": "Paris is the capital of France." },
   "summary": {
     "total_tokens": 24,
+    "total_usage": {
+      "prompt_tokens": 18,
+      "completion_tokens": 6,
+      "total_tokens": 24,
+      "estimated_usd": null
+    },
     "total_duration_ms": 312.5,
     "status": "success"
   }

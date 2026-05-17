@@ -177,20 +177,34 @@ Common reasons a `ProviderError` is raised:
 
 ## Token Tracking
 
-Each provider records the total token count from its most recent call. This is surfaced in the execution trace:
+Each provider records prompt and completion token counts from every call. This usage data is surfaced in the execution trace under the `usage` field:
 
 ```json
 {
   "nodes": [
     {
       "id": "answer",
+      "type": "agent",
       "tokens": 42,
+      "usage": {
+        "prompt_tokens": 30,
+        "completion_tokens": 12,
+        "estimated_usd": null
+      },
       ...
     }
   ],
   "summary": {
     "total_tokens": 42,
+    "total_usage": {
+      "prompt_tokens": 30,
+      "completion_tokens": 12,
+      "total_tokens": 42,
+      "estimated_usd": null
+    },
     ...
   }
 }
 ```
+
+The `tokens` field is the sum of prompt and completion tokens; the `usage` field provides the detailed breakdown. `estimated_usd` is reserved for future cost calculation features and is currently always `null`.

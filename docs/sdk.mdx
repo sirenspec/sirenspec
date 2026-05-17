@@ -15,7 +15,7 @@ Python 3.13 or later is required.
 
 ## Public API
 
-SirenSpec exposes three names at the top level:
+The main entry points are exported at the top level:
 
 ```python
 from sirenspec import load_workflow, execute, Workflow
@@ -24,8 +24,18 @@ from sirenspec import load_workflow, execute, Workflow
 | Name | Type | Description |
 |------|------|-------------|
 | `load_workflow` | function | Load and validate a YAML workflow file. |
-| `execute` | async function | Execute a validated workflow. |
+| `execute` | async function | Execute a validated workflow and return the full trace dict. |
 | `Workflow` | class | Pydantic model representing a workflow. |
+
+For streaming execution, import from the core module:
+
+```python
+from sirenspec.core.executor import execute_streaming
+```
+
+| Name | Type | Description |
+|------|------|-------------|
+| `execute_streaming` | async generator function | Execute a workflow and yield typed events as each node completes. |
 
 ---
 
@@ -88,6 +98,95 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]: ...
 **Returns:**
 
 A dict with the same structure as the `sirenspec run` JSON output. See the [CLI Reference](/docs/cli-reference#output-format) for field descriptions.
+
+---
+
+## `execute_streaming`
+
+Execute a workflow and yield typed events as each node completes. This is ideal for building interactive CLI tools or web dashboards that need to show progress in real-time.
+
+```python
+import asyncio
+from sirenspec import load_workflow
+from sirenspec.core.executor import execute_streaming
+from sirenspec.core.events import NodeCompleteEvent, SummaryEvent
+
+async def main() -> None:
+    workflow = load_workflow("workflow.yaml")
+
+    async for event in execute_streaming(workflow, user_input="What is the capital of France?"):
+        if isinstance(event, NodeCompleteEvent):
+            print(f"Node '{event.node_id}' ({event.node_type}): {event.status}")
+            if event.output:
+                print(f"  Output: {event.output}")
+        elif isinstance(event, SummaryEvent):
+            print(f"Workflow complete: {event.status}")
+            print(f"  Nodes executed: {event.total_nodes}")
+            print(f"  Total tokens: {event.total_tokens}")
+            print(f"  Duration: {event.duration_ms}ms")
+
+asyncio.run(main())
+```
+
+**Signature:**
+
+```python
+async def execute_streaming(
+    workflow: Workflow,
+    user_input: str,
+) -> AsyncGenerator[NodeCompleteEvent | SummaryEvent]: ...
+```
+
+**Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `workflow` | `Workflow` | Validated workflow instance from `load_workflow`. |
+| `user_input` | `str` | The initial user message passed to the first (root) node. |
+
+**Yields:**
+
+The generator yields two types of events:
+
+1. **`NodeCompleteEvent`** — Emitted once per node (active or skipped):
+   - `node_id: str` — The identifier of the completed node.
+   - `node_type: str` — One of `"agent"`, `"tool"`, `"swrm"`, or `"factory"`.
+   - `status: Literal["success", "skipped", "failed"]` — The node's execution result.
+   - `output: Any` — The node's output value (string, dict, list, or None).
+   - `writes: str` — The context path written by this node (only for successful nodes).
+   - `error: str | None` — Error message when `status="failed"`.
+   - `tokens: int` — Total tokens consumed by this node (0 for tool and skipped nodes).
+
+2. **`SummaryEvent`** — Emitted once at the end of execution:
+   - `total_nodes: int` — Number of nodes that ran (active nodes only, excluding skipped).
+   - `total_tokens: int` — Aggregate token count across all active nodes.
+   - `status: Literal["success", "failed"]` — Overall workflow status.
+   - `duration_ms: float` — Wall-clock execution time in milliseconds.
+
+**Example: Building a Progress Bar**
+
+```python
+import asyncio
+from sirenspec import load_workflow
+from sirenspec.core.executor import execute_streaming
+from sirenspec.core.events import NodeCompleteEvent, SummaryEvent
+
+async def run_with_progress(workflow_file: str, user_input: str) -> None:
+    workflow = load_workflow(workflow_file)
+    node_count = len(workflow.nodes)
+    completed = 0
+
+    async for event in execute_streaming(workflow, user_input):
+        if isinstance(event, NodeCompleteEvent):
+            completed += 1
+            status_icon = "✓" if event.status == "success" else "✗"
+            print(f"[{completed}/{node_count}] {status_icon} {event.node_id}")
+        elif isinstance(event, SummaryEvent):
+            print(f"\nWorkflow {event.status}")
+            print(f"Total tokens: {event.total_tokens}, Duration: {event.duration_ms}ms")
+
+asyncio.run(run_with_progress("workflow.yaml", "Hello"))
+```
 
 ---
 

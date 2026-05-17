@@ -208,7 +208,9 @@ See [Retry Policies](/docs/retry-policies) for the full field reference.
 
 ## `guardrails`
 
-**Optional.** A list of guardrail names applied globally to all agents. Defaults to `["injection"]` if omitted.
+**Optional.** A list of guardrail names (or guardrail specs with configuration) applied globally to all agents. Defaults to `["injection"]` if omitted.
+
+### Simple guardrails (no configuration)
 
 ```yaml
 guardrails:
@@ -216,10 +218,27 @@ guardrails:
   - length
 ```
 
-| Value | Description |
-|-------|-------------|
-| `injection` | Detects prompt-injection patterns. Applied by default. |
-| `length` | Truncates output to 4000 characters. |
+### Guardrails with configuration
+
+Some guardrails require configuration. Use the `name` and `config` fields:
+
+```yaml
+guardrails:
+  - name: schema
+    config:
+      schema:
+        type: "object"
+        properties:
+          intent:
+            type: "string"
+        required: ["intent"]
+```
+
+| Guardrail | Description | Configuration |
+|-----------|-------------|----------------|
+| `injection` | Detects prompt-injection patterns. Applied by default. | None |
+| `length` | Truncates output to 4000 characters. | Optional: `max_chars`, `mode` |
+| `schema` | Validates JSON output against a JSON Schema Draft 7 dict. | Required: `schema` |
 
 An empty list (`[]`) disables all guardrails for the entire workflow. Individual agents can override this with their own `guardrails` field.
 

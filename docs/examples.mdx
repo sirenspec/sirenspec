@@ -44,7 +44,22 @@ sirenspec run examples/simple-agent.yaml
 sirenspec run examples/simple-agent.yaml --input "What is the boiling point of water?"
 ```
 
-**Output:**
+By default, the CLI shows a streaming view of node execution with Rich formatting:
+
+```
+╭─ answer ─────────────────────────────╮
+│ Paris is the capital of France.      │
+╰───────────────────────────────────────╯
+  ↓ output.reply
+
+Run complete  │  1 node  │  24 tokens  │  cost unavailable (pricing not configured)
+```
+
+**Full JSON Trace (with `--trace`):**
+
+```bash
+sirenspec run examples/simple-agent.yaml --trace
+```
 
 ```json
 {
@@ -53,18 +68,36 @@ sirenspec run examples/simple-agent.yaml --input "What is the boiling point of w
   "nodes": [
     {
       "id": "answer",
-      "agent": "assistant",
-      "prompt_sent": "What is the capital of France?",
-      "response_received": "Paris is the capital of France.",
+      "type": "agent",
+      "output": "Paris is the capital of France.",
       "writes": "output.reply",
-      "guardrails_passed": ["InjectionGuardrail.check_input", "InjectionGuardrail.check_output"],
+      "status": "success",
+      "error": null,
       "tokens": 24,
-      "duration_ms": 310.2,
-      "error": null
+      "usage": {
+        "prompt_tokens": 18,
+        "completion_tokens": 6,
+        "estimated_usd": null
+      },
+      "guardrails_passed": [
+        "InjectionGuardrail.check_input",
+        "InjectionGuardrail.check_output"
+      ],
+      "duration_ms": 310.2
     }
   ],
   "output": { "reply": "Paris is the capital of France." },
-  "summary": { "total_tokens": 24, "total_duration_ms": 310.2, "status": "success" }
+  "summary": {
+    "total_tokens": 24,
+    "total_usage": {
+      "prompt_tokens": 18,
+      "completion_tokens": 6,
+      "total_tokens": 24,
+      "estimated_usd": null
+    },
+    "total_duration_ms": 310.2,
+    "status": "success"
+  }
 }
 ```
 
@@ -132,26 +165,58 @@ sirenspec run examples/sequential-pipeline.yaml --input "I need help with my ord
 1. `classify` receives the user input, outputs `"complaint"` (or similar) to `working.intent`.
 2. `reply` receives the output of `classify` as its user message, then composes a response and writes it to `output.reply`.
 
-**Output:**
+**Full JSON Trace (with `--trace`):**
 
 ```json
 {
+  "workflow": { "version": "0.1" },
+  "input": { "message": "I need help with my order" },
   "nodes": [
     {
       "id": "classify",
-      "prompt_sent": "I need help with my order",
-      "response_received": "complaint",
-      "writes": "working.intent"
+      "type": "agent",
+      "output": "complaint",
+      "writes": "working.intent",
+      "status": "success",
+      "error": null,
+      "tokens": 12,
+      "usage": {
+        "prompt_tokens": 8,
+        "completion_tokens": 4,
+        "estimated_usd": null
+      },
+      "guardrails_passed": ["InjectionGuardrail.check_input", "InjectionGuardrail.check_output"],
+      "duration_ms": 287.5
     },
     {
       "id": "reply",
-      "prompt_sent": "complaint",
-      "response_received": "I'm sorry to hear you're having trouble...",
-      "writes": "output.reply"
+      "type": "agent",
+      "output": "I'm sorry to hear you're having trouble with your order. We can definitely help...",
+      "writes": "output.reply",
+      "status": "success",
+      "error": null,
+      "tokens": 38,
+      "usage": {
+        "prompt_tokens": 32,
+        "completion_tokens": 6,
+        "estimated_usd": null
+      },
+      "guardrails_passed": ["InjectionGuardrail.check_input", "InjectionGuardrail.check_output"],
+      "duration_ms": 425.3
     }
   ],
-  "output": { "reply": "I'm sorry to hear you're having trouble with your order..." },
-  "summary": { "status": "success" }
+  "output": { "reply": "I'm sorry to hear you're having trouble with your order. We can definitely help..." },
+  "summary": {
+    "total_tokens": 50,
+    "total_usage": {
+      "prompt_tokens": 40,
+      "completion_tokens": 10,
+      "total_tokens": 50,
+      "estimated_usd": null
+    },
+    "total_duration_ms": 712.8,
+    "status": "success"
+  }
 }
 ```
 
@@ -245,26 +310,70 @@ After `triage` writes its one-word classification to `working.triage.intent`, Si
 
 Only the matching branch runs. If neither expression matches (e.g. the LLM returns an unexpected label), both nodes are skipped and `output.reply` is never written.
 
-**Output (refund path):**
+**Full JSON Trace (refund path, with `--trace`):**
 
 ```json
 {
+  "workflow": { "version": "0.1" },
+  "input": { "message": "I want a refund on my last order" },
   "nodes": [
     {
       "id": "triage",
-      "prompt_sent": "I want a refund on my last order",
-      "response_received": "refund",
-      "writes": "working.triage.intent"
+      "type": "agent",
+      "output": "refund",
+      "writes": "working.triage.intent",
+      "status": "success",
+      "error": null,
+      "tokens": 16,
+      "usage": {
+        "prompt_tokens": 12,
+        "completion_tokens": 4,
+        "estimated_usd": null
+      },
+      "guardrails_passed": ["InjectionGuardrail.check_input", "InjectionGuardrail.check_output"],
+      "duration_ms": 302.1
     },
     {
       "id": "handle_refund",
-      "prompt_sent": "refund",
-      "response_received": "We're sorry to hear that. To process your refund...",
-      "writes": "output.reply"
+      "type": "agent",
+      "output": "We're sorry to hear that. To process your refund, please contact our support team...",
+      "writes": "output.reply",
+      "status": "success",
+      "error": null,
+      "tokens": 42,
+      "usage": {
+        "prompt_tokens": 36,
+        "completion_tokens": 6,
+        "estimated_usd": null
+      },
+      "guardrails_passed": ["InjectionGuardrail.check_input", "InjectionGuardrail.check_output"],
+      "duration_ms": 418.7
+    },
+    {
+      "id": "handle_general",
+      "type": "agent",
+      "output": null,
+      "writes": null,
+      "status": "skipped",
+      "error": null,
+      "tokens": 0,
+      "usage": null,
+      "guardrails_passed": [],
+      "duration_ms": 0.0
     }
   ],
-  "output": { "reply": "We're sorry to hear that. To process your refund..." },
-  "summary": { "status": "success" }
+  "output": { "reply": "We're sorry to hear that. To process your refund, please contact our support team..." },
+  "summary": {
+    "total_tokens": 58,
+    "total_usage": {
+      "prompt_tokens": 48,
+      "completion_tokens": 10,
+      "total_tokens": 58,
+      "estimated_usd": null
+    },
+    "total_duration_ms": 720.8,
+    "status": "success"
+  }
 }
 ```
 
