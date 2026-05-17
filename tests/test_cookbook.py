@@ -15,6 +15,7 @@ import pytest
 
 from sirenspec.core.executor import execute
 from sirenspec.yaml.parser import load_workflow
+from sirenspec.core.usage import TokenUsage
 
 COOKBOOK = Path(__file__).parent.parent / "docs" / "cookbook"
 
@@ -22,7 +23,7 @@ COOKBOOK = Path(__file__).parent.parent / "docs" / "cookbook"
 def _provider(response: str = "mock response", tokens: int = 10) -> MagicMock:
     mock = MagicMock()
     mock.complete = AsyncMock(return_value=response)
-    mock.last_token_count = tokens
+    mock.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=tokens)
     return mock
 
 
@@ -37,7 +38,7 @@ def _sequential_provider(*responses: str, tokens: int = 10) -> MagicMock:
 
     mock = MagicMock()
     mock.complete = _complete
-    mock.last_token_count = tokens
+    mock.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=tokens)
     return mock
 
 
@@ -235,7 +236,7 @@ class TestThousandMonkeys:
 
         provider = MagicMock()
         provider.complete = _complete
-        provider.last_token_count = 5
+        provider.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=5)
 
         with patch("sirenspec.core.agent_runner.resolve_provider", return_value=provider):
             trace = await execute(wf, wf.input.message if wf.input else "Write a three-line poem.")
@@ -255,7 +256,7 @@ class TestThousandMonkeys:
         wf = load_workflow(COOKBOOK / "1000-monkeys" / "workflow.yaml")
         provider = MagicMock()
         provider.complete = AsyncMock(side_effect=RuntimeError("no api key"))
-        provider.last_token_count = 0
+        provider.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=0)
 
         with patch("sirenspec.core.agent_runner.resolve_provider", return_value=provider):
             trace = await execute(wf, wf.input.message if wf.input else "Write a poem.")
@@ -292,7 +293,7 @@ class TestMarketAnalysis:
 
         provider = MagicMock()
         provider.complete = _complete
-        provider.last_token_count = 8
+        provider.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=8)
 
         with patch("sirenspec.core.agent_runner.resolve_provider", return_value=provider):
             trace = await execute(wf, wf.input.message if wf.input else "Q3 earnings exceeded expectations.")
@@ -322,7 +323,7 @@ class TestMarketAnalysis:
 
         provider = MagicMock()
         provider.complete = _complete
-        provider.last_token_count = 5
+        provider.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=5)
 
         with patch("sirenspec.core.agent_runner.resolve_provider", return_value=provider):
             await execute(wf, "some report")

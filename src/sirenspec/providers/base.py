@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
+from sirenspec.core.usage import TokenUsage
+
 
 @runtime_checkable
 class LLMProvider(Protocol):
@@ -14,8 +16,8 @@ class LLMProvider(Protocol):
         ...
 
     @property
-    def last_token_count(self) -> int:
-        """Total token count from the most recent call."""
+    def last_token_usage(self) -> TokenUsage:
+        """Structured token usage from the most recent call."""
         ...
 
     @property
