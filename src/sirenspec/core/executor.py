@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from collections import defaultdict, deque
 from collections.abc import AsyncGenerator
@@ -29,6 +30,8 @@ from sirenspec.core.usage import TokenUsage
 from sirenspec.exceptions import BudgetExceededError, RetryExhaustedError
 from sirenspec.guardrails.base import GuardrailViolation, WorkflowGuardrail
 from sirenspec.guardrails.registry import build_guardrails
+
+logger = logging.getLogger(__name__)
 
 
 def interpolate_tool_config(node: ToolNode, ctx: InterpolationContext) -> ToolNode:
@@ -126,7 +129,8 @@ def evaluate_when_condition(condition: str, context: WorkflowContext) -> bool:
         }
         result = eval(condition, {"__builtins__": {}}, namespace)  # noqa: S307
         return bool(result)
-    except Exception:
+    except (SyntaxError, TypeError, NameError, AttributeError, KeyError) as exc:
+        logger.debug("when: condition %r evaluated with error: %s", condition, exc)
         return False
 
 

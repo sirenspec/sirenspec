@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from importlib.resources import files
@@ -102,7 +103,7 @@ def load_cache() -> dict | None:
         if age > _CACHE_TTL_SECONDS:
             return None
         return envelope.get("data")
-    except Exception:
+    except (json.JSONDecodeError, ValueError, OSError):
         return None
 
 
@@ -134,7 +135,7 @@ def fetch_remote() -> dict | None:
             data = json.loads(resp.read())
         save_cache(data)
         return data
-    except Exception as exc:
+    except (OSError, json.JSONDecodeError, urllib.error.URLError) as exc:
         logger.debug("Could not fetch LiteLLM pricing from remote: %s", exc)
         return None
 
@@ -199,4 +200,6 @@ def estimate_usd(prompt_tokens: int, completion_tokens: int, model_uri: str) -> 
     pricing = lookup_pricing(model_uri)
     if pricing is None:
         return None
-    return (prompt_tokens / 1000.0) * pricing.prompt_usd_per_1k + (completion_tokens / 1000.0) * pricing.completion_usd_per_1k
+    return (prompt_tokens / 1000.0) * pricing.prompt_usd_per_1k + (
+        completion_tokens / 1000.0
+    ) * pricing.completion_usd_per_1k
