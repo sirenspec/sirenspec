@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from sirenspec.core.models import GuardrailSpec
 from sirenspec.guardrails.base import Guardrail
+from sirenspec.guardrails.injection import InjectionGuardrail
+from sirenspec.guardrails.length import LengthGuardrail
+from sirenspec.guardrails.pii import PIIGuardrail
 
 # Names of guardrails that are applied when a node does not configure guardrails
 # explicitly (i.e. when guardrail_names is None, not []).
@@ -14,15 +18,9 @@ _DEFAULT_GUARDRAILS = ["injection"]
 def make_injection_guardrail(config: dict | None = None) -> Guardrail:
     """Instantiate an InjectionGuardrail.
 
-    The import is inside the function so that the injection module is only loaded
-    when this guardrail is actually used.
-
     :param config: Unused; accepted for interface uniformity.
     :returns: Configured :class:`~sirenspec.guardrails.injection.InjectionGuardrail`.
     """
-    # TODO: Remove lazy import - move to module level
-    from sirenspec.guardrails.injection import InjectionGuardrail
-
     return InjectionGuardrail()
 
 
@@ -32,9 +30,6 @@ def make_length_guardrail(config: dict | None = None) -> Guardrail:
     :param config: Unused; accepted for interface uniformity.
     :returns: Configured :class:`~sirenspec.guardrails.length.LengthGuardrail`.
     """
-    # TODO: Remove lazy import - move to module level
-    from sirenspec.guardrails.length import LengthGuardrail
-
     return LengthGuardrail()
 
 
@@ -47,7 +42,6 @@ def make_schema_guardrail(config: dict | None) -> Guardrail:
     """
     if config is None or "schema" not in config:
         raise ValueError("schema guardrail requires config with a 'schema' key")
-    # TODO: Remove lazy import - move to module level
     from sirenspec.guardrails.schema import SchemaGuardrail
 
     return SchemaGuardrail(schema=config["schema"])
@@ -64,9 +58,6 @@ def make_pii_guardrail(config: dict | None = None) -> Guardrail:
     :raises ValueError: If any entity name in ``config['entities']`` is not a known PII entity.
     :returns: Configured :class:`~sirenspec.guardrails.pii.PIIGuardrail`.
     """
-    # TODO: Remove lazy import - move to module level
-    from sirenspec.guardrails.pii import PIIGuardrail
-
     if config is None:
         return PIIGuardrail()
 
@@ -100,9 +91,6 @@ def resolve_guardrail_name_and_config(entry: str | object) -> tuple[str, dict | 
     :param entry: Either a plain string guardrail name or a GuardrailSpec instance.
     :returns: A ``(name, config)`` tuple.
     """
-    # TODO: Remove lazy import - move to module level (currently avoids circular dependency)
-    from sirenspec.core.models import GuardrailSpec
-
     if isinstance(entry, GuardrailSpec):
         return entry.name, entry.config
     return str(entry), None
