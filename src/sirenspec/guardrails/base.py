@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
+from sirenspec.exceptions import GuardrailError
 
-class GuardrailViolation(Exception):
+
+class GuardrailViolation(GuardrailError):
     """Raised when a guardrail detects a policy violation."""
 
     def __init__(self, reason: str) -> None:

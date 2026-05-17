@@ -98,6 +98,18 @@ class InterpolationError(SirenSpecError):
         self.reason = reason
 
 
+class PIIDetectedError(GuardrailError):
+    """Raised when PII is detected and the guardrail action is ``'block'``.
+
+    :param entity_types: List of entity type names that were detected (e.g. ``['email', 'ssn']``).
+        Matched values are intentionally omitted from the message to avoid leaking PII.
+    """
+
+    def __init__(self, entity_types: list[str]) -> None:
+        super().__init__(f"PII detected: {entity_types}")
+        self.entity_types = entity_types
+
+
 class FactoryNodeError(SirenSpecError):
     """Raised when a factory node instance fails and ``on_failure`` is ``'abort'``.
 
