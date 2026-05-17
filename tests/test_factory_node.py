@@ -11,8 +11,8 @@ import pytest
 from sirenspec.core.executor import execute
 from sirenspec.core.factory_runner import execute_factory_node, run_factory_instance
 from sirenspec.core.models import AgentDefinition, Edge, FactoryNode, Node, Workflow
-from sirenspec.exceptions import FactoryNodeError, InterpolationError
 from sirenspec.core.usage import TokenUsage
+from sirenspec.exceptions import FactoryNodeError, InterpolationError
 
 # ---------------------------------------------------------------------------
 # Helpers
