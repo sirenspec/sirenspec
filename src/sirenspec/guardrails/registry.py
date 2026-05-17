@@ -5,6 +5,9 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from sirenspec.guardrails.base import Guardrail
+from sirenspec.guardrails.injection import InjectionGuardrail
+from sirenspec.guardrails.length import LengthGuardrail
+from sirenspec.guardrails.schema import SchemaGuardrail
 
 # Names of guardrails that are applied when a node does not configure guardrails
 # explicitly (i.e. when guardrail_names is None, not []).
@@ -14,13 +17,8 @@ _DEFAULT_GUARDRAILS = ["injection"]
 def make_injection_guardrail() -> Guardrail:
     """Instantiate an InjectionGuardrail.
 
-    The import is inside the function so that the injection module is only loaded
-    when this guardrail is actually used.
-
     :returns: Configured :class:`~sirenspec.guardrails.injection.InjectionGuardrail`.
     """
-    from sirenspec.guardrails.injection import InjectionGuardrail
-
     return InjectionGuardrail()
 
 
@@ -29,8 +27,6 @@ def make_length_guardrail() -> Guardrail:
 
     :returns: Configured :class:`~sirenspec.guardrails.length.LengthGuardrail`.
     """
-    from sirenspec.guardrails.length import LengthGuardrail
-
     return LengthGuardrail()
 
 
@@ -43,8 +39,6 @@ def make_schema_guardrail() -> Guardrail:
 
     :returns: Configured :class:`~sirenspec.guardrails.schema.SchemaGuardrail`.
     """
-    from sirenspec.guardrails.schema import SchemaGuardrail
-
     return SchemaGuardrail(schema={})
 
 
