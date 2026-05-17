@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 from typing import Annotated, Any
 
 import typer
@@ -11,6 +12,7 @@ from rich.console import Console
 
 from sirenspec.core.executor import topological_sort
 from sirenspec.core.models import AgentNode, AnyNode, Edge, FactoryNode, GuardrailSpec, SwrmNode, ToolNode, Workflow
+from sirenspec.yaml.parser import load_workflow
 
 _console = Console()
 _err = Console(stderr=True)
@@ -322,11 +324,13 @@ def explain_command(
     workflow_file: Annotated[str, typer.Argument(help="Path to the workflow YAML file")],
     format: Annotated[str, typer.Option("--format", "-f", help="Output format: 'text' or 'json'")] = "text",
 ) -> None:
-    """Print a human-readable execution plan for a workflow without making any LLM calls."""
-    from pathlib import Path
+    """Print a human-readable execution plan for a workflow without making any LLM calls.
 
-    from sirenspec.yaml.parser import load_workflow
-
+    :param workflow_file: Path to the workflow YAML file to explain.
+    :param format: Output format — ``"text"`` for human-readable output or ``"json"`` for
+        machine-readable JSON.
+    :returns: None. Exits with code 1 if the workflow has validation errors.
+    """
     try:
         workflow = load_workflow(workflow_file)
     except FileNotFoundError as exc:
