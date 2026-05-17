@@ -44,5 +44,5 @@ class SummaryEvent:
     kind: Literal["summary"] = field(default="summary")
     total_nodes: int = field(default=0)
     total_tokens: int = field(default=0)
-    status: str = field(default="success")
+    status: Literal["success", "failed"] = field(default="success")
     duration_ms: float = field(default=0.0)

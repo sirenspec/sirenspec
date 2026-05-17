@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -17,6 +18,7 @@ from rich.text import Text
 
 from sirenspec.core.events import NodeCompleteEvent, SummaryEvent
 from sirenspec.core.executor import execute, execute_streaming
+from sirenspec.core.models import Workflow
 from sirenspec.yaml.parser import load_env_file, load_workflow
 
 _err = Console(stderr=True)
@@ -27,8 +29,6 @@ def is_tty() -> bool:
 
     :returns: ``True`` if stdout is a TTY and the ``NO_COLOR`` env var is not set.
     """
-    import os
-
     return sys.stdout.isatty() and "NO_COLOR" not in os.environ
 
 
@@ -63,7 +63,7 @@ def format_output_content(output: Any) -> str:
     return str(output) if output is not None else ""
 
 
-def render_node_panel(event: NodeCompleteEvent, console: Console) -> None:
+def render_node_panel(event: NodeCompleteEvent, console: Console, box_style: Any) -> None:
     """Render a completed node as a Rich panel followed by its writes arrow.
 
     Skipped nodes are printed as a single dimmed line.  Failed nodes use a
@@ -71,6 +71,7 @@ def render_node_panel(event: NodeCompleteEvent, console: Console) -> None:
 
     :param event: The node completion event to render.
     :param console: The Rich console to print to.
+    :param box_style: The Rich box style to use (``ROUNDED`` for TTY, ``ASCII`` for pipes/CI).
     """
     if event.status == "skipped":
         console.print(f"  [dim](skipped) {event.node_id}[/dim]")
@@ -84,7 +85,6 @@ def render_node_panel(event: NodeCompleteEvent, console: Console) -> None:
 
     title = Text(event.node_id, style="bold")
     border_style = "red" if event.status == "failed" else "default"
-    box_style = ROUNDED if is_tty() else ASCII
 
     terminal_width = shutil.get_terminal_size((80, 24)).columns
     panel = Panel(
@@ -113,7 +113,7 @@ def format_summary_line(event: SummaryEvent) -> str:
 
 
 async def run_streaming(
-    workflow_file: str,
+    workflow: Workflow,
     user_input: str,
     quiet: bool,
     trace_file: str | None,
@@ -123,30 +123,14 @@ async def run_streaming(
     When *trace_file* is given, the complete trace dict is also written to that
     path as JSON after execution finishes.
 
-    :param workflow_file: Path to the workflow YAML.
+    :param workflow: The validated workflow to execute.
     :param user_input: The user input message to pass to the workflow.
     :param quiet: When ``True``, suppress node panels; only print the summary.
     :param trace_file: Optional file path for writing the full JSON trace.
     :returns: Exit code — 0 for success, 1 for failure.
     """
-    try:
-        workflow = load_workflow(workflow_file)
-    except FileNotFoundError as exc:
-        _err.print(f"[red]Error:[/red] {exc}")
-        return 1
-    except ValueError as exc:
-        _err.print(f"[red]Validation error:[/red] {exc}")
-        return 1
-
-    if workflow.env_file is not None:
-        env_path = Path(workflow_file).parent / workflow.env_file
-        try:
-            load_env_file(env_path)
-        except FileNotFoundError as exc:
-            _err.print(f"[red]Error:[/red] {exc}")
-            return 1
-
     console = build_console()
+    box_style = ROUNDED if is_tty() else ASCII
     trace_nodes: list[dict[str, Any]] = []
     summary_event: SummaryEvent | None = None
 
@@ -154,7 +138,7 @@ async def run_streaming(
         async for event in execute_streaming(workflow, user_input):
             if isinstance(event, NodeCompleteEvent):
                 if not quiet:
-                    render_node_panel(event, console)
+                    render_node_panel(event, console, box_style)
                 if trace_file is not None:
                     trace_nodes.append(
                         {
@@ -196,6 +180,50 @@ async def run_streaming(
     return 0
 
 
+def load_workflow_with_env(workflow_file: str) -> Workflow:
+    """Load and validate a workflow file, then load its env file if configured.
+
+    :param workflow_file: Path to the workflow YAML file.
+    :returns: The validated :class:`~sirenspec.core.models.Workflow` instance.
+    :raises typer.Exit: With code 1 on any load or validation error.
+    """
+    try:
+        workflow = load_workflow(workflow_file)
+    except FileNotFoundError as exc:
+        _err.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    except ValueError as exc:
+        _err.print(f"[red]Validation error:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    if workflow.env_file is not None:
+        env_path = Path(workflow_file).parent / workflow.env_file
+        try:
+            load_env_file(env_path)
+        except FileNotFoundError as exc:
+            _err.print(f"[red]Error:[/red] {exc}")
+            raise typer.Exit(1) from exc
+
+    return workflow
+
+
+def resolve_user_input(workflow: Workflow, input_message: str | None) -> str:
+    """Resolve the user input from the CLI flag or workflow default.
+
+    :param workflow: The loaded workflow, which may have a default input message.
+    :param input_message: The value of the ``--input`` CLI flag, or ``None``.
+    :returns: The resolved user input string.
+    :raises typer.Exit: With code 1 when no input can be resolved.
+    """
+    user_input = input_message
+    if user_input is None and workflow.input is not None:
+        user_input = workflow.input.message
+    if not user_input:
+        _err.print("[red]Error:[/red] No input provided. Use --input or define input.message in the workflow.")
+        raise typer.Exit(1)
+    return user_input
+
+
 def run_command(
     workflow_file: Annotated[str, typer.Argument(help="Path to the workflow YAML file")],
     input_message: Annotated[str | None, typer.Option("--input", "-i", help="User input message")] = None,
@@ -209,34 +237,10 @@ def run_command(
     ] = None,
 ) -> None:
     """Execute a SirenSpec workflow with a streaming per-node view."""
-    use_json_mode = trace or output_format == "json"
+    workflow = load_workflow_with_env(workflow_file)
+    user_input = resolve_user_input(workflow, input_message)
 
-    if use_json_mode:
-        # Legacy / CI path: load workflow, run execute(), dump full JSON trace.
-        try:
-            workflow = load_workflow(workflow_file)
-        except FileNotFoundError as exc:
-            _err.print(f"[red]Error:[/red] {exc}")
-            raise typer.Exit(1) from exc
-        except ValueError as exc:
-            _err.print(f"[red]Validation error:[/red] {exc}")
-            raise typer.Exit(1) from exc
-
-        if workflow.env_file is not None:
-            env_path = Path(workflow_file).parent / workflow.env_file
-            try:
-                load_env_file(env_path)
-            except FileNotFoundError as exc:
-                _err.print(f"[red]Error:[/red] {exc}")
-                raise typer.Exit(1) from exc
-
-        user_input = input_message
-        if user_input is None and workflow.input is not None:
-            user_input = workflow.input.message
-        if not user_input:
-            _err.print("[red]Error:[/red] No input provided. Use --input or define input.message in the workflow.")
-            raise typer.Exit(1)
-
+    if trace or output_format == "json":
         try:
             wf_trace = asyncio.run(execute(workflow, user_input))
         except Exception as exc:
@@ -245,29 +249,10 @@ def run_command(
 
         print(json.dumps(wf_trace, indent=2))  # noqa: T201
 
-        wf_summary = wf_trace.get("summary", {})
-        if wf_summary.get("status") == "failed":
+        if wf_trace.get("summary", {}).get("status") == "failed":
             sys.exit(1)
         return
 
-    # Streaming / pretty-print path.
-    # Resolve user input before entering async context.
-    try:
-        workflow_obj = load_workflow(workflow_file)
-    except FileNotFoundError as exc:
-        _err.print(f"[red]Error:[/red] {exc}")
-        raise typer.Exit(1) from exc
-    except ValueError as exc:
-        _err.print(f"[red]Validation error:[/red] {exc}")
-        raise typer.Exit(1) from exc
-
-    user_input = input_message
-    if user_input is None and workflow_obj.input is not None:
-        user_input = workflow_obj.input.message
-    if not user_input:
-        _err.print("[red]Error:[/red] No input provided. Use --input or define input.message in the workflow.")
-        raise typer.Exit(1)
-
-    exit_code = asyncio.run(run_streaming(workflow_file, user_input, quiet, trace_file))
+    exit_code = asyncio.run(run_streaming(workflow, user_input, quiet, trace_file))
     if exit_code != 0:
         sys.exit(exit_code)

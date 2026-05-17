@@ -8,6 +8,7 @@ from typing import Any
 
 from sirenspec.core.models import RetryPolicy
 from sirenspec.core.retry import run_with_retry
+from sirenspec.core.usage import TokenUsage
 from sirenspec.guardrails.registry import build_guardrails
 from sirenspec.providers.registry import resolve_provider
 
@@ -17,14 +18,14 @@ class AgentRunResult:
     """Result of a single agent node execution.
 
     :param output: The guardrail-checked response text.
-    :param tokens: Token count reported by the provider.
+    :param token_usage: Structured token usage reported by the provider.
     :param duration_ms: Wall-clock milliseconds from first attempt start to final result.
     :param guardrails_passed: Names of each guardrail check that ran, in order.
     :param retry_attempts: Log entries for each retry (empty when the first attempt succeeds).
     """
 
     output: str
-    tokens: int
+    token_usage: TokenUsage
     duration_ms: float
     guardrails_passed: list[str] = field(default_factory=list)
     retry_attempts: list[dict[str, Any]] = field(default_factory=list)
@@ -51,7 +52,7 @@ async def execute_agent_node(
     :param retry_policy: Policy governing retry behaviour on provider failure.
     :raises GuardrailViolation: If any guardrail rejects the input or output.
     :raises RetryExhaustedError: If the provider fails on all retry attempts.
-    :returns: :class:`AgentRunResult` with output, token count, timing, and audit trail.
+    :returns: :class:`AgentRunResult` with output, token usage, timing, and audit trail.
     """
     # None → default guardrails (injection detection); [] → no guardrails.
     # build_guardrails understands this distinction — do not coerce None to [] here.
@@ -89,10 +90,10 @@ async def execute_agent_node(
 
     output = await run_with_retry(node_id=node_id, policy=retry_policy, call=call, on_attempt=log_retry)
 
-    # Read token count after the retry loop completes; the provider updates
-    # last_token_count after every successful call, so this always reflects the
+    # Read token usage after the retry loop completes; the provider updates
+    # last_token_usage after every successful call, so this always reflects the
     # attempt that actually succeeded.
-    tokens = provider.last_token_count
+    token_usage = provider.last_token_usage
     duration_ms = (time.monotonic() - start) * 1000
 
     # Output guardrails run after a successful provider response. They may raise
@@ -103,7 +104,7 @@ async def execute_agent_node(
 
     return AgentRunResult(
         output=output,
-        tokens=tokens,
+        token_usage=token_usage,
         duration_ms=duration_ms,
         guardrails_passed=guardrails_passed,
         retry_attempts=retry_attempts,

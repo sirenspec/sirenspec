@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from sirenspec.core.usage import TokenUsage
 from sirenspec.providers.openai_provider import OpenAIProvider
 
 
@@ -21,7 +22,8 @@ class TestOpenAIProvider:
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
         mock_response.choices[0].message.content = "Hello, world!"
-        mock_response.usage.total_tokens = 10
+        mock_response.usage.prompt_tokens = 7
+        mock_response.usage.completion_tokens = 3
 
         with patch.object(provider._client.chat.completions, "create", new=AsyncMock(return_value=mock_response)):
             result = await provider.complete([{"role": "user", "content": "hi"}])
@@ -30,23 +32,28 @@ class TestOpenAIProvider:
         assert isinstance(result, str)
 
     @pytest.mark.asyncio
-    async def test_token_count_captured(self, provider: OpenAIProvider) -> None:
+    async def test_token_usage_captured(self, provider: OpenAIProvider) -> None:
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
         mock_response.choices[0].message.content = "Response text"
-        mock_response.usage.total_tokens = 42
+        mock_response.usage.prompt_tokens = 30
+        mock_response.usage.completion_tokens = 12
 
         with patch.object(provider._client.chat.completions, "create", new=AsyncMock(return_value=mock_response)):
             await provider.complete([{"role": "user", "content": "test"}])
 
-        assert provider.last_token_count == 42
+        assert isinstance(provider.last_token_usage, TokenUsage)
+        assert provider.last_token_usage.prompt_tokens == 30
+        assert provider.last_token_usage.completion_tokens == 12
+        assert provider.last_token_usage.total == 42
 
     @pytest.mark.asyncio
     async def test_messages_passed_to_api(self, provider: OpenAIProvider) -> None:
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
         mock_response.choices[0].message.content = "ok"
-        mock_response.usage.total_tokens = 5
+        mock_response.usage.prompt_tokens = 3
+        mock_response.usage.completion_tokens = 2
 
         messages = [{"role": "system", "content": "sys"}, {"role": "user", "content": "q"}]
         mock_create = AsyncMock(return_value=mock_response)
@@ -65,4 +72,6 @@ class TestOpenAIProvider:
         with patch.object(provider._client.chat.completions, "create", new=AsyncMock(return_value=mock_response)):
             await provider.complete([{"role": "user", "content": "test"}])
 
-        assert provider.last_token_count == 0
+        assert provider.last_token_usage.prompt_tokens == 0
+        assert provider.last_token_usage.completion_tokens == 0
+        assert provider.last_token_usage.total == 0

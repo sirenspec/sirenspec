@@ -25,7 +25,7 @@ from sirenspec.core.models import (
 from sirenspec.core.swrm_runner import execute_swrm
 from sirenspec.core.tool_runner import execute_tool_node
 from sirenspec.core.usage import TokenUsage
-from sirenspec.exceptions import FactoryNodeError, InterpolationError, RetryExhaustedError, SwrmAgentError, ToolError
+from sirenspec.exceptions import RetryExhaustedError
 from sirenspec.guardrails.base import GuardrailViolation
 
 
@@ -287,7 +287,7 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
                     output=context.output,
                     global_guardrail_names=global_guardrail_names,
                 )
-            except (SwrmAgentError, Exception) as exc:
+            except Exception as exc:
                 duration_ms = (time.monotonic() - start_time) * 1000
                 error_trace: dict[str, Any] = {
                     "id": node_id,
@@ -314,7 +314,7 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
             context.write(f"working.{node_id}.output", swrm_trace["output"])
             last_writes_path = f"output.{node_id}"
 
-            total_usage = total_usage + swrm_trace["token_usage"]
+            total_usage += TokenUsage(prompt_tokens=0, completion_tokens=swrm_trace["tokens"])
             total_duration_ms += swrm_trace["duration_ms"]
 
             for target, condition in out_edges[node_id]:
@@ -351,15 +351,6 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
                     if condition is None or evaluate_when_condition(condition, context):
                         active_nodes.add(target)
 
-            except ToolError as exc:
-                duration_ms = (time.monotonic() - start_time) * 1000
-                tool_node_trace["error"] = str(exc)
-                tool_node_trace["duration_ms"] = round(duration_ms, 2)
-                total_duration_ms += duration_ms
-                status = "failed"
-                trace_nodes.append(tool_node_trace)
-                break
-
             except Exception as exc:
                 duration_ms = (time.monotonic() - start_time) * 1000
                 tool_node_trace["error"] = str(exc)
@@ -387,7 +378,7 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
                     output=context.output,
                     guardrail_names=global_guardrail_names,
                 )
-            except (FactoryNodeError, InterpolationError, Exception) as exc:
+            except Exception as exc:
                 duration_ms = (time.monotonic() - start_time) * 1000
                 error_trace: dict[str, Any] = {
                     "id": node_id,
@@ -409,7 +400,7 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
             context.write(f"working.{node_id}.output", "\n".join(s for s in outputs_list if s))
             last_writes_path = node.writes
 
-            total_usage = total_usage + factory_trace["token_usage"]
+            total_usage += TokenUsage(prompt_tokens=0, completion_tokens=factory_trace["tokens"])
             total_duration_ms += factory_trace["duration_ms"]
 
             for target, condition in out_edges[node_id]:
@@ -499,7 +490,7 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
                     "retry_attempts": run_result.retry_attempts,
                 }
             )
-            total_usage = total_usage + run_result.token_usage
+            total_usage += run_result.token_usage
             total_duration_ms += duration_ms
 
         except GuardrailViolation as exc:
@@ -582,9 +573,7 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
     }
 
 
-async def execute_streaming(
-    workflow: Workflow, user_input: str
-) -> AsyncGenerator[NodeCompleteEvent | SummaryEvent]:
+async def execute_streaming(workflow: Workflow, user_input: str) -> AsyncGenerator[NodeCompleteEvent | SummaryEvent]:
     """Execute a workflow and yield typed events as each node completes.
 
     This is the streaming counterpart to :func:`execute`.  It walks the same
@@ -640,9 +629,6 @@ async def execute_streaming(
         active_node_count += 1
         node = workflow.nodes[node_id]
 
-        # ------------------------------------------------------------------ #
-        # Swrm node                                                           #
-        # ------------------------------------------------------------------ #
         if isinstance(node, SwrmNode):
             node_start = time.monotonic()
             try:
@@ -654,7 +640,7 @@ async def execute_streaming(
                     output=context.output,
                     global_guardrail_names=global_guardrail_names,
                 )
-            except (SwrmAgentError, Exception) as exc:
+            except Exception as exc:
                 duration_ms = (time.monotonic() - node_start) * 1000
                 total_duration_ms += duration_ms
                 status = "failed"
@@ -676,7 +662,7 @@ async def execute_streaming(
             context.write(f"working.{node_id}.output", swrm_trace["output"])
             last_writes_path = f"output.{node_id}"
 
-            total_usage = total_usage + swrm_trace["token_usage"]
+            total_usage += TokenUsage(prompt_tokens=0, completion_tokens=swrm_trace["tokens"])
             total_duration_ms += swrm_trace["duration_ms"]
 
             for target, condition in out_edges[node_id]:
@@ -689,13 +675,10 @@ async def execute_streaming(
                 output=swrm_trace["output"],
                 writes=f"output.{node_id}",
                 status="success",
-                tokens=swrm_trace.get("tokens", 0),
+                tokens=swrm_trace["tokens"],
             )
             continue
 
-        # ------------------------------------------------------------------ #
-        # Tool node                                                           #
-        # ------------------------------------------------------------------ #
         if isinstance(node, ToolNode):
             node_start = time.monotonic()
             try:
@@ -717,7 +700,7 @@ async def execute_streaming(
                     status="success",
                 )
 
-            except (ToolError, Exception) as exc:
+            except Exception as exc:
                 duration_ms = (time.monotonic() - node_start) * 1000
                 total_duration_ms += duration_ms
                 status = "failed"
@@ -730,9 +713,6 @@ async def execute_streaming(
                 break
             continue
 
-        # ------------------------------------------------------------------ #
-        # Factory node                                                        #
-        # ------------------------------------------------------------------ #
         if isinstance(node, FactoryNode):
             node_start = time.monotonic()
             try:
@@ -745,7 +725,7 @@ async def execute_streaming(
                     output=context.output,
                     guardrail_names=global_guardrail_names,
                 )
-            except (FactoryNodeError, InterpolationError, Exception) as exc:
+            except Exception as exc:
                 duration_ms = (time.monotonic() - node_start) * 1000
                 total_duration_ms += duration_ms
                 status = "failed"
@@ -763,7 +743,7 @@ async def execute_streaming(
             context.write(f"working.{node_id}.output", "\n".join(s for s in outputs_list if s))
             last_writes_path = node.writes
 
-            total_usage = total_usage + factory_trace["token_usage"]
+            total_usage += TokenUsage(prompt_tokens=0, completion_tokens=factory_trace["tokens"])
             total_duration_ms += factory_trace["duration_ms"]
 
             for target, condition in out_edges[node_id]:
@@ -776,14 +756,12 @@ async def execute_streaming(
                 output=outputs_list,
                 writes=node.writes,
                 status="success",
-                tokens=factory_trace.get("tokens", 0),
+                tokens=factory_trace["tokens"],
             )
             continue
 
-        # ------------------------------------------------------------------ #
-        # Agent node                                                          #
-        # ------------------------------------------------------------------ #
-        assert isinstance(node, AgentNode)
+        if not isinstance(node, AgentNode):
+            raise TypeError(f"Unhandled node type: {type(node).__name__}")
         agent_def = workflow.agents[node.agent]
 
         if last_writes_path is None:

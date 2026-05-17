@@ -458,3 +458,64 @@ class TestCliTraceFile:
         trace_dict = json.loads(trace_path.read_text())
         assert "summary" in trace_dict
         assert "nodes" in trace_dict
+
+    def test_trace_file_with_quiet_suppresses_panels_but_writes_file(self, tmp_path: Path) -> None:
+        """--trace-file --quiet writes the file but omits per-node panels from stdout."""
+        f = _write_workflow(tmp_path, MINIMAL_YAML)
+        trace_path = tmp_path / "trace.json"
+        mock_provider = _make_provider_mock("Hello!", tokens=8)
+
+        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider):
+            result = runner.invoke(app, ["run", str(f), "--trace-file", str(trace_path), "--quiet"])
+
+        assert result.exit_code == 0
+        assert "Run complete" in result.output
+        assert "answer" not in result.output
+        assert trace_path.exists()
+        trace_dict = json.loads(trace_path.read_text())
+        assert "nodes" in trace_dict
+
+
+class TestFormatOutputContent:
+    def test_dict_serialised_as_json(self) -> None:
+        from sirenspec.cli.run import format_output_content
+
+        result = format_output_content({"key": "value"})
+        assert json.loads(result) == {"key": "value"}
+
+    def test_list_serialised_as_json(self) -> None:
+        from sirenspec.cli.run import format_output_content
+
+        result = format_output_content([1, 2, 3])
+        assert json.loads(result) == [1, 2, 3]
+
+    def test_json_string_pretty_printed(self) -> None:
+        from sirenspec.cli.run import format_output_content
+
+        result = format_output_content('{"a":1}')
+        assert json.loads(result) == {"a": 1}
+        assert "\n" in result
+
+    def test_plain_string_returned_unchanged(self) -> None:
+        from sirenspec.cli.run import format_output_content
+
+        result = format_output_content("hello world")
+        assert result == "hello world"
+
+    def test_none_returns_empty_string(self) -> None:
+        from sirenspec.cli.run import format_output_content
+
+        result = format_output_content(None)
+        assert result == ""
+
+    def test_integer_converted_to_string(self) -> None:
+        from sirenspec.cli.run import format_output_content
+
+        result = format_output_content(42)
+        assert result == "42"
+
+    def test_float_converted_to_string(self) -> None:
+        from sirenspec.cli.run import format_output_content
+
+        result = format_output_content(3.14)
+        assert result == "3.14"
