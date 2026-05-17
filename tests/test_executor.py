@@ -9,12 +9,13 @@ import pytest
 from sirenspec.core.context import WorkflowContext
 from sirenspec.core.executor import DotDict, evaluate_when_condition, execute, topological_sort
 from sirenspec.core.models import AgentDefinition, Edge, Node, Workflow
+from sirenspec.core.usage import TokenUsage
 
 
 def _make_provider_mock(response_text: str = "mock response", tokens: int = 10) -> MagicMock:
     mock = MagicMock()
     mock.complete = AsyncMock(return_value=response_text)
-    mock.last_token_count = tokens
+    mock.last_token_usage = TokenUsage(prompt_tokens=tokens // 2, completion_tokens=tokens - tokens // 2)
     return mock
 
 
@@ -111,7 +112,7 @@ class TestExecuteMultiNode:
 
         mock_provider = MagicMock()
         mock_provider.complete = mock_complete
-        mock_provider.last_token_count = 10
+        mock_provider.last_token_usage = TokenUsage(prompt_tokens=5, completion_tokens=5)
 
         with patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider):
             trace = await execute(sequential_workflow, "Initial input")
@@ -278,7 +279,7 @@ class TestConditionalBranching:
 
         mock_provider = MagicMock()
         mock_provider.complete = mock_complete
-        mock_provider.last_token_count = 5
+        mock_provider.last_token_usage = TokenUsage(prompt_tokens=3, completion_tokens=2)
 
         with patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider):
             trace = await execute(wf, "I want a refund")
@@ -304,7 +305,7 @@ class TestConditionalBranching:
 
         mock_provider = MagicMock()
         mock_provider.complete = mock_complete
-        mock_provider.last_token_count = 5
+        mock_provider.last_token_usage = TokenUsage(prompt_tokens=3, completion_tokens=2)
 
         with patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider):
             trace = await execute(wf, "What are your hours?")

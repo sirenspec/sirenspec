@@ -12,6 +12,7 @@ from sirenspec.core.executor import execute
 from sirenspec.core.factory_runner import execute_factory_node, run_factory_instance
 from sirenspec.core.models import AgentDefinition, Edge, FactoryNode, Node, Workflow
 from sirenspec.exceptions import FactoryNodeError, InterpolationError
+from sirenspec.core.usage import TokenUsage
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -21,7 +22,7 @@ from sirenspec.exceptions import FactoryNodeError, InterpolationError
 def _make_provider_mock(response_text: str = "mock result", tokens: int = 10) -> MagicMock:
     mock = MagicMock()
     mock.complete = AsyncMock(return_value=response_text)
-    mock.last_token_count = tokens
+    mock.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=tokens)
     return mock
 
 
@@ -136,7 +137,7 @@ class TestRunFactoryInstance:
 
         mock_provider = MagicMock()
         mock_provider.complete = capture
-        mock_provider.last_token_count = 5
+        mock_provider.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=5)
 
         node = FactoryNode(
             agent="worker",
@@ -171,7 +172,7 @@ class TestRunFactoryInstance:
 
         mock_provider = MagicMock()
         mock_provider.complete = slow_complete
-        mock_provider.last_token_count = 0
+        mock_provider.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=0)
 
         node = FactoryNode(
             agent="worker",
@@ -203,7 +204,7 @@ class TestRunFactoryInstance:
     async def test_provider_error_returns_factory_node_error(self) -> None:
         mock_provider = MagicMock()
         mock_provider.complete = AsyncMock(side_effect=RuntimeError("provider boom"))
-        mock_provider.last_token_count = 0
+        mock_provider.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=0)
 
         node = FactoryNode(agent="worker", for_each="[]", writes="working.out")
         agent_def = AgentDefinition(model="openai:gpt-4o-mini", system="Do.")
@@ -278,7 +279,7 @@ class TestExecuteFactoryNode:
     async def test_on_failure_abort_raises(self) -> None:
         mock_provider = MagicMock()
         mock_provider.complete = AsyncMock(side_effect=RuntimeError("fail"))
-        mock_provider.last_token_count = 0
+        mock_provider.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=0)
 
         wf = _make_workflow_with_factory(on_failure="abort")
         node = wf.nodes["execute"]
@@ -308,7 +309,7 @@ class TestExecuteFactoryNode:
 
         mock_provider = MagicMock()
         mock_provider.complete = partial_fail
-        mock_provider.last_token_count = 5
+        mock_provider.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=5)
 
         wf = _make_workflow_with_factory(for_each='["x", "y"]', on_failure="continue")
         node = wf.nodes["execute"]
@@ -346,7 +347,7 @@ class TestExecuteFactoryNode:
 
         mock_provider = MagicMock()
         mock_provider.complete = probe
-        mock_provider.last_token_count = 1
+        mock_provider.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=1)
 
         wf = _make_workflow_with_factory(
             for_each='["a", "b", "c", "d"]',
@@ -440,7 +441,7 @@ class TestFactoryNodeInWorkflow:
 
         mock_provider = MagicMock()
         mock_provider.complete = mock_complete
-        mock_provider.last_token_count = 5
+        mock_provider.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=5)
 
         wf = Workflow(
             version="0.1",
