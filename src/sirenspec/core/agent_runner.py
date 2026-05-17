@@ -30,16 +30,6 @@ class AgentRunResult:
     guardrails_passed: list[str] = field(default_factory=list)
     retry_attempts: list[dict[str, Any]] = field(default_factory=list)
 
-    @property
-    def tokens(self) -> int:
-        """Total token count (prompt + completion).
-
-        Provided for backward-compatible access in callers that read ``result.tokens``.
-
-        :returns: Sum of prompt and completion tokens.
-        """
-        return self.token_usage.total
-
 
 async def execute_agent_node(
     node_id: str,

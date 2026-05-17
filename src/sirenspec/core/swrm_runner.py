@@ -68,7 +68,7 @@ async def run_single_agent(
             # whether to abort or continue.
             retry_policy=RetryPolicy(max_attempts=1),
         )
-        return result.output, result.tokens, result.duration_ms
+        return result.output, result.token_usage.total, result.duration_ms
     except SwrmAgentError:
         # Already wrapped — don't double-wrap.
         raise
@@ -105,7 +105,7 @@ async def run_synthesis(
         guardrail_names=guardrail_names,
         retry_policy=RetryPolicy(max_attempts=1),
     )
-    return result.output, result.tokens, result.duration_ms
+    return result.output, result.token_usage.total, result.duration_ms
 
 
 async def execute_swrm(

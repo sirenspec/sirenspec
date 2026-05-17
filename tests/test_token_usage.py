@@ -117,7 +117,7 @@ class TestAnthropicProviderTokenUsage:
         assert usage.total == 75
 
     @pytest.mark.asyncio
-    async def test_correct_token_usage_after_multiple_calls(self, provider: AnthropicProvider) -> None:
+    async def test_last_token_usage_reflects_most_recent_call(self, provider: AnthropicProvider) -> None:
         def _mock_response(input_t: int, output_t: int) -> MagicMock:
             r = MagicMock()
             r.content = [MagicMock()]
@@ -126,24 +126,13 @@ class TestAnthropicProviderTokenUsage:
             r.usage.output_tokens = output_t
             return r
 
-        with patch.object(provider._client.messages, "create") as mock_create:
-            mock_create.side_effect = [
-                _mock_response(10, 5),
-                _mock_response(20, 8),
-            ]
-            mock_create.return_value = None  # side_effect takes priority
-            mock_create.side_effect = [
-                AsyncMock(return_value=_mock_response(10, 5))(),
-                AsyncMock(return_value=_mock_response(20, 8))(),
-            ]
-            # Simpler approach: call sequentially
-            mock_create.side_effect = None
-            mock_create.return_value = AsyncMock(return_value=_mock_response(20, 8))()
+        with patch.object(provider._client.messages, "create", new=AsyncMock(return_value=_mock_response(10, 5))):
+            await provider.complete([{"role": "user", "content": "first"}])
+        assert provider.last_token_usage.prompt_tokens == 10
+        assert provider.last_token_usage.completion_tokens == 5
 
-        # Use a fresh mock for each call
         with patch.object(provider._client.messages, "create", new=AsyncMock(return_value=_mock_response(20, 8))):
             await provider.complete([{"role": "user", "content": "second"}])
-
         assert provider.last_token_usage.prompt_tokens == 20
         assert provider.last_token_usage.completion_tokens == 8
 

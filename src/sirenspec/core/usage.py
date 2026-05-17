@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
-@dataclass
+@dataclass(frozen=True)
 class TokenUsage:
     """Structured token count from a single LLM provider call.
 

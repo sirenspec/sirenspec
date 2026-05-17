@@ -22,6 +22,7 @@ from sirenspec.core.models import (
 )
 from sirenspec.core.swrm_runner import execute_swrm
 from sirenspec.core.tool_runner import execute_tool_node
+from sirenspec.core.usage import TokenUsage
 from sirenspec.exceptions import FactoryNodeError, InterpolationError, RetryExhaustedError, SwrmAgentError, ToolError
 from sirenspec.guardrails.base import GuardrailViolation
 
@@ -40,9 +41,7 @@ def interpolate_tool_config(node: ToolNode, ctx: InterpolationContext) -> ToolNo
         return node
     cfg = node.config
     interpolated_url = resolve_template(cfg.url, ctx)
-    interpolated_headers = (
-        {k: resolve_template(v, ctx) for k, v in cfg.headers.items()} if cfg.headers else None
-    )
+    interpolated_headers = {k: resolve_template(v, ctx) for k, v in cfg.headers.items()} if cfg.headers else None
     interpolated_body = resolve_template(cfg.body, ctx) if cfg.body is not None else None
     new_config = HttpToolConfig(
         url=interpolated_url,
@@ -246,7 +245,7 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
     last_writes_path: str | None = None
 
     trace_nodes: list[dict[str, Any]] = []
-    total_tokens = 0
+    total_usage = TokenUsage(prompt_tokens=0, completion_tokens=0)
     total_duration_ms = 0.0
     status = "success"
 
@@ -313,7 +312,7 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
             context.write(f"working.{node_id}.output", swrm_trace["output"])
             last_writes_path = f"output.{node_id}"
 
-            total_tokens += swrm_trace["tokens"]
+            total_usage += TokenUsage(prompt_tokens=0, completion_tokens=swrm_trace["tokens"])
             total_duration_ms += swrm_trace["duration_ms"]
 
             for target, condition in out_edges[node_id]:
@@ -408,7 +407,7 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
             context.write(f"working.{node_id}.output", "\n".join(s for s in outputs_list if s))
             last_writes_path = node.writes
 
-            total_tokens += factory_trace["tokens"]
+            total_usage += TokenUsage(prompt_tokens=0, completion_tokens=factory_trace["tokens"])
             total_duration_ms += factory_trace["duration_ms"]
 
             for target, condition in out_edges[node_id]:
@@ -458,6 +457,7 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
             "writes": node.writes,
             "guardrails_passed": [],
             "tokens": 0,
+            "usage": None,
             "duration_ms": 0,
             "error": None,
             "retry_attempts": [],
@@ -486,13 +486,18 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
             agent_node_trace.update(
                 {
                     "response_received": run_result.output,
-                    "tokens": run_result.tokens,
+                    "tokens": run_result.token_usage.total,
+                    "usage": {
+                        "prompt_tokens": run_result.token_usage.prompt_tokens,
+                        "completion_tokens": run_result.token_usage.completion_tokens,
+                        "estimated_usd": None,
+                    },
                     "duration_ms": round(duration_ms, 2),
                     "guardrails_passed": run_result.guardrails_passed,
                     "retry_attempts": run_result.retry_attempts,
                 }
             )
-            total_tokens += run_result.tokens
+            total_usage += run_result.token_usage
             total_duration_ms += duration_ms
 
         except GuardrailViolation as exc:
@@ -562,7 +567,13 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
         "nodes": trace_nodes,
         "output": context.output,
         "summary": {
-            "total_tokens": total_tokens,
+            "total_tokens": total_usage.total,
+            "total_usage": {
+                "prompt_tokens": total_usage.prompt_tokens,
+                "completion_tokens": total_usage.completion_tokens,
+                "total_tokens": total_usage.total,
+                "estimated_usd": None,
+            },
             "total_duration_ms": round(total_duration_ms, 2),
             "status": status,
         },

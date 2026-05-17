@@ -17,7 +17,10 @@ class LLMProvider(Protocol):
 
     @property
     def last_token_usage(self) -> TokenUsage:
-        """Structured token usage from the most recent call."""
+        """Structured token usage from the most recent call.
+
+        :returns: A :class:`~sirenspec.core.usage.TokenUsage` with prompt and completion counts.
+        """
         ...
 
     @property
