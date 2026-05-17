@@ -2,24 +2,55 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import time
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from sirenspec.core.pricing import ModelPricing, estimate_usd, lookup_pricing
+import sirenspec.core.pricing as pricing_module
+from sirenspec.core.pricing import (
+    ModelPricing,
+    estimate_usd,
+    fetch_remote,
+    load_cache,
+    load_pricing_data,
+    load_snapshot,
+    lookup_pricing,
+    parse_litellm_data,
+    parse_litellm_entry,
+    reset_pricing_cache,
+    save_cache,
+)
 from sirenspec.core.usage import TokenUsage
 from sirenspec.exceptions import BudgetExceededError
 from sirenspec.guardrails.base import WorkflowGuardrail
 from sirenspec.guardrails.cost_cap import CostCapGuardrail
 from sirenspec.guardrails.registry import build_guardrails, make_cost_cap_guardrail
 
+
+@pytest.fixture(autouse=True)
+def clear_pricing_cache():
+    """Reset the in-process pricing cache before each test."""
+    reset_pricing_cache()
+    yield
+    reset_pricing_cache()
+
+
 # ---------------------------------------------------------------------------
-# Pricing table
+# Pricing table — LiteLLM dynamic fetch
 # ---------------------------------------------------------------------------
 
 
 class TestPricingTable:
+    @pytest.fixture(autouse=True)
+    def force_snapshot(self):
+        """Force snapshot usage so pricing tests are deterministic regardless of network."""
+        with patch("sirenspec.core.pricing.load_pricing_data", new=load_snapshot):
+            yield
+
     def test_known_openai_model_returns_pricing(self) -> None:
         pricing = lookup_pricing("openai/gpt-4o-mini")
         assert pricing is not None
@@ -53,6 +84,244 @@ class TestPricingTable:
         cost_2k = estimate_usd(2000, 0, "openai/gpt-4o-mini")
         assert cost_1k is not None and cost_2k is not None
         assert abs(cost_2k - 2 * cost_1k) < 1e-10
+
+    def test_provider_prefix_stripped(self) -> None:
+        with_prefix = lookup_pricing("openai/gpt-4o")
+        without_prefix = lookup_pricing("gpt-4o")
+        assert with_prefix == without_prefix
+
+    def test_model_uri_without_slash_resolves(self) -> None:
+        pricing = lookup_pricing("gpt-4o-mini")
+        assert pricing is not None
+
+
+# ---------------------------------------------------------------------------
+# parse_litellm_entry
+# ---------------------------------------------------------------------------
+
+
+class TestParseLitellmEntry:
+    def test_valid_entry_returns_model_pricing(self) -> None:
+        entry = {"input_cost_per_token": 0.000001, "output_cost_per_token": 0.000003}
+        result = parse_litellm_entry(entry)
+        assert result is not None
+        assert abs(result.prompt_usd_per_1k - 0.001) < 1e-10
+        assert abs(result.completion_usd_per_1k - 0.003) < 1e-10
+
+    def test_missing_input_cost_returns_none(self) -> None:
+        assert parse_litellm_entry({"output_cost_per_token": 0.001}) is None
+
+    def test_missing_output_cost_returns_none(self) -> None:
+        assert parse_litellm_entry({"input_cost_per_token": 0.001}) is None
+
+    def test_empty_entry_returns_none(self) -> None:
+        assert parse_litellm_entry({}) is None
+
+    def test_costs_scaled_from_per_token_to_per_1k(self) -> None:
+        entry = {"input_cost_per_token": 0.000005, "output_cost_per_token": 0.00002}
+        result = parse_litellm_entry(entry)
+        assert result is not None
+        assert abs(result.prompt_usd_per_1k - 0.005) < 1e-10
+        assert abs(result.completion_usd_per_1k - 0.020) < 1e-10
+
+
+# ---------------------------------------------------------------------------
+# parse_litellm_data
+# ---------------------------------------------------------------------------
+
+
+class TestParseLitellmData:
+    def test_parses_valid_entries(self) -> None:
+        data = {
+            "gpt-4o": {"input_cost_per_token": 0.0000025, "output_cost_per_token": 0.00001},
+            "gpt-4o-mini": {"input_cost_per_token": 0.00000015, "output_cost_per_token": 0.0000006},
+        }
+        result = parse_litellm_data(data)
+        assert "gpt-4o" in result
+        assert "gpt-4o-mini" in result
+        assert isinstance(result["gpt-4o"], ModelPricing)
+
+    def test_skips_non_dict_entries(self) -> None:
+        data = {
+            "_source": "https://example.com",
+            "_snapshot_date": "2026-01-01",
+            "gpt-4o": {"input_cost_per_token": 0.0000025, "output_cost_per_token": 0.00001},
+        }
+        result = parse_litellm_data(data)
+        assert "_source" not in result
+        assert "_snapshot_date" not in result
+        assert "gpt-4o" in result
+
+    def test_skips_entries_missing_cost_fields(self) -> None:
+        data = {
+            "model-no-cost": {"max_tokens": 4096, "litellm_provider": "openai"},
+            "gpt-4o": {"input_cost_per_token": 0.0000025, "output_cost_per_token": 0.00001},
+        }
+        result = parse_litellm_data(data)
+        assert "model-no-cost" not in result
+        assert "gpt-4o" in result
+
+    def test_empty_dict_returns_empty(self) -> None:
+        assert parse_litellm_data({}) == {}
+
+
+# ---------------------------------------------------------------------------
+# load_snapshot
+# ---------------------------------------------------------------------------
+
+
+class TestLoadSnapshot:
+    def test_snapshot_loads_successfully(self) -> None:
+        data = load_snapshot()
+        assert isinstance(data, dict)
+        assert len(data) > 0
+
+    def test_snapshot_contains_openai_models(self) -> None:
+        data = load_snapshot()
+        assert "gpt-4o" in data or "gpt-4o-mini" in data
+
+    def test_snapshot_contains_anthropic_models(self) -> None:
+        data = load_snapshot()
+        assert any("claude" in k for k in data)
+
+    def test_snapshot_entries_parseable(self) -> None:
+        data = load_snapshot()
+        parsed = parse_litellm_data(data)
+        assert len(parsed) > 0
+
+
+# ---------------------------------------------------------------------------
+# load_cache / save_cache
+# ---------------------------------------------------------------------------
+
+
+class TestFilesystemCache:
+    def test_load_cache_returns_none_when_absent(self, tmp_path: Path) -> None:
+        with patch.object(pricing_module, "_CACHE_PATH", tmp_path / "pricing.json"):
+            assert load_cache() is None
+
+    def test_save_and_load_cache_roundtrip(self, tmp_path: Path) -> None:
+        cache_path = tmp_path / "pricing.json"
+        with patch.object(pricing_module, "_CACHE_PATH", cache_path):
+            payload = {"gpt-4o": {"input_cost_per_token": 0.0000025, "output_cost_per_token": 0.00001}}
+            save_cache(payload)
+            result = load_cache()
+        assert result == payload
+
+    def test_load_cache_returns_none_when_expired(self, tmp_path: Path) -> None:
+        cache_path = tmp_path / "pricing.json"
+        stale_timestamp = time.time() - (pricing_module._CACHE_TTL_SECONDS + 1)
+        cache_path.write_text(json.dumps({"timestamp": stale_timestamp, "data": {"gpt-4o": {}}}))
+        with patch.object(pricing_module, "_CACHE_PATH", cache_path):
+            assert load_cache() is None
+
+    def test_load_cache_returns_data_when_fresh(self, tmp_path: Path) -> None:
+        cache_path = tmp_path / "pricing.json"
+        payload = {"gpt-4o": {"input_cost_per_token": 0.0000025, "output_cost_per_token": 0.00001}}
+        fresh_timestamp = time.time() - 60  # 1 minute ago
+        cache_path.write_text(json.dumps({"timestamp": fresh_timestamp, "data": payload}))
+        with patch.object(pricing_module, "_CACHE_PATH", cache_path):
+            result = load_cache()
+        assert result == payload
+
+    def test_load_cache_returns_none_on_corrupt_file(self, tmp_path: Path) -> None:
+        cache_path = tmp_path / "pricing.json"
+        cache_path.write_text("not valid json{{{")
+        with patch.object(pricing_module, "_CACHE_PATH", cache_path):
+            assert load_cache() is None
+
+    def test_save_cache_silently_ignores_write_error(self, tmp_path: Path) -> None:
+        read_only = tmp_path / "ro"
+        read_only.mkdir(mode=0o444)
+        with patch.object(pricing_module, "_CACHE_PATH", read_only / "pricing.json"):
+            save_cache({"x": 1})  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# fetch_remote
+# ---------------------------------------------------------------------------
+
+
+class TestFetchRemote:
+    def test_fetch_remote_returns_none_on_network_error(self) -> None:
+        with patch("urllib.request.urlopen", side_effect=OSError("no network")):
+            result = fetch_remote()
+        assert result is None
+
+    def test_fetch_remote_returns_data_on_success(self, tmp_path: Path) -> None:
+        payload = {"gpt-4o": {"input_cost_per_token": 0.0000025, "output_cost_per_token": 0.00001}}
+        mock_resp = MagicMock()
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_resp.read.return_value = json.dumps(payload).encode()
+        with (
+            patch("urllib.request.urlopen", return_value=mock_resp),
+            patch.object(pricing_module, "_CACHE_PATH", tmp_path / "pricing.json"),
+        ):
+            result = fetch_remote()
+        assert result == payload
+
+    def test_fetch_remote_saves_to_cache_on_success(self, tmp_path: Path) -> None:
+        payload = {"gpt-4o": {"input_cost_per_token": 0.0000025, "output_cost_per_token": 0.00001}}
+        mock_resp = MagicMock()
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_resp.read.return_value = json.dumps(payload).encode()
+        cache_path = tmp_path / "pricing.json"
+        with (
+            patch("urllib.request.urlopen", return_value=mock_resp),
+            patch.object(pricing_module, "_CACHE_PATH", cache_path),
+        ):
+            fetch_remote()
+        assert cache_path.exists()
+
+
+# ---------------------------------------------------------------------------
+# load_pricing_data — priority chain
+# ---------------------------------------------------------------------------
+
+
+class TestLoadPricingData:
+    def test_uses_cache_when_fresh(self, tmp_path: Path) -> None:
+        payload = {"gpt-4o": {"input_cost_per_token": 0.0000025, "output_cost_per_token": 0.00001}}
+        cache_path = tmp_path / "pricing.json"
+        cache_path.write_text(json.dumps({"timestamp": time.time(), "data": payload}))
+        with (
+            patch.object(pricing_module, "_CACHE_PATH", cache_path),
+            patch("sirenspec.core.pricing.fetch_remote") as mock_fetch,
+        ):
+            result = load_pricing_data()
+            mock_fetch.assert_not_called()
+        assert result == payload
+
+    def test_fetches_remote_when_cache_stale(self, tmp_path: Path) -> None:
+        remote_payload = {"gpt-4o-mini": {"input_cost_per_token": 0.00000015, "output_cost_per_token": 0.0000006}}
+        stale_cache = tmp_path / "pricing.json"
+        stale_cache.write_text(json.dumps({"timestamp": 0, "data": {"old": {}}}))
+        with (
+            patch.object(pricing_module, "_CACHE_PATH", stale_cache),
+            patch("sirenspec.core.pricing.fetch_remote", return_value=remote_payload),
+        ):
+            result = load_pricing_data()
+        assert result == remote_payload
+
+    def test_falls_back_to_snapshot_when_remote_fails(self, tmp_path: Path) -> None:
+        with (
+            patch.object(pricing_module, "_CACHE_PATH", tmp_path / "pricing.json"),
+            patch("sirenspec.core.pricing.fetch_remote", return_value=None),
+        ):
+            result = load_pricing_data()
+        assert isinstance(result, dict)
+        assert len(result) > 0
+
+    def test_snapshot_fallback_logs_warning(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+        with (
+            patch.object(pricing_module, "_CACHE_PATH", tmp_path / "pricing.json"),
+            patch("sirenspec.core.pricing.fetch_remote", return_value=None),
+            caplog.at_level(logging.WARNING, logger="sirenspec.core.pricing"),
+        ):
+            load_pricing_data()
+        assert any("bundled" in r.message or "snapshot" in r.message for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------
