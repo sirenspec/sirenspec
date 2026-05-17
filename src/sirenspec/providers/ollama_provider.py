@@ -7,6 +7,8 @@ import os
 
 from openai import AsyncOpenAI
 
+from sirenspec.core.usage import TokenUsage
+
 _DEFAULT_BASE_URL = "http://localhost:11434/v1"
 
 
@@ -19,18 +21,30 @@ class OllamaProvider:
         # Ollama doesn't require a real key; the env var is a passthrough for auth-protected deployments.
         api_key = os.environ.get("OLLAMA_API_KEY", "ollama")
         self._client = AsyncOpenAI(base_url=base_url, api_key=api_key)
-        self._last_token_count: int = 0
+        self._last_token_usage: TokenUsage = TokenUsage(prompt_tokens=0, completion_tokens=0)
 
     @property
-    def last_token_count(self) -> int:
-        return self._last_token_count
+    def last_token_usage(self) -> TokenUsage:
+        """Structured token usage from the most recent call.
+
+        :returns: A :class:`~sirenspec.core.usage.TokenUsage` with prompt and completion counts.
+        """
+        return self._last_token_usage
 
     @property
     def client(self) -> AsyncOpenAI:
+        """Return the underlying AsyncOpenAI client (pointed at Ollama).
+
+        :returns: The AsyncOpenAI client instance.
+        """
         return self._client
 
     async def complete(self, messages: list[dict]) -> str:
         """Call the Ollama chat completions API and return the response text.
+
+        Ollama exposes ``prompt_eval_count`` for prompt tokens and ``eval_count`` for
+        completion tokens via the OpenAI-compatible usage object. Both fall back to 0
+        if the Ollama version does not report them.
 
         :param messages: List of ``{"role": ..., "content": ...}`` dicts.
         :returns: The assistant reply text.
@@ -39,7 +53,13 @@ class OllamaProvider:
             model=self.model,
             messages=messages,
         )
-        self._last_token_count = response.usage.total_tokens if response.usage else 0
+        if response.usage:
+            self._last_token_usage = TokenUsage(
+                prompt_tokens=response.usage.prompt_tokens or 0,
+                completion_tokens=response.usage.completion_tokens or 0,
+            )
+        else:
+            self._last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=0)
         content = response.choices[0].message.content
         return content or ""
 
@@ -48,4 +68,4 @@ if __name__ == "__main__":
     provider = OllamaProvider(model="llama3.2")
     reply = asyncio.run(provider.complete([{"role": "user", "content": "Say hello in one sentence."}]))
     print(reply)
-    print(f"tokens: {provider.last_token_count}")
+    print(f"tokens: {provider.last_token_usage.total}")

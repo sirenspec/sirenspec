@@ -115,7 +115,7 @@ async def run_factory_instance(
         instance_trace.update(
             {
                 "response_received": run_result.output,
-                "tokens": run_result.tokens,
+                "tokens": run_result.token_usage.total,
                 "duration_ms": round(duration_ms, 2),
             }
         )
