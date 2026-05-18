@@ -78,6 +78,8 @@ class CostCapGuardrail(Guardrail):
             )
             return
 
+        # Policy decision (raise vs warn) lives here, not in the executor, so callers
+        # can swap guardrails without touching orchestration logic.
         raise BudgetExceededError(
             reason=violation,
             tokens_used=usage.total,

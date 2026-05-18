@@ -75,6 +75,8 @@ def test_command(
     ] = None,
 ) -> None:
     """Discover and run SirenSpec YAML test fixtures."""
+    # --record intercepts live calls and saves them; --mock replays saved responses.
+    # Both together would replay stale data into the recording stream, corrupting the cassette.
     if mock and record:
         _err.print("[red]Error:[/red] --mock and --record are mutually exclusive")
         raise typer.Exit(2)

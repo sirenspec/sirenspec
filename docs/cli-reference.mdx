@@ -249,6 +249,73 @@ The JSON format is useful for integration into CI/CD systems or analysis tools:
 
 ---
 
+## `sirenspec test`
+
+Discover and run YAML test fixtures. Each fixture file (`*.test.yaml`) contains a workflow definition plus a set of assertions that are validated during execution.
+
+```bash
+sirenspec test <test-path> [OPTIONS]
+```
+
+**Arguments:**
+
+| Argument | Description |
+|----------|-------------|
+| `test-path` | Path to a single test fixture file or a directory of `*.test.yaml` files. |
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--mock` | Replay LLM responses from a cassette file (no live API calls). Requires `--cassette`. |
+| `--record` | Run live and record LLM responses into a cassette file. Requires `--cassette`. Mutually exclusive with `--mock`. |
+| `--cassette PATH` | Path to the cassette file for `--mock` or `--record`. Required when either is used. |
+
+**Exit codes:**
+
+| Code | Meaning |
+|------|---------|
+| `0` | All fixtures passed assertions. |
+| `1` | One or more fixtures failed assertions or encountered execution errors. |
+| `2` | Configuration error (e.g., missing `--cassette` when using `--mock`). |
+
+**Examples:**
+
+```bash
+# Run a single test fixture with live LLM calls
+sirenspec test tests/answer.test.yaml
+
+# Run all fixtures in a directory with live calls
+sirenspec test tests/
+
+# Replay recorded LLM responses from a cassette
+sirenspec test tests/ --mock --cassette cassettes/responses.yaml
+
+# Record live LLM responses into a cassette
+sirenspec test tests/ --record --cassette cassettes/responses.yaml
+```
+
+**Output format:**
+
+For each fixture, a per-fixture result is printed:
+
+```
+PASS tests/answer.test.yaml
+  ✓ assertion[0]: output matches expected
+  ✓ assertion[1]: tokens < 100
+
+FAIL tests/edge_case.test.yaml
+  ✗ assertion[0]: status is success
+```
+
+After all fixtures, a summary line is printed:
+
+```
+3/3 fixtures passed
+```
+
+---
+
 ## `sirenspec validate`
 
 Validate a workflow YAML file without executing it or making any API calls.

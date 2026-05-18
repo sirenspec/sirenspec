@@ -129,6 +129,7 @@ def evaluate_when_condition(condition: str, context: WorkflowContext) -> bool:
         }
         result = eval(condition, {"__builtins__": {}}, namespace)  # noqa: S307
         return bool(result)
+    # Narrow to expression-level errors only — KeyboardInterrupt and SystemExit must propagate.
     except (SyntaxError, TypeError, NameError, AttributeError, KeyError) as exc:
         logger.debug("when: condition %r evaluated with error: %s", condition, exc)
         return False
@@ -351,6 +352,7 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
             total_usage += TokenUsage(prompt_tokens=0, completion_tokens=swrm_trace["tokens"])
             total_duration_ms += swrm_trace["duration_ms"]
 
+            # Expose running totals so when: conditions in YAML can gate on accumulated spend.
             context.write("working._budget.total_tokens", total_usage.total)
             context.write("working._budget.estimated_usd", total_estimated_usd)
 
@@ -448,6 +450,7 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
             total_usage += TokenUsage(prompt_tokens=0, completion_tokens=factory_trace["tokens"])
             total_duration_ms += factory_trace["duration_ms"]
 
+            # Expose running totals so when: conditions in YAML can gate on accumulated spend.
             context.write("working._budget.total_tokens", total_usage.total)
             context.write("working._budget.estimated_usd", total_estimated_usd)
 
@@ -556,6 +559,7 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
                 total_estimated_usd = (total_estimated_usd or 0.0) + node_estimated_usd
             total_duration_ms += duration_ms
 
+            # Expose running totals so when: conditions in YAML can gate on accumulated spend.
             context.write("working._budget.total_tokens", total_usage.total)
             context.write("working._budget.estimated_usd", total_estimated_usd)
 
@@ -663,6 +667,8 @@ async def execute_streaming(workflow: Workflow, user_input: str) -> AsyncGenerat
     :returns: An async generator of ``NodeCompleteEvent`` (one per node) followed
         by a final ``SummaryEvent``.
     """
+    # Events are yielded and immediately discarded — no full trace is accumulated here.
+    # Callers that need the complete structured trace (e.g. for JSON export) should use execute().
     start_wall = time.monotonic()
     context = WorkflowContext(initial_state=workflow.state)
     node_ids = list(workflow.nodes.keys())
@@ -741,6 +747,7 @@ async def execute_streaming(workflow: Workflow, user_input: str) -> AsyncGenerat
             total_usage += TokenUsage(prompt_tokens=0, completion_tokens=swrm_trace["tokens"])
             total_duration_ms += swrm_trace["duration_ms"]
 
+            # Expose running totals so when: conditions in YAML can gate on accumulated spend.
             context.write("working._budget.total_tokens", total_usage.total)
             context.write("working._budget.estimated_usd", total_estimated_usd)
 
@@ -837,6 +844,7 @@ async def execute_streaming(workflow: Workflow, user_input: str) -> AsyncGenerat
             total_usage += TokenUsage(prompt_tokens=0, completion_tokens=factory_trace["tokens"])
             total_duration_ms += factory_trace["duration_ms"]
 
+            # Expose running totals so when: conditions in YAML can gate on accumulated spend.
             context.write("working._budget.total_tokens", total_usage.total)
             context.write("working._budget.estimated_usd", total_estimated_usd)
 
@@ -915,6 +923,7 @@ async def execute_streaming(workflow: Workflow, user_input: str) -> AsyncGenerat
                 total_estimated_usd = (total_estimated_usd or 0.0) + node_estimated_usd
             total_duration_ms += duration_ms
 
+            # Expose running totals so when: conditions in YAML can gate on accumulated spend.
             context.write("working._budget.total_tokens", total_usage.total)
             context.write("working._budget.estimated_usd", total_estimated_usd)
 

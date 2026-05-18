@@ -138,6 +138,7 @@ The `when` field enables conditional branching. The expression is evaluated afte
 |------|------|-------------|
 | `working` | object | The current `working` context (dot-access). |
 | `output` | object | The current `output` context (dot-access). |
+| `_budget` | object | Budget state from `cost_cap` guardrail (if active). Fields: `total_tokens` (int), `estimated_usd` (float or None). |
 | `true` / `false` / `null` | literals | YAML boolean/null literals. |
 
 No Python built-ins or imports are available — the namespace is intentionally restricted.
@@ -148,6 +149,14 @@ edges:
   - from: triage
     to: handle_refund
     when: working.triage.intent == "refund"
+```
+
+```yaml
+# Skip expensive node if cost_cap guardrail has exhausted budget
+edges:
+  - from: initial
+    to: expensive_processing
+    when: _budget.estimated_usd < 2.0
 ```
 
 If a `when` expression raises an error (missing key, syntax error, type mismatch), it is treated as `false` and the edge is not traversed. Edges without `when` are always traversed.
@@ -239,6 +248,7 @@ guardrails:
 | `injection` | Detects prompt-injection patterns. Applied by default. | None |
 | `length` | Truncates output to 4000 characters. | Optional: `max_chars`, `mode` |
 | `schema` | Validates JSON output against a JSON Schema Draft 7 dict. | Required: `schema` |
+| `cost_cap` | Enforces token and/or USD budget ceilings. | Required: at least one of `max_usd` or `max_tokens`; optional: `action` |
 
 An empty list (`[]`) disables all guardrails for the entire workflow. Individual agents can override this with their own `guardrails` field.
 

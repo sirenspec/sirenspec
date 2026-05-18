@@ -151,6 +151,7 @@ def load_pricing_data() -> dict:
     remote = fetch_remote()
     if remote is not None:
         return remote
+    # Stale estimates are preferable to broken workflows — the snapshot is a last resort, not an error.
     logger.warning("sirenspec: using bundled pricing snapshot; prices may be out of date")
     return load_snapshot()
 

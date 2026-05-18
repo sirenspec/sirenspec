@@ -190,6 +190,96 @@ asyncio.run(run_with_progress("workflow.yaml", "Hello"))
 
 ---
 
+## Event Types
+
+The streaming generator yields two event types: `NodeCompleteEvent` and `SummaryEvent`. These are dataclasses from `sirenspec.core.events`.
+
+### `NodeCompleteEvent`
+
+Emitted once per node (including skipped nodes) during execution.
+
+**Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `node_id` | `str` | The node identifier. |
+| `node_type` | `str` | Node type: `"agent"`, `"tool"`, `"swrm"`, or `"factory"`. |
+| `output` | `Any` | The node's output value (string, dict, list, or None). None for skipped nodes. |
+| `writes` | `str` | The context path written by this node (agent/factory nodes only; empty string otherwise). |
+| `status` | `Literal["success", "skipped", "failed"]` | Execution result. |
+| `error` | `str \| None` | Error message when `status="failed"`, otherwise None. |
+| `tokens` | `int` | Total tokens consumed (0 for tool and skipped nodes). |
+
+**Example:**
+
+```python
+if isinstance(event, NodeCompleteEvent):
+    if event.status == "failed":
+        print(f"Node {event.node_id} failed: {event.error}")
+    else:
+        print(f"Node {event.node_id} ({event.node_type}) used {event.tokens} tokens")
+```
+
+### `SummaryEvent`
+
+Emitted once at the end of execution, after all nodes have completed.
+
+**Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `total_nodes` | `int` | Number of active nodes executed (excluding skipped). |
+| `total_tokens` | `int` | Aggregate token count across all active nodes. |
+| `status` | `Literal["success", "failed"]` | Overall workflow status. |
+| `duration_ms` | `float` | Wall-clock execution time in milliseconds. |
+
+**Example:**
+
+```python
+elif isinstance(event, SummaryEvent):
+    if event.status == "success":
+        cost_per_mtok = (event.total_tokens / 1_000_000) * 0.0001  # example pricing
+        print(f"Completed in {event.duration_ms}ms, {event.total_tokens} tokens (~${cost_per_mtok:.6f})")
+```
+
+---
+
+## Token Usage
+
+For detailed token accounting, import `TokenUsage` from `sirenspec.core.usage`.
+
+```python
+from sirenspec.core.usage import TokenUsage
+
+usage = TokenUsage(prompt_tokens=100, completion_tokens=50)
+print(usage.total)  # 150
+```
+
+**Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `prompt_tokens` | `int` | Tokens in the input. |
+| `completion_tokens` | `int` | Tokens in the output. |
+
+**Methods:**
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `.total` (property) | `int` | Sum of prompt and completion tokens. |
+| `__add__(other)` | `TokenUsage` | Combine two usages; returns a new instance. |
+
+**Example:**
+
+```python
+usage1 = TokenUsage(prompt_tokens=100, completion_tokens=50)
+usage2 = TokenUsage(prompt_tokens=80, completion_tokens=40)
+combined = usage1 + usage2
+print(combined.total)  # 270
+```
+
+---
+
 ## Usage in an Async Context
 
 If you're already in an async context (FastAPI, asyncio script, etc.), `await` the call directly:
@@ -253,3 +343,82 @@ workflow = Workflow(
 ```
 
 All validation (cross-references between nodes/agents and edges) runs automatically when the model is constructed.
+
+---
+
+## Streaming in Web Applications
+
+The streaming API is ideal for interactive dashboards, chat interfaces, or real-time monitoring. Here is an example with a simple queue-based event bus:
+
+```python
+import asyncio
+from typing import AsyncGenerator
+from sirenspec import load_workflow
+from sirenspec.core.executor import execute_streaming
+from sirenspec.core.events import NodeCompleteEvent, SummaryEvent
+
+
+async def stream_to_client(
+    workflow_file: str, user_input: str
+) -> AsyncGenerator[dict, None]:
+    """Yield JSON-serializable event dicts for streaming to a client.
+
+    Example: FastAPI with Server-Sent Events (SSE).
+    """
+    workflow = load_workflow(workflow_file)
+
+    async for event in execute_streaming(workflow, user_input):
+        if isinstance(event, NodeCompleteEvent):
+            yield {
+                "type": "node_complete",
+                "node_id": event.node_id,
+                "node_type": event.node_type,
+                "status": event.status,
+                "output": event.output,
+                "tokens": event.tokens,
+            }
+        elif isinstance(event, SummaryEvent):
+            yield {
+                "type": "summary",
+                "total_nodes": event.total_nodes,
+                "total_tokens": event.total_tokens,
+                "status": event.status,
+                "duration_ms": event.duration_ms,
+            }
+
+
+# FastAPI integration example
+from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
+
+app = FastAPI()
+
+
+@app.post("/workflow/stream")
+async def stream_workflow(workflow_file: str, user_input: str) -> StreamingResponse:
+    """Stream workflow execution events as Server-Sent Events."""
+
+    async def event_generator():
+        async for event_dict in stream_to_client(workflow_file, user_input):
+            yield f"data: {event_dict}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+```
+
+On the client side (JavaScript):
+
+```javascript
+const eventSource = new EventSource(
+  `/workflow/stream?workflow_file=workflow.yaml&user_input=Hello`
+);
+
+eventSource.addEventListener("message", (event) => {
+  const data = JSON.parse(event.data);
+
+  if (data.type === "node_complete") {
+    console.log(`${data.node_id} (${data.status}): ${data.tokens} tokens`);
+  } else if (data.type === "summary") {
+    console.log(`Workflow ${data.status} in ${data.duration_ms}ms`);
+  }
+});
+```

@@ -108,6 +108,61 @@ agents:
             required: ["name", "age"]
 ```
 
+### `cost_cap`
+
+Enforces token and/or USD budget ceilings on a workflow. After each node executes, the guardrail checks cumulative token usage and estimated cost. On exceedance, it either aborts the workflow or logs a warning.
+
+At least one of `max_usd` or `max_tokens` must be specified.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `max_usd` | float | None | Maximum estimated USD spend for the entire run. |
+| `max_tokens` | int | None | Maximum token ceiling independent of cost. |
+| `action` | string | `"abort"` | `"abort"` raises `BudgetExceededError` and stops execution; `"warn"` logs and continues. |
+
+**Behavior:**
+
+- **Input/Output:** Both are pass-throughs; the guardrail only examines budget state.
+- **Budget checking:** Runs after each node completes. Available to `when:` conditions as `_budget.total_tokens` and `_budget.estimated_usd`.
+- **On `action: "abort"`:** Raises `BudgetExceededError` with details of the violation; the workflow transitions to `"failed"` status.
+- **On `action: "warn"`:** Logs a structured warning and allows execution to continue.
+
+**Example:**
+
+```yaml
+guardrails:
+  - name: cost_cap
+    config:
+      max_usd: 5.0
+      max_tokens: 10000
+      action: abort
+```
+
+Use in a conditional edge to skip expensive nodes once a budget threshold is reached:
+
+```yaml
+edges:
+  - from: classify
+    to: expensive_analysis
+    when: _budget.estimated_usd < 3.0  # only run if we have budget left
+
+  - from: expensive_analysis
+    to: end
+    when: true
+
+  - from: classify
+    to: cheap_fallback
+    when: _budget.estimated_usd >= 3.0  # skip expensive path when budget low
+
+  - from: cheap_fallback
+    to: end
+    when: true
+```
+
+<Note>
+The `cost_cap` guardrail works best when pricing information is available for your LLM models. If no pricing is found, `estimated_usd` will be `None` and only the `max_tokens` ceiling will be enforced.
+</Note>
+
 ---
 
 ## Configuration
