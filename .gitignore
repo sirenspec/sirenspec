@@ -26,6 +26,9 @@ openspec/
 .hypothesis/
 skills-lock.json
 
+# ADRs — internal engineering decisions, not public docs
+docs/adr/
+
 # Worktrees
 .worktrees/
 
