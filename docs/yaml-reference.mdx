@@ -47,7 +47,7 @@ agents:
 | `system` | Yes | string | System prompt sent to the model. |
 | `guardrails` | No | list of strings | Agent-level guardrail override. Replaces the workflow-level list. |
 
-See [Agents](/docs/assistant) for full agent documentation and [Providers](/docs/providers) for valid model URIs.
+See [Agents](/assistant) for full agent documentation and [Providers](/providers) for valid model URIs.
 
 ---
 
@@ -83,10 +83,10 @@ nodes:
 |-------|----------|------|-------------|
 | `agent` | Yes | string | Agent ID from the `agents` map. |
 | `writes` | Yes | string | Dot-notation context path where the agent's response is stored. |
-| `retry` | No | object | Per-node retry policy. Overrides `defaults.retry`. See [Retry Policies](/docs/retry-policies). |
-| `on_failure` | No | object | Failure action when retries are exhausted. Overrides `defaults.on_failure`. See [Retry Policies](/docs/retry-policies). |
+| `retry` | No | object | Per-node retry policy. Overrides `defaults.retry`. See [Retry Policies](/retry-policies). |
+| `on_failure` | No | object | Failure action when retries are exhausted. Overrides `defaults.on_failure`. See [Retry Policies](/retry-policies). |
 
-See [Tool Nodes](/docs/tool-nodes) for the full tool node field reference and adapter documentation.
+See [Tool Nodes](/tool-nodes) for the full tool node field reference and adapter documentation.
 
 ### Context paths
 
@@ -202,7 +202,7 @@ defaults:
     action: abort
 ```
 
-See [Retry Policies](/docs/retry-policies) for the full field reference.
+See [Retry Policies](/retry-policies) for the full field reference.
 
 ---
 
@@ -223,7 +223,7 @@ guardrails:
 
 An empty list (`[]`) disables all guardrails for the entire workflow. Individual agents can override this with their own `guardrails` field.
 
-See [Guardrails](/docs/guardrails) for full details.
+See [Guardrails](/guardrails) for full details.
 
 ---
 
