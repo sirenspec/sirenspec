@@ -12,7 +12,7 @@ class NodeCompleteEvent:
 
     :param kind: Discriminator literal — always ``"node_complete"``.
     :param node_id: The identifier of the node that completed or was skipped.
-    :param node_type: The node type: ``"agent"``, ``"tool"``, ``"swrm"``, or ``"factory"``.
+    :param node_type: The node type: ``"agent"``, ``"tool"``, ``"swrm"``, ``"factory"``, or ``"workflow"``.
     :param output: The node's output value (string, dict, or list).  ``None`` for skipped nodes.
     :param writes: The context path written by this node (agent nodes only).
     :param status: Execution result: ``"success"``, ``"skipped"``, or ``"failed"``.

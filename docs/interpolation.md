@@ -67,11 +67,17 @@ system: "Mode: {{ env.DEBUG_MODE | default('production') }}"
 
 ### `node_id.output` — Canonical node output
 
-Every node (agent, swrm, factory) writes its primary output to `working.{node_id}.output`
+Every node (agent, swrm, factory, workflow) writes its primary output to `working.{node_id}.output`
 automatically.  Reference it in downstream nodes:
 
 ```yaml
 prompt: "Summarize: {{ classifier.output }}"
+```
+
+For workflow nodes, the output is the sub-workflow's output dict. Access sub-node outputs via:
+
+```yaml
+prompt: "Sub-workflow sentiment: {{ run_child.output.sentiment }}"
 ```
 
 ---

@@ -150,7 +150,7 @@ The generator yields two types of events:
 
 1. **`NodeCompleteEvent`** — Emitted once per node (active or skipped):
    - `node_id: str` — The identifier of the completed node.
-   - `node_type: str` — One of `"agent"`, `"tool"`, `"swrm"`, or `"factory"`.
+   - `node_type: str` — One of `"agent"`, `"tool"`, `"swrm"`, `"factory"`, or `"workflow"`.
    - `status: Literal["success", "skipped", "failed"]` — The node's execution result.
    - `output: Any` — The node's output value (string, dict, list, or None).
    - `writes: str` — The context path written by this node (only for successful nodes).
@@ -203,7 +203,7 @@ Emitted once per node (including skipped nodes) during execution.
 | Field | Type | Description |
 |-------|------|-------------|
 | `node_id` | `str` | The node identifier. |
-| `node_type` | `str` | Node type: `"agent"`, `"tool"`, `"swrm"`, or `"factory"`. |
+| `node_type` | `str` | Node type: `"agent"`, `"tool"`, `"swrm"`, `"factory"`, or `"workflow"`. |
 | `output` | `Any` | The node's output value (string, dict, list, or None). None for skipped nodes. |
 | `writes` | `str` | The context path written by this node (agent/factory nodes only; empty string otherwise). |
 | `status` | `Literal["success", "skipped", "failed"]` | Execution result. |

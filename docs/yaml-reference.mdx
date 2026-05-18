@@ -53,7 +53,7 @@ See [Agents](/assistant) for full agent documentation and [Providers](/providers
 
 ## `nodes`
 
-**Required.** A mapping of node IDs to node definitions.  Two node types are supported:
+**Required.** A mapping of node IDs to node definitions.  Five node types are supported:
 
 **Agent node** (default) — binds an LLM agent to an output path:
 
@@ -77,6 +77,43 @@ nodes:
     output_key: data
 ```
 
+**Swrm node** — runs multiple agents in parallel with optional synthesis:
+
+```yaml
+nodes:
+  analyze:
+    type: swrm
+    agents:
+      - id: sentiment
+        provider: openai
+        model: gpt-4o-mini
+        prompt: "Analyze sentiment..."
+```
+
+**Factory node** — spawns agent instances for each item in a list:
+
+```yaml
+nodes:
+  process_items:
+    type: factory
+    agent: worker
+    for_each: "{{ inputs.items }}"
+    inputs:
+      item: "{{ item }}"
+    writes: output.results
+```
+
+**Workflow node** — executes a sub-workflow inline:
+
+```yaml
+nodes:
+  run_child:
+    type: workflow
+    ref: ./child.yaml
+    inputs:
+      topic: "{{ extract.output }}"
+```
+
 ### Agent node fields
 
 | Field | Required | Type | Description |
@@ -86,7 +123,10 @@ nodes:
 | `retry` | No | object | Per-node retry policy. Overrides `defaults.retry`. See [Retry Policies](/retry-policies). |
 | `on_failure` | No | object | Failure action when retries are exhausted. Overrides `defaults.on_failure`. See [Retry Policies](/retry-policies). |
 
-See [Tool Nodes](/tool-nodes) for the full tool node field reference and adapter documentation.
+See the following pages for detailed field reference and examples:
+- [Tool Nodes](/tool-nodes) — HTTP and Python adapters
+- [Swrm](/swrm) — Parallel agents and synthesis
+- [Workflow Nodes](/workflow-nodes) — Sub-workflow composition
 
 ### Context paths
 

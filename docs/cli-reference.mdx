@@ -132,7 +132,7 @@ When `--trace`, `--output json`, or `--trace-file` is used, the full execution t
 | `input.message` | The user input that was used. |
 | `nodes` | Ordered list of executed nodes. |
 | `nodes[].id` | Node identifier. |
-| `nodes[].type` | Node type: `"agent"`, `"tool"`, `"swrm"`, or `"factory"`. |
+| `nodes[].type` | Node type: `"agent"`, `"tool"`, `"swrm"`, `"factory"`, or `"workflow"`. |
 | `nodes[].output` | The node's output value (string, dict, list, or null). |
 | `nodes[].writes` | Context path where the output was written. |
 | `nodes[].status` | `"success"`, `"skipped"`, or `"failed"`. |
