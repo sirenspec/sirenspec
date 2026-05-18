@@ -37,6 +37,7 @@ class SummaryEvent:
     :param kind: Discriminator literal — always ``"summary"``.
     :param total_nodes: Number of nodes that ran (active nodes only, excluding skipped).
     :param total_tokens: Aggregate token count across all active nodes.
+    :param estimated_usd: Estimated total USD cost, or ``None`` if pricing is unavailable.
     :param status: Overall workflow status: ``"success"`` or ``"failed"``.
     :param duration_ms: Wall-clock execution time in milliseconds.
     """
@@ -44,5 +45,6 @@ class SummaryEvent:
     kind: Literal["summary"] = field(default="summary")
     total_nodes: int = field(default=0)
     total_tokens: int = field(default=0)
+    estimated_usd: float | None = field(default=None)
     status: Literal["success", "failed"] = field(default="success")
     duration_ms: float = field(default=0.0)

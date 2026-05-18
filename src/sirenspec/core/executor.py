@@ -1186,6 +1186,7 @@ async def execute_streaming(
     yield SummaryEvent(
         total_nodes=active_node_count,
         total_tokens=total_usage.total,
+        estimated_usd=total_estimated_usd,
         status=status,
         duration_ms=round((time.monotonic() - start_wall) * 1000, 2),
     )
