@@ -1,0 +1,76 @@
+version: "0.1"
+# env_file: .env
+
+# GitHub Issues Triage
+# Fetches open issues from a GitHub repo, classifies each by priority and labels,
+# then produces a prioritized backlog summary in markdown.
+#
+# Prerequisites
+# -------------
+# GITHUB_TOKEN — classic PAT with repo:read scope
+# GITHUB_REPO  — repo to triage, e.g. owner/repo
+#
+# Run:
+#   export GITHUB_TOKEN=ghp_...
+#   export GITHUB_REPO=owner/repo
+#   PYTHONPATH=docs/cookbook/github-issues-triage \
+#     sirenspec run docs/cookbook/github-issues-triage/workflow.yaml
+
+agents:
+  classifier:
+    model: "openai:gpt-4o-mini"
+    system: |
+      You are a senior engineer triaging a GitHub issue.
+      Return a JSON object with these exact fields:
+        priority    — one of: P0, P1, P2, P3
+        labels      — list of up to 3 relevant labels (e.g. "bug", "auth", "perf")
+        triage_note — one sentence explaining the priority decision
+
+      Return ONLY valid JSON. No explanation, no markdown fences.
+
+      Issue:
+      {{ inputs.issue }}
+
+  backlog_writer:
+    model: "anthropic:claude-haiku-4-5-20251001"
+    system: |
+      You are a technical project manager.
+      Each line below is a classified GitHub issue as JSON.
+      Group them by priority (P0 → P3) using markdown tables with columns:
+      | Issue | Priority | Labels | Triage Note |
+
+      Omit any priority group with no entries.
+
+      Classifications:
+      {{ classify_issues.output }}
+
+nodes:
+  fetch_issues:
+    type: tool
+    tool: python
+    config:
+      module: triage
+      function: fetch_issues_as_list
+    output_key: issues_json
+
+  classify_issues:
+    type: factory
+    agent: classifier
+    for_each: "{{ fetch_issues.issues_json }}"
+    inputs:
+      issue: "{{ item }}"
+    writes: working.classifications
+    concurrency: 3
+
+  write_backlog:
+    agent: backlog_writer
+    writes: output.backlog
+
+edges:
+  - from: fetch_issues
+    to: classify_issues
+  - from: classify_issues
+    to: write_backlog
+
+guardrails:
+  - injection

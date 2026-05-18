@@ -1,0 +1,54 @@
+version: "0.1"
+
+agents:
+  reporter:
+    model: "openai:gpt-4o-mini"
+    system: |
+      You are a QA engineer writing a structured bug report.
+      Given a freeform bug description, produce a JSON object with these exact fields:
+        title       — short, imperative title (max 80 chars)
+        severity    — one of: critical, high, medium, low
+        repro_steps — ordered list of steps to reproduce (array of strings)
+        expected    — what should happen (string)
+        actual      — what actually happens (string)
+        labels      — list of relevant labels, e.g. "auth", "ui", "data-loss" (array of strings)
+
+      Return ONLY valid JSON. No explanation, no markdown fences.
+
+nodes:
+  report:
+    agent: reporter
+    writes: output.bug_report
+
+guardrails:
+  - injection
+  - name: schema
+    config:
+      schema:
+        type: object
+        properties:
+          title:
+            type: string
+            maxLength: 80
+          severity:
+            type: string
+            enum: [critical, high, medium, low]
+          repro_steps:
+            type: array
+            items:
+              type: string
+          expected:
+            type: string
+          actual:
+            type: string
+          labels:
+            type: array
+            items:
+              type: string
+        required: [title, severity, repro_steps, expected, actual, labels]
+
+input:
+  message: >
+    When I check out with an empty cart the page crashes with a white screen.
+    I was on Chrome, logged in, had nothing in my cart, and clicked checkout.
+    It should show an empty cart message but instead the page goes blank.

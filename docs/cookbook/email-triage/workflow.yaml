@@ -1,0 +1,113 @@
+version: "0.1"
+# env_file: .env
+
+# Email Triage
+# Fetches the most recent unread Gmail message, runs three classifiers in parallel
+# (urgency, intent, sender reputation), synthesizes a routing decision, then
+# routes to a draft reply, forward note, or archive reason.
+#
+# Prerequisites
+# -------------
+# GMAIL_ACCESS_TOKEN — OAuth 2.0 bearer token with gmail.readonly scope
+#
+# Run:
+#   export GMAIL_ACCESS_TOKEN=ya29...
+#   PYTHONPATH=docs/cookbook/email-triage \
+#     sirenspec run docs/cookbook/email-triage/workflow.yaml
+
+agents:
+  drafter:
+    model: "anthropic:claude-haiku-4-5-20251001"
+    system: |
+      Draft a concise, professional reply to this email in 2-3 sentences.
+      Email: {{ fetch_email.email_json }}
+
+  forwarder:
+    model: "openai:gpt-4o-mini"
+    system: |
+      Write a single-sentence forwarding note explaining why this email
+      needs attention from a team member.
+      Email: {{ fetch_email.email_json }}
+
+  archiver:
+    model: "openai:gpt-4o-mini"
+    system: |
+      Write a one-line archive reason for this email.
+      Email: {{ fetch_email.email_json }}
+
+nodes:
+  fetch_email:
+    type: tool
+    tool: python
+    config:
+      module: email_fetcher
+      function: fetch_latest_unread
+    output_key: email_json
+
+  triage:
+    type: swrm
+    concurrency: 3
+    agents:
+      - id: urgency
+        provider: openai
+        model: gpt-4o-mini
+        prompt: |
+          Rate the urgency of this email from 1 (low) to 5 (critical).
+          Reply with ONLY a single integer.
+          Email: {{ fetch_email.email_json }}
+
+      - id: intent
+        provider: openai
+        model: gpt-4o-mini
+        prompt: |
+          Classify the intent: action_required, fyi, question, or spam.
+          Reply with ONLY one of those four words.
+          Email: {{ fetch_email.email_json }}
+
+      - id: sender
+        provider: anthropic
+        model: claude-haiku-4-5-20251001
+        prompt: |
+          Rate the sender's reputation as: trusted, neutral, or unknown.
+          Reply with ONLY one of those three words.
+          Email: {{ fetch_email.email_json }}
+
+    synthesis:
+      provider: openai
+      model: gpt-4o-mini
+      prompt: |
+        Given these triage scores for an email:
+          urgency (1-5): {{ triage.agents.urgency.output }}
+          intent:        {{ triage.agents.intent.output }}
+          sender:        {{ triage.agents.sender.output }}
+
+        Decide the routing action. Reply with ONLY one word: reply, forward, or archive.
+
+  draft_reply:
+    agent: drafter
+    writes: output.draft
+
+  forward_note:
+    agent: forwarder
+    writes: output.forward
+
+  archive_reason:
+    agent: archiver
+    writes: output.archive
+
+edges:
+  - from: fetch_email
+    to: triage
+  - from: triage
+    to: draft_reply
+    when: working.triage.output == "reply"
+  - from: triage
+    to: forward_note
+    when: working.triage.output == "forward"
+  - from: triage
+    to: archive_reason
+    when: working.triage.output == "archive"
+
+guardrails:
+  - injection
+  - pii
