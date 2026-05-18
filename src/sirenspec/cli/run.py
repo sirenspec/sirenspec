@@ -109,7 +109,11 @@ def format_summary_line(event: SummaryEvent) -> str:
     """
     nodes_label = f"{event.total_nodes} node{'s' if event.total_nodes != 1 else ''}"
     tokens_label = f"{event.total_tokens:,} token{'s' if event.total_tokens != 1 else ''}"
-    cost_label = f"~${event.estimated_usd:.6f}" if event.estimated_usd is not None else "cost unavailable (pricing not configured)"
+    cost_label = (
+        f"~${event.estimated_usd:.6f}"
+        if event.estimated_usd is not None
+        else "cost unavailable (pricing not configured)"
+    )
     return f"Run complete  │  {nodes_label}  │  {tokens_label}  │  {cost_label}"
 
 
