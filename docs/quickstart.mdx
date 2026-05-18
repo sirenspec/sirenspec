@@ -130,14 +130,17 @@ sirenspec validate hello.yaml
 
 ## Try a Multi-Agent Pipeline
 
-SirenSpec ships with runnable examples. Clone the repo and try:
+The Cookbook includes ready-to-run workflows. Clone the repo and try:
 
 ```bash
+git clone https://github.com/TJLSmith0831/sirenspec.git
+cd sirenspec
+
 # Sequential pipeline: classify → reply
-sirenspec run examples/sequential-pipeline.yaml --input "I need help with my order"
+sirenspec run docs/cookbook/sequential-pipeline/workflow.yaml --input "I need help with my order"
 
 # Conditional branching: triage → handle_refund or handle_general
-sirenspec run examples/conditional-pipeline.yaml --input "I want a refund"
+sirenspec run docs/cookbook/conditional-pipeline/workflow.yaml --input "I want a refund"
 ```
 
 ## Next Steps

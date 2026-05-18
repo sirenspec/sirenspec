@@ -31,7 +31,7 @@
           },
           {
             "group": "Core Concepts",
-            "pages": ["assistant", "yaml-reference", "providers", "guardrails", "retry-policies", "swrm", "workflow-nodes"]
+            "pages": ["assistant", "yaml-reference", "providers", "guardrails", "retry-policies", "swrm", "workflow-nodes", "interpolation"]
           },
           {
             "group": "Reference",

@@ -54,7 +54,7 @@ sirenspec run <workflow-file> [OPTIONS]
 # Run with streaming output (default)
 sirenspec run workflow.yaml --input "What is the capital of France?"
 
-# Print full JSON trace (old behavior)
+# Print full JSON trace
 sirenspec run workflow.yaml --input "Hello" --trace | jq '.output'
 sirenspec run workflow.yaml --input "Hello" --output json | jq '.output'
 

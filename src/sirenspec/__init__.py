@@ -2,7 +2,8 @@
 
 __version__ = "0.1.0"
 
-from sirenspec.core.executor import execute
+from sirenspec.core.events import NodeCompleteEvent, SummaryEvent
+from sirenspec.core.executor import execute, execute_streaming
 from sirenspec.core.models import Workflow
 from sirenspec.exceptions import (
     GuardrailError,
@@ -17,8 +18,11 @@ from sirenspec.yaml.parser import load_workflow
 
 __all__ = [
     "execute",
+    "execute_streaming",
     "load_workflow",
     "Workflow",
+    "NodeCompleteEvent",
+    "SummaryEvent",
     "__version__",
     "SirenSpecError",
     "ProviderError",
