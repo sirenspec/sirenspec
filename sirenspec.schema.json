@@ -166,6 +166,39 @@
           "description": "Dot-notation context path where the list of instance outputs is stored (e.g. 'working.execute.outputs')."
         }
       }
+    },
+    "WorkflowNode": {
+      "type": "object",
+      "description": "A node that executes another SirenSpec workflow inline. The sub-workflow runs blocking; its output dict is written into the parent context keyed by node ID.",
+      "required": ["type", "ref"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["workflow"],
+          "description": "Node type discriminator. Must be 'workflow'."
+        },
+        "ref": {
+          "type": "string",
+          "description": "Relative or absolute file path to a .yaml workflow file (e.g. './workflows/b.yaml'), or a named key in the WorkflowRegistry passed to the executor."
+        },
+        "inputs": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "Explicit input bindings for the sub-workflow. Values are template strings resolved against the parent context. Sub-workflows access these via {{ inputs.<key> }}.",
+          "x-interpolation": true
+        },
+        "writes": {
+          "type": "string",
+          "description": "Optional dot-notation path where sub-workflow output is also written. Defaults to 'output.<node_id>' when omitted."
+        },
+        "max_depth": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 10,
+          "description": "Maximum allowed nesting depth. Raises ValidationError if exceeded."
+        }
+      }
     }
   },
   "properties": {
@@ -207,6 +240,7 @@
           { "$ref": "#/definitions/AgentNode" },
           { "$ref": "#/definitions/SwrmNode" },
           { "$ref": "#/definitions/FactoryNode" },
+          { "$ref": "#/definitions/WorkflowNode" },
           {
             "type": "object",
             "description": "Tool node: invokes an HTTP endpoint or a Python callable.",

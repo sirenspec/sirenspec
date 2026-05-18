@@ -61,6 +61,7 @@ def build_interpolation_context(
     working: dict[str, Any],
     item: Any | None = None,
     index: int | None = None,
+    extra_inputs: dict[str, Any] | None = None,
 ) -> InterpolationContext:
     """Build an :class:`InterpolationContext` from executor state.
 
@@ -68,10 +69,16 @@ def build_interpolation_context(
     :param working: The executor's current ``working`` dict (contains node outputs).
     :param item: Loop item for factory nodes; ``None`` outside a loop.
     :param index: Loop index for factory nodes; ``None`` outside a loop.
+    :param extra_inputs: Additional key/value pairs merged into the ``inputs`` namespace.
+        Used by sub-workflow nodes to inject bound inputs so that ``{{ inputs.key }}``
+        resolves correctly inside the sub-workflow.
     :returns: A fully populated interpolation context.
     """
+    inputs: dict[str, Any] = {"message": user_input}
+    if extra_inputs:
+        inputs.update(extra_inputs)
     return InterpolationContext(
-        inputs={"message": user_input},
+        inputs=inputs,
         nodes=working,
         env=dict(os.environ),
         item=item,
@@ -247,7 +254,7 @@ def check_circular_template_refs(workflow: Workflow) -> None:
     :param workflow: The fully-validated Workflow model.
     :raises InterpolationError: If a circular template reference is detected.
     """
-    from sirenspec.core.models import AgentNode, FactoryNode, SwrmNode
+    from sirenspec.core.models import AgentNode, FactoryNode, SwrmNode, WorkflowNode
 
     node_ids = set(workflow.nodes.keys())
     deps: dict[str, set[str]] = {nid: set() for nid in node_ids}
@@ -268,6 +275,9 @@ def check_circular_template_refs(workflow: Workflow) -> None:
 
         elif isinstance(node, FactoryNode):
             templates.append(node.for_each)
+            templates.extend(node.inputs.values())
+
+        elif isinstance(node, WorkflowNode):
             templates.extend(node.inputs.values())
 
         for tmpl in templates:

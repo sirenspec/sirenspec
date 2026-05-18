@@ -22,11 +22,14 @@ from sirenspec.core.models import (
     SwrmNode,
     ToolNode,
     Workflow,
+    WorkflowNode,
 )
 from sirenspec.core.pricing import estimate_usd
 from sirenspec.core.swrm_runner import execute_swrm
 from sirenspec.core.tool_runner import execute_tool_node
 from sirenspec.core.usage import TokenUsage
+from sirenspec.core.workflow_registry import WorkflowRegistry
+from sirenspec.core.workflow_runner import execute_workflow_node
 from sirenspec.exceptions import BudgetExceededError, RetryExhaustedError
 from sirenspec.guardrails.base import GuardrailViolation, WorkflowGuardrail
 from sirenspec.guardrails.registry import build_guardrails
@@ -230,7 +233,13 @@ def resolve_on_failure_policy(workflow: Workflow, node_id: str) -> OnFailurePoli
     return OnFailurePolicy()
 
 
-async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
+async def execute(
+    workflow: Workflow,
+    user_input: str,
+    registry: WorkflowRegistry | None = None,
+    depth: int = 0,
+    initial_inputs: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Execute a workflow and return a structured JSON-serialisable trace.
 
     **Execution model**
@@ -248,10 +257,16 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
        branch of a conditional fork is executed.
     5. Agent nodes delegate to :func:`~sirenspec.core.agent_runner.execute_agent_node`;
        tool nodes to :func:`~sirenspec.core.tool_runner.execute_tool_node`;
-       swrm nodes to :func:`~sirenspec.core.swrm_runner.execute_swrm`.
+       swrm nodes to :func:`~sirenspec.core.swrm_runner.execute_swrm`;
+       workflow nodes to :func:`~sirenspec.core.workflow_runner.execute_workflow_node`.
 
     :param workflow: Validated :class:`~sirenspec.core.models.Workflow` instance.
     :param user_input: The initial user message.
+    :param registry: Optional :class:`~sirenspec.core.workflow_registry.WorkflowRegistry`
+        used to resolve named sub-workflow refs.
+    :param depth: Current nesting depth; incremented for each sub-workflow call.
+    :param initial_inputs: Extra key/value pairs injected into the ``inputs`` template
+        namespace. Used by workflow nodes to pass bound inputs into sub-workflows.
     :returns: Execution trace dict with workflow metadata, per-node entries, and summary.
     """
     context = WorkflowContext(initial_state=workflow.state)
@@ -386,7 +401,7 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
             }
             start_time = time.monotonic()
             try:
-                tool_interp_ctx = build_interpolation_context(user_input, context.working)
+                tool_interp_ctx = build_interpolation_context(user_input, context.working, extra_inputs=initial_inputs)
                 interpolated_node = interpolate_tool_config(node, tool_interp_ctx)
                 run_result = await execute_tool_node(node_id, interpolated_node)
                 context.write(f"working.{node_id}.{node.output_key}", run_result.result)
@@ -470,6 +485,64 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
             continue
 
         # ------------------------------------------------------------------ #
+        # Workflow node — inline sub-workflow execution with depth guard.     #
+        # ------------------------------------------------------------------ #
+        if isinstance(node, WorkflowNode):
+            start_time = time.monotonic()
+            try:
+                wf_trace = await execute_workflow_node(
+                    node_id=node_id,
+                    node=node,
+                    user_input=user_input,
+                    working=context.working,
+                    registry=registry,
+                    depth=depth,
+                )
+            except Exception as exc:
+                duration_ms = (time.monotonic() - start_time) * 1000
+                error_trace: dict[str, Any] = {
+                    "id": node_id,
+                    "type": "workflow",
+                    "ref": node.ref,
+                    "output": None,
+                    "tokens": 0,
+                    "duration_ms": round(duration_ms, 2),
+                    "error": str(exc),
+                }
+                total_duration_ms += duration_ms
+                status = "failed"
+                trace_nodes.append(error_trace)
+                break
+
+            sub_output = wf_trace["output"]
+            context.write(f"output.{node_id}", sub_output)
+            context.write(f"working.{node_id}.output", sub_output)
+            if node.writes:
+                context.write(node.writes, sub_output)
+            last_writes_path = f"output.{node_id}"
+
+            total_usage += TokenUsage(prompt_tokens=0, completion_tokens=wf_trace["tokens"])
+            total_duration_ms += wf_trace["duration_ms"]
+
+            context.write("working._budget.total_tokens", total_usage.total)
+            context.write("working._budget.estimated_usd", total_estimated_usd)
+
+            try:
+                check_workflow_budget(workflow_guardrails, total_usage, total_estimated_usd)
+            except BudgetExceededError as exc:
+                status = "failed"
+                wf_trace["error"] = str(exc)
+                trace_nodes.append(wf_trace)
+                break
+
+            for target, condition in out_edges[node_id]:
+                if condition is None or evaluate_when_condition(condition, context):
+                    active_nodes.add(target)
+
+            trace_nodes.append(wf_trace)
+            continue
+
+        # ------------------------------------------------------------------ #
         # Agent node — guarded LLM call with retry and on-failure routing.   #
         # ------------------------------------------------------------------ #
         assert isinstance(node, AgentNode)
@@ -496,7 +569,7 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
 
         # Resolve the system prompt with the current context so {{ inputs.* }} and
         # {{ node_id.output }} expressions in system prompts are evaluated at runtime.
-        interp_ctx = build_interpolation_context(user_input, context.working)
+        interp_ctx = build_interpolation_context(user_input, context.working, extra_inputs=initial_inputs)
         resolved_system = resolve_template(agent_def.system, interp_ctx)
         redacted_system = resolve_template(agent_def.system, interp_ctx, redact_env=True)
 
@@ -651,7 +724,13 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
     }
 
 
-async def execute_streaming(workflow: Workflow, user_input: str) -> AsyncGenerator[NodeCompleteEvent | SummaryEvent]:
+async def execute_streaming(
+    workflow: Workflow,
+    user_input: str,
+    registry: WorkflowRegistry | None = None,
+    depth: int = 0,
+    initial_inputs: dict[str, Any] | None = None,
+) -> AsyncGenerator[NodeCompleteEvent | SummaryEvent]:
     """Execute a workflow and yield typed events as each node completes.
 
     This is the streaming counterpart to :func:`execute`.  It walks the same
@@ -664,6 +743,11 @@ async def execute_streaming(workflow: Workflow, user_input: str) -> AsyncGenerat
 
     :param workflow: Validated :class:`~sirenspec.core.models.Workflow` instance.
     :param user_input: The initial user message.
+    :param registry: Optional :class:`~sirenspec.core.workflow_registry.WorkflowRegistry`
+        used to resolve named sub-workflow refs.
+    :param depth: Current nesting depth; incremented for each sub-workflow call.
+    :param initial_inputs: Extra key/value pairs injected into the ``inputs`` template
+        namespace. Used by workflow nodes to pass bound inputs into sub-workflows.
     :returns: An async generator of ``NodeCompleteEvent`` (one per node) followed
         by a final ``SummaryEvent``.
     """
@@ -780,7 +864,7 @@ async def execute_streaming(workflow: Workflow, user_input: str) -> AsyncGenerat
         if isinstance(node, ToolNode):
             node_start = time.monotonic()
             try:
-                tool_interp_ctx = build_interpolation_context(user_input, context.working)
+                tool_interp_ctx = build_interpolation_context(user_input, context.working, extra_inputs=initial_inputs)
                 interpolated_node = interpolate_tool_config(node, tool_interp_ctx)
                 run_result = await execute_tool_node(node_id, interpolated_node)
                 context.write(f"working.{node_id}.{node.output_key}", run_result.result)
@@ -874,6 +958,68 @@ async def execute_streaming(workflow: Workflow, user_input: str) -> AsyncGenerat
             )
             continue
 
+        if isinstance(node, WorkflowNode):
+            node_start = time.monotonic()
+            try:
+                wf_trace = await execute_workflow_node(
+                    node_id=node_id,
+                    node=node,
+                    user_input=user_input,
+                    working=context.working,
+                    registry=registry,
+                    depth=depth,
+                )
+            except Exception as exc:
+                duration_ms = (time.monotonic() - node_start) * 1000
+                total_duration_ms += duration_ms
+                status = "failed"
+                yield NodeCompleteEvent(
+                    node_id=node_id,
+                    node_type="workflow",
+                    status="failed",
+                    error=str(exc),
+                )
+                break
+
+            sub_output = wf_trace["output"]
+            context.write(f"output.{node_id}", sub_output)
+            context.write(f"working.{node_id}.output", sub_output)
+            if node.writes:
+                context.write(node.writes, sub_output)
+            last_writes_path = f"output.{node_id}"
+
+            total_usage += TokenUsage(prompt_tokens=0, completion_tokens=wf_trace["tokens"])
+            total_duration_ms += wf_trace["duration_ms"]
+
+            context.write("working._budget.total_tokens", total_usage.total)
+            context.write("working._budget.estimated_usd", total_estimated_usd)
+
+            try:
+                check_workflow_budget(workflow_guardrails, total_usage, total_estimated_usd)
+            except BudgetExceededError as exc:
+                status = "failed"
+                yield NodeCompleteEvent(
+                    node_id=node_id,
+                    node_type="workflow",
+                    status="failed",
+                    error=str(exc),
+                )
+                break
+
+            for target, condition in out_edges[node_id]:
+                if condition is None or evaluate_when_condition(condition, context):
+                    active_nodes.add(target)
+
+            yield NodeCompleteEvent(
+                node_id=node_id,
+                node_type="workflow",
+                output=sub_output,
+                writes=node.writes or f"output.{node_id}",
+                status="success",
+                tokens=wf_trace["tokens"],
+            )
+            continue
+
         if not isinstance(node, AgentNode):
             raise TypeError(f"Unhandled node type: {type(node).__name__}")
         agent_def = workflow.agents[node.agent]
@@ -890,7 +1036,7 @@ async def execute_streaming(workflow: Workflow, user_input: str) -> AsyncGenerat
         retry_policy = resolve_retry_policy(workflow, node_id)
         on_failure_policy = resolve_on_failure_policy(workflow, node_id)
 
-        interp_ctx = build_interpolation_context(user_input, context.working)
+        interp_ctx = build_interpolation_context(user_input, context.working, extra_inputs=initial_inputs)
         resolved_system = resolve_template(agent_def.system, interp_ctx)
 
         node_start = time.monotonic()
