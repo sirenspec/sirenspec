@@ -65,6 +65,7 @@ class TestWorkflowRegistry:
         workflow = MagicMock()
         registry.register("my-sub", workflow)
         assert registry.get("my-sub") is workflow
+        assert "my-sub" in registry.workflows
 
     def test_get_missing_raises_key_error(self) -> None:
         registry = WorkflowRegistry()
@@ -77,6 +78,7 @@ class TestWorkflowRegistry:
         registry.register("sub", wf1)
         registry.register("sub", wf2)
         assert registry.get("sub") is wf2
+        assert len(registry.workflows) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -101,6 +103,7 @@ nodes:
         wf_file.write_text(yaml_content)
         result = resolve_sub_workflow(str(wf_file), registry=None)
         assert result.version == "0.1"
+        assert "step" in result.nodes
 
     def test_named_ref_uses_registry(self) -> None:
         registry = WorkflowRegistry()
@@ -108,6 +111,7 @@ nodes:
         registry.register("child", wf)
         result = resolve_sub_workflow("child", registry)
         assert result is wf
+        assert registry.get("child") is wf
 
     def test_named_ref_without_registry_raises(self) -> None:
         with pytest.raises(ValueError, match="no WorkflowRegistry"):
@@ -252,6 +256,7 @@ class TestExecuteWorkflowNode:
             )
 
         assert mock_execute.call_args.kwargs["depth"] == 3
+        assert mock_execute.call_args.kwargs["registry"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -294,6 +299,7 @@ class TestExecutorWorkflowNodeIntegration:
             result = await execute(workflow, "hello", registry=registry)
 
         assert result["output"]["run_b"] == sub_output
+        assert result["summary"]["status"] == "success"
 
     @pytest.mark.asyncio
     async def test_explicit_writes_also_populated(self) -> None:

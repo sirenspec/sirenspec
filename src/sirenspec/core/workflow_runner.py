@@ -24,6 +24,7 @@ def resolve_sub_workflow(ref: str, registry: WorkflowRegistry | None) -> Any:
     :raises FileNotFoundError: If *ref* is a file path that does not exist.
     :returns: A validated :class:`~sirenspec.core.models.Workflow` instance.
     """
+    # Deferred to avoid circular import: yaml.parser → models, executor → workflow_runner → yaml.parser
     from sirenspec.yaml.parser import load_workflow
 
     if ref.startswith(".") or ref.startswith("/"):
@@ -75,6 +76,7 @@ async def execute_workflow_node(
     :returns: Trace dict with keys ``id``, ``type``, ``ref``, ``inputs``, ``output``,
         ``tokens``, ``duration_ms``, ``sub_trace``, and ``error``.
     """
+    # Deferred to avoid circular import: executor imports workflow_runner, which would re-import executor
     from sirenspec.core.executor import execute
 
     if depth >= node.max_depth:

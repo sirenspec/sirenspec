@@ -21,7 +21,7 @@ class WorkflowRegistry:
     """
 
     def __init__(self) -> None:
-        self._registry: dict[str, Workflow] = {}
+        self.workflows: dict[str, Workflow] = {}
 
     def register(self, name: str, workflow: Workflow) -> None:
         """Register *workflow* under *name*.
@@ -29,7 +29,7 @@ class WorkflowRegistry:
         :param name: The name used in a workflow node's ``ref`` field.
         :param workflow: The :class:`~sirenspec.core.models.Workflow` instance to register.
         """
-        self._registry[name] = workflow
+        self.workflows[name] = workflow
 
     def get(self, name: str) -> Workflow:
         """Return the workflow registered under *name*.
@@ -38,6 +38,6 @@ class WorkflowRegistry:
         :raises KeyError: If no workflow is registered under *name*.
         :returns: The registered :class:`~sirenspec.core.models.Workflow` instance.
         """
-        if name not in self._registry:
+        if name not in self.workflows:
             raise KeyError(f"No workflow registered under '{name}'")
-        return self._registry[name]
+        return self.workflows[name]
