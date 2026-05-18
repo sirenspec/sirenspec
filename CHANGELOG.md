@@ -5,14 +5,14 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [0.1.0] — 2025-05-17
+## [0.1.0] — 2026-05-18
 
 Initial public release.
 
 ### Features
 
 - **YAML-first workflow engine** — define multi-agent pipelines as human-readable YAML documents
-- **Node types** — `agent`, `swrm` (parallel fan-out/synthesis), `factory` (dynamic node generation), `tool` (HTTP)
+- **Node types** — `agent`, `swrm` (parallel fan-out/synthesis), `factory` (dynamic node generation), `tool` (HTTP and Python), `workflow` (nested sub-workflow execution)
 - **LLM providers** — OpenAI, Anthropic, and Ollama adapters with a pluggable `Protocol`-based interface
 - **Streaming output** — per-node streaming with Rich-formatted console display
 - **Template interpolation** — reference upstream node outputs with `{{ node_id.output }}` syntax
