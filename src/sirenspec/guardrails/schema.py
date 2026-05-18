@@ -9,7 +9,7 @@ import jsonschema
 
 from sirenspec.guardrails.base import Guardrail, GuardrailViolation
 
-type JsonValue = dict[str, Any] | list[Any] | str | int | float | bool | None
+JsonValue = dict[str, Any] | list[Any] | str | int | float | bool | None
 
 
 def parse_json_output(text: str) -> JsonValue:
