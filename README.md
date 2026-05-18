@@ -1,6 +1,8 @@
 <div align="center">
   <h1>SirenSpec</h1>
   <img src="docs/logo/crest.svg" alt="Crest, the SirenSpec mascot" width="180"/>
+
+  [![CI](https://github.com/TJLSmith0831/sirenspec/actions/workflows/ci.yml/badge.svg)](https://github.com/TJLSmith0831/sirenspec/actions/workflows/ci.yml)
 </div>
 
 YAML-first agent orchestration SDK. Define multi-agent workflows in human-readable YAML and execute them against OpenAI or Anthropic backends.
