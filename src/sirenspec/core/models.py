@@ -279,9 +279,55 @@ class FactoryNode(BaseModel):
     writes: str = Field(..., description="Dot-notation path where the outputs list is stored.")
 
 
+class WorkflowNode(BaseModel):
+    """A node that executes another SirenSpec workflow inline (sub-workflow composition).
+
+    The referenced sub-workflow runs blocking inside the parent workflow.  Its output
+    dict (keyed by sub-node ID) is written into the parent context so downstream nodes
+    can reference it via ``{{ <node_id>.output.<sub_node_id> }}``.
+
+    ``ref`` accepts either a relative/absolute file path (``./path/to/b.yaml``) resolved
+    at execution time, or a named string resolved from a
+    :class:`~sirenspec.core.workflow_registry.WorkflowRegistry` passed to the executor.
+
+    The sub-workflow's context is initialised with only the keys declared in ``inputs``;
+    it does not inherit the parent's full working context.  Values in ``inputs`` are
+    template strings resolved against the parent context before the sub-workflow starts.
+
+    :Example::
+
+        nodes:
+          run_b:
+            type: workflow
+            ref: ./workflows/b.yaml
+            inputs:
+              topic: "{{ extract.output }}"
+              max_tokens: "500"
+    """
+
+    type: Literal["workflow"] = "workflow"
+    ref: str = Field(..., description="File path or registry name for the sub-workflow to execute.")
+    inputs: dict[str, str] = Field(
+        default_factory=dict,
+        description="Template strings bound to the sub-workflow's input context.",
+    )
+    writes: str | None = Field(
+        default=None,
+        description=(
+            "Optional dot-notation path to write sub-workflow output in the parent context. "
+            "Defaults to 'output.<node_id>' when omitted."
+        ),
+    )
+    max_depth: int = Field(
+        default=10,
+        ge=1,
+        description="Maximum nesting depth before a ValidationError is raised.",
+    )
+
+
 # Backward-compatible alias so existing code using ``Node(agent=..., writes=...)`` keeps working.
 Node = AgentNode
-AnyNode = AgentNode | ToolNode | SwrmNode | FactoryNode
+AnyNode = AgentNode | ToolNode | SwrmNode | FactoryNode | WorkflowNode
 
 
 class Edge(BaseModel):
@@ -329,13 +375,13 @@ class WorkflowInput(BaseModel):
 
 # Discriminator helper: if raw node dict has ``type == "tool"`` use ToolNode,
 # ``type == "swrm"`` use SwrmNode, else AgentNode.
-def parse_node(raw: Any) -> AgentNode | ToolNode | SwrmNode | FactoryNode:
+def parse_node(raw: Any) -> AgentNode | ToolNode | SwrmNode | FactoryNode | WorkflowNode:
     """Parse a raw node dict into a typed node model.
 
     :param raw: The raw YAML mapping for a single node.
-    :returns: A typed node instance (AgentNode, ToolNode, SwrmNode, or FactoryNode).
+    :returns: A typed node instance (AgentNode, ToolNode, SwrmNode, FactoryNode, or WorkflowNode).
     """
-    if isinstance(raw, (AgentNode, ToolNode, SwrmNode, FactoryNode)):
+    if isinstance(raw, (AgentNode, ToolNode, SwrmNode, FactoryNode, WorkflowNode)):
         return raw
     if isinstance(raw, dict):
         t = raw.get("type")
@@ -345,6 +391,8 @@ def parse_node(raw: Any) -> AgentNode | ToolNode | SwrmNode | FactoryNode:
             return SwrmNode.model_validate(raw)
         if t == "factory":
             return FactoryNode.model_validate(raw)
+        if t == "workflow":
+            return WorkflowNode.model_validate(raw)
     return AgentNode.model_validate(raw)
 
 
@@ -353,7 +401,7 @@ class Workflow(BaseModel):
 
     version: str
     agents: dict[str, AgentDefinition] = Field(default_factory=dict)
-    nodes: dict[str, AgentNode | ToolNode | SwrmNode | FactoryNode]
+    nodes: dict[str, AgentNode | ToolNode | SwrmNode | FactoryNode | WorkflowNode]
     edges: list[Edge] = Field(default_factory=list)
     input: WorkflowInput | None = None
     state: dict[str, Any] | None = None
