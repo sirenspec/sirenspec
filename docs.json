@@ -3,10 +3,10 @@
   "name": "SirenSpec",
   "theme": "willow",
   "logo": {
-    "light": "/docs/logo/light.svg",
-    "dark": "/docs/logo/dark.svg"
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg"
   },
-  "favicon": "/docs/favicon.svg",
+  "favicon": "/favicon.svg",
   "colors": {
     "primary": "#0D9373",
     "light": "#07C983",
@@ -27,15 +27,15 @@
         "groups": [
           {
             "group": "Getting Started",
-            "pages": ["docs/introduction", "docs/quickstart"]
+            "pages": ["introduction", "quickstart"]
           },
           {
             "group": "Core Concepts",
-            "pages": ["docs/assistant", "docs/yaml-reference", "docs/tool-nodes", "docs/providers", "docs/guardrails", "docs/swrm"]
+            "pages": ["assistant", "yaml-reference", "providers", "guardrails", "retry-policies", "swrm"]
           },
           {
             "group": "Reference",
-            "pages": ["docs/cli-reference", "docs/sdk"]
+            "pages": ["cli-reference", "sdk", "tool-nodes"]
           }
         ]
       },
@@ -43,35 +43,40 @@
         "tab": "Cookbook",
         "groups": [
           {
-            "group": "Getting Started",
+            "group": "Basics",
             "pages": [
-              "docs/cookbook/simple-agent/README",
-              "docs/cookbook/sequential-pipeline/README",
-              "docs/cookbook/conditional-pipeline/README"
+              "cookbook/simple-agent/README",
+              "cookbook/sequential-pipeline/README",
+              "cookbook/conditional-pipeline/README"
             ]
           },
           {
-            "group": "Parallel Workflows",
+            "group": "Multi-Agent Patterns",
             "pages": [
-              "docs/cookbook/market-analysis/README",
-              "docs/cookbook/1000-monkeys/README"
+              "cookbook/adversarial-pair/README",
+              "cookbook/blind-code-review/README",
+              "cookbook/graphic-design-firm/README",
+              "cookbook/news-desk/README"
             ]
           },
           {
-            "group": "Real-World Pipelines",
+            "group": "Swrm & Fan-Out",
             "pages": [
-              "docs/cookbook/news-desk/README",
-              "docs/cookbook/graphic-design-firm/README",
-              "docs/cookbook/blind-code-review/README",
-              "docs/cookbook/pr-summarizer/README"
+              "cookbook/1000-monkeys/README",
+              "cookbook/market-analysis/README"
             ]
           },
           {
-            "group": "Testing Limits",
+            "group": "Stress Tests",
             "pages": [
-              "docs/cookbook/telephone-game/README",
-              "docs/cookbook/compression-gauntlet/README",
-              "docs/cookbook/adversarial-pair/README"
+              "cookbook/telephone-game/README",
+              "cookbook/compression-gauntlet/README"
+            ]
+          },
+          {
+            "group": "Tool Nodes",
+            "pages": [
+              "cookbook/pr-summarizer/README"
             ]
           }
         ]
