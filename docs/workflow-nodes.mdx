@@ -79,8 +79,7 @@ nodes:
 The registry is passed programmatically:
 
 ```python
-from sirenspec import load_workflow, execute
-from sirenspec.core.workflow_registry import WorkflowRegistry
+from sirenspec import load_workflow, execute, WorkflowRegistry
 
 registry = WorkflowRegistry()
 registry.register("child_workflow_name", child_workflow)

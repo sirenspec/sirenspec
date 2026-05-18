@@ -17,7 +17,7 @@ The `docs/cookbook/` directory — the canonical, Mintlify-served collection of 
 _Avoid_: Examples directory, samples directory
 
 **Node**:
-A single unit of execution in a workflow — either an agent call, a tool invocation, or a swrm fan-out.
+A single unit of execution in a workflow — one of five types: an agent call, a tool invocation, a swrm fan-out, a factory (templated iteration), or a nested workflow.
 _Avoid_: Step, task, stage
 
 **Agent**:
@@ -43,7 +43,7 @@ _Avoid_: Parallel node, fan-out, multi-agent node
 ## Relationships
 
 - A **Workflow** contains one or more **Nodes** connected by **Edges**
-- A **Node** references an **Agent** (or a tool, or is a **Swrm**) and writes its output to a **Context** path
+- A **Node** is one of five types (agent, tool, swrm, factory, workflow) and writes its output to a **Context** path
 - A **Recipe** is a **Workflow** that lives in the **Cookbook** and demonstrates a single named capability
 - A **Guardrail** is declared at the workflow level or per-agent and is applied after each agent produces output
 
@@ -60,7 +60,7 @@ Model token pricing is fetched from LiteLLM's open-source pricing JSON (`model_p
 _Avoid_: Hardcoding token prices in source code or data files owned by this repo.
 
 **Streaming Execution**:
-The executor exposes two functions: `execute()` (returns a complete trace dict — used by tests and programmatic callers) and `execute_streaming()` (async generator that yields a typed `NodeEvent` after each node completes, followed by a `SummaryEvent`). The CLI uses `execute_streaming()`; nothing else changes.
+The executor exposes two functions: `execute()` (returns a complete trace dict — used by tests and programmatic callers) and `execute_streaming()` (async generator that yields a typed `NodeCompleteEvent` after each node completes, followed by a `SummaryEvent`). The CLI uses `execute_streaming()`; nothing else changes.
 _Avoid_: Adding rendering callbacks to `execute()` or making `execute()` aware of the CLI layer.
 
 **TokenUsage**:

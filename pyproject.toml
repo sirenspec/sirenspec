@@ -54,6 +54,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
+"sirenspec" = ["py.typed"]
 "sirenspec.core.data" = ["*.json"]
 
 [tool.pytest.ini_options]
