@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from sirenspec.core.agent_runner import execute_agent_node
 from sirenspec.core.interpolation import (
@@ -23,11 +23,8 @@ from sirenspec.core.interpolation import (
     resolve_template,
     resolve_to_list,
 )
-from sirenspec.core.models import AgentDefinition, FactoryNode, RetryPolicy
+from sirenspec.core.models import AgentDefinition, FactoryNode, RetryPolicy, Workflow
 from sirenspec.exceptions import FactoryNodeError
-
-if TYPE_CHECKING:
-    from sirenspec.core.models import Workflow
 
 
 @dataclass
