@@ -3,8 +3,21 @@ name = "sirenspec"
 version = "0.1.0"
 description = "YAML-first agent orchestration SDK for multi-agent workflows"
 readme = "README.md"
-requires-python = ">=3.13"
-license = { text = "MIT" }
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "TJLSmith0831", email = "tjlsmith0831@gmail.com" }]
+keywords = ["agents", "llm", "yaml", "orchestration", "multi-agent", "openai", "anthropic", "ollama"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "anthropic>=0.101.0",
     "jsonschema>=4.0.0",
@@ -15,11 +28,17 @@ dependencies = [
     "typer>=0.25.1",
 ]
 
+[project.urls]
+Homepage = "https://github.com/TJLSmith0831/sirenspec"
+Repository = "https://github.com/TJLSmith0831/sirenspec"
+Issues = "https://github.com/TJLSmith0831/sirenspec/issues"
+
 [project.optional-dependencies]
 dev = [
     "hypothesis>=6.152.7",
     "pytest>=9.0.3",
     "pytest-asyncio>=1.3.0",
+    "pytest-cov>=6.0.0",
     "pytest-mock>=3.14.0",
     "ruff>=0.15.12",
 ]
@@ -42,7 +61,7 @@ asyncio_mode = "auto"
 pythonpath = ["src"]
 
 [tool.ruff]
-target-version = "py313"
+target-version = "py311"
 line-length = 120
 
 [tool.ruff.lint]

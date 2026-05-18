@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from sirenspec.core.interpolation import build_interpolation_context, resolve_template
 from sirenspec.core.models import WorkflowNode
+from sirenspec.core.workflow_registry import WorkflowRegistry
 from sirenspec.exceptions import ValidationError
-
-if TYPE_CHECKING:
-    from sirenspec.core.workflow_registry import WorkflowRegistry
 
 
 def resolve_sub_workflow(ref: str, registry: WorkflowRegistry | None) -> Any:

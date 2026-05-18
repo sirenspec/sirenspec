@@ -24,12 +24,10 @@ import json
 import os
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+from sirenspec.core.models import AgentNode, FactoryNode, SwrmNode, Workflow, WorkflowNode
 from sirenspec.exceptions import InterpolationError
-
-if TYPE_CHECKING:
-    from sirenspec.core.models import Workflow
 
 _TEMPLATE_RE = re.compile(r"\{\{\s*(.+?)\s*\}\}")
 _DEFAULT_RE = re.compile(r"^(.+?)\s*\|\s*default\(\s*['\"](.+?)['\"]\s*\)\s*$")
@@ -254,8 +252,6 @@ def check_circular_template_refs(workflow: Workflow) -> None:
     :param workflow: The fully-validated Workflow model.
     :raises InterpolationError: If a circular template reference is detected.
     """
-    from sirenspec.core.models import AgentNode, FactoryNode, SwrmNode, WorkflowNode
-
     node_ids = set(workflow.nodes.keys())
     deps: dict[str, set[str]] = {nid: set() for nid in node_ids}
 

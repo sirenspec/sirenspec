@@ -514,6 +514,11 @@ async def execute(
                 trace_nodes.append(error_trace)
                 break
 
+            # Propagate sub-workflow output into the parent context under two paths:
+            # ``output.<node_id>`` for template access and ``working.<node_id>.output``
+            # for chaining.  An explicit ``writes`` field overrides the default path.
+            # Budget is re-checked after each sub-workflow so cumulative token spend
+            # across nested calls is still enforced.
             sub_output = wf_trace["output"]
             context.write(f"output.{node_id}", sub_output)
             context.write(f"working.{node_id}.output", sub_output)
@@ -958,6 +963,11 @@ async def execute_streaming(
             )
             continue
 
+        # ------------------------------------------------------------------ #
+        # Workflow node — inline sub-workflow execution with depth guard.     #
+        # Runs the sub-workflow blocking, writes its output into the parent   #
+        # context, then emits a NodeCompleteEvent for the streaming consumer. #
+        # ------------------------------------------------------------------ #
         if isinstance(node, WorkflowNode):
             node_start = time.monotonic()
             try:
