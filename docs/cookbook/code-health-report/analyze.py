@@ -30,9 +30,7 @@ def run_analysis() -> dict[str, Any]:
     classes = [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]
 
     avg_fn_length = (
-        round(sum(len(ast.unparse(f).splitlines()) for f in functions) / len(functions), 1)
-        if functions
-        else 0.0
+        round(sum(len(ast.unparse(f).splitlines()) for f in functions) / len(functions), 1) if functions else 0.0
     )
 
     return {

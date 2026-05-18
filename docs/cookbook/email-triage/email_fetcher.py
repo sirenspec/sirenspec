@@ -40,8 +40,10 @@ def fetch_latest_unread() -> str:
         msg: dict[str, Any] = json.loads(resp.read())
 
     header_map = {h["name"]: h["value"] for h in msg.get("payload", {}).get("headers", [])}
-    return json.dumps({
-        "from": header_map.get("From", "Unknown"),
-        "subject": header_map.get("Subject", "No subject"),
-        "snippet": msg.get("snippet", ""),
-    })
+    return json.dumps(
+        {
+            "from": header_map.get("From", "Unknown"),
+            "subject": header_map.get("Subject", "No subject"),
+            "snippet": msg.get("snippet", ""),
+        }
+    )
