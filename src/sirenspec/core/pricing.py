@@ -188,7 +188,7 @@ def lookup_pricing(model_uri: str) -> ModelPricing | None:
         or ``"<provider>:<model-id>"``.
     :returns: A ModelPricing instance, or None for unknown or local models.
     """
-    sep = next((c for c in model_uri if c in "/:")  , None)
+    sep = next((c for c in model_uri if c in "/:"), None)
     litellm_key = model_uri.split(sep, 1)[-1] if sep else model_uri
     return get_pricing().get(litellm_key)
 

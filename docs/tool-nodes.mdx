@@ -5,7 +5,7 @@ description: Invoke HTTP endpoints and Python callables as first-class workflow 
 
 ## Overview
 
-Tool nodes let you integrate external services and custom Python code directly into your workflow — without needing to write an LLM prompt.  Any node with `type: tool` is a tool node.
+Tool nodes let you integrate external services and custom Python code directly into your workflow — without needing to write an LLM prompt. Any node with `type: tool` is a tool node.
 
 ```yaml
 nodes:
@@ -42,7 +42,7 @@ All tool nodes share these top-level fields.
 
 ### `output_key` and context storage
 
-Tool output is stored under `working.<node_id>.<output_key>`.  For example, a node named `fetch_diff` with `output_key: diff` writes to `working.fetch_diff.diff`.  Downstream agent nodes can reference this value in their system prompts using Jinja-style template syntax:
+Tool output is stored under `working.<node_id>.<output_key>`. For example, a node named `fetch_diff` with `output_key: diff` writes to `working.fetch_diff.diff`. Downstream agent nodes can reference this value in their system prompts using Jinja-style template syntax:
 
 ```yaml
 agents:
@@ -92,7 +92,7 @@ nodes:
 
 ### Error behaviour
 
-Any non-2xx status code raises a `ToolError` with the HTTP status code and response body excerpt in the message.  Network errors (DNS failures, connection refused) and timeouts also raise `ToolError`.
+Any non-2xx status code raises a `ToolError` with the HTTP status code and response body excerpt in the message. Network errors (DNS failures, connection refused) and timeouts also raise `ToolError`.
 
 ---
 
@@ -123,7 +123,7 @@ nodes:
 
 ### Module resolution
 
-The module is resolved using `importlib.import_module` against the **user's runtime environment** (`sys.path`), not against the `sirenspec` package.  This means any module that is importable in the process where `sirenspec` runs can be used — your own application code, installed packages, or local scripts.
+The module is resolved using `importlib.import_module` against the **user's runtime environment** (`sys.path`), not against the `sirenspec` package. This means any module that is importable in the process where `sirenspec` runs can be used — your own application code, installed packages, or local scripts.
 
 Synchronous functions are run in a thread-pool executor so they do not block the event loop.  Async functions are awaited directly.
 
@@ -205,7 +205,7 @@ A working copy of this example is available in the [PR Summarizer cookbook recip
 
 ## ToolError
 
-All tool failures raise `sirenspec.exceptions.ToolError` (a subclass of `SirenSpecError`).  The exception message always includes the adapter name and the upstream error:
+All tool failures raise `sirenspec.exceptions.ToolError` (a subclass of `SirenSpecError`). The exception message always includes the adapter name and the upstream error:
 
 ```
 [tool:http] HTTP 404 Not Found from https://api.example.com/missing: resource not found

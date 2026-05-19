@@ -151,7 +151,10 @@ class TestExecutorTokenUsageTrace:
         mock_provider.complete = AsyncMock(return_value="test response")
         mock_provider.last_token_usage = TokenUsage(prompt_tokens=20, completion_tokens=10)
 
-        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider):
+        with (
+            patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider),
+            patch("sirenspec.core.executor.estimate_usd", return_value=None),
+        ):
             trace = await execute(minimal_workflow, "hello")
 
         node = trace["nodes"][0]
@@ -168,7 +171,10 @@ class TestExecutorTokenUsageTrace:
         mock_provider.complete = AsyncMock(return_value="test response")
         mock_provider.last_token_usage = TokenUsage(prompt_tokens=30, completion_tokens=15)
 
-        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider):
+        with (
+            patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider),
+            patch("sirenspec.core.executor.estimate_usd", return_value=None),
+        ):
             trace = await execute(minimal_workflow, "hello")
 
         summary = trace["summary"]
