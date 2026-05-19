@@ -32,7 +32,7 @@ from sirenspec.exceptions import InterpolationError
 _TEMPLATE_RE = re.compile(r"\{\{\s*(.+?)\s*\}\}")
 _DEFAULT_RE = re.compile(r"^(.+?)\s*\|\s*default\(\s*['\"](.+?)['\"]\s*\)\s*$")
 
-_RESERVED_NAMESPACES = frozenset({"inputs", "env", "item", "index"})
+_RESERVED_NAMESPACES = frozenset({"inputs", "env", "item", "index", "total"})
 
 
 @dataclass
@@ -45,6 +45,7 @@ class InterpolationContext:
     :param env: Environment variables snapshot (from ``os.environ`` at build time).
     :param item: Current loop iteration value. ``None`` outside a factory loop.
     :param index: Current loop iteration index. ``None`` outside a factory loop.
+    :param total: Total number of instances in the current factory loop. ``None`` outside a loop.
     """
 
     inputs: dict[str, Any]
@@ -52,6 +53,7 @@ class InterpolationContext:
     env: dict[str, str] = field(default_factory=dict)
     item: Any | None = None
     index: int | None = None
+    total: int | None = None
 
 
 def build_interpolation_context(
@@ -59,6 +61,7 @@ def build_interpolation_context(
     working: dict[str, Any],
     item: Any | None = None,
     index: int | None = None,
+    total: int | None = None,
     extra_inputs: dict[str, Any] | None = None,
 ) -> InterpolationContext:
     """Build an :class:`InterpolationContext` from executor state.
@@ -67,6 +70,7 @@ def build_interpolation_context(
     :param working: The executor's current ``working`` dict (contains node outputs).
     :param item: Loop item for factory nodes; ``None`` outside a loop.
     :param index: Loop index for factory nodes; ``None`` outside a loop.
+    :param total: Total instance count for factory loops; ``None`` outside a loop.
     :param extra_inputs: Additional key/value pairs merged into the ``inputs`` namespace.
         Used by sub-workflow nodes to inject bound inputs so that ``{{ inputs.key }}``
         resolves correctly inside the sub-workflow.
@@ -81,6 +85,7 @@ def build_interpolation_context(
         env=dict(os.environ),
         item=item,
         index=index,
+        total=total,
     )
 
 
@@ -177,6 +182,11 @@ def _resolve_path(expr: str, context: InterpolationContext, redact_env: bool) ->
             raise InterpolationError(stripped, "index", "Not inside a factory loop context")
         return str(context.index)
 
+    if namespace == "total":
+        if context.total is None:
+            raise InterpolationError(stripped, "total", "Not inside a factory loop context")
+        return str(context.total)
+
     if namespace == "inputs":
         if len(parts) < 2:
             raise InterpolationError(stripped, "inputs", "Missing field name after 'inputs.'")
@@ -245,8 +255,9 @@ def check_circular_template_refs(workflow: Workflow) -> None:
     """Detect circular template dependencies among node prompts at parse time.
 
     Scans ``AgentDefinition.system`` prompts (via their ``AgentNode`` users),
-    ``SwrmAgent.prompt``, ``SwrmSynthesis.prompt``, and ``FactoryNode.for_each``
-    and ``inputs`` values for ``{{ node_id.* }}`` references.  Builds a directed
+    ``SwrmAgent.prompt``, ``SwrmSynthesis.prompt``, ``FactoryNode.for_each``,
+    ``FactoryNode.swarm_size`` (when a template string), and ``inputs`` values
+    for ``{{ node_id.* }}`` references.  Builds a directed
     dependency graph and checks it for cycles using Kahn's algorithm.
 
     :param workflow: The fully-validated Workflow model.
@@ -270,7 +281,15 @@ def check_circular_template_refs(workflow: Workflow) -> None:
                 templates.append(node.synthesis.prompt)
 
         elif isinstance(node, FactoryNode):
-            templates.append(node.for_each)
+            if node.for_each is not None:
+                templates.append(node.for_each)
+            if isinstance(node.swarm_size, str):
+                templates.append(node.swarm_size)
+            if node.swrm is not None:
+                for agent in node.swrm.agents:
+                    templates.append(agent.prompt)
+                if node.swrm.synthesis is not None:
+                    templates.append(node.swrm.synthesis.prompt)
             templates.extend(node.inputs.values())
 
         elif isinstance(node, WorkflowNode):

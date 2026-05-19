@@ -136,6 +136,24 @@ inputs:
 
 ---
 
+### `total` — Total item count (factory nodes)
+
+The total number of items in the current factory loop. Available in `agent` prompts, swrm agent prompts, synthesis prompts, and factory `inputs:` templates:
+
+```yaml
+inputs:
+  position: "{{ index }} of {{ total }}"
+
+swrm:
+  agents:
+    - id: grader
+      prompt: "Grade paper {{ index }} of {{ total }}: {{ item }}"
+  synthesis:
+    prompt: "Final report for item {{ index }}/{{ total }}"
+```
+
+---
+
 ## Error Behaviour
 
 Any unresolvable expression raises `InterpolationError` with three attributes:
@@ -227,7 +245,7 @@ nodes:
     for_each: "{{ plan.output }}"
     inputs:
       task: "{{ item }}"
-      position: "{{ index }}"
+      position: "{{ index }} of {{ total }}"
     concurrency: 4
     writes: working.execute.outputs
 

@@ -72,7 +72,8 @@
             "group": "Factory & Iteration",
             "pages": [
               "cookbook/changelog-annotator/README",
-              "cookbook/github-issues-triage/README"
+              "cookbook/github-issues-triage/README",
+              "cookbook/grading-factory/README"
             ]
           },
           {

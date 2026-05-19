@@ -90,7 +90,7 @@ nodes:
         prompt: "Analyze sentiment..."
 ```
 
-**Factory node** — spawns agent instances for each item in a list:
+**Factory node** — spawns instances (single agents or full swrms) for each item in a list:
 
 ```yaml
 nodes:
@@ -101,6 +101,29 @@ nodes:
     inputs:
       item: "{{ item }}"
     writes: output.results
+```
+
+Or with inline swrm (one swrm per item):
+
+```yaml
+nodes:
+  grade_papers:
+    type: factory
+    swrm:
+      agents:
+        - id: editor
+          provider: openai
+          model: gpt-4o-mini
+          prompt: "Review: {{ item }}"
+        - id: grader
+          provider: anthropic
+          model: claude-haiku-4-5-20251001
+          prompt: "Grade: {{ item }}"
+      synthesis:
+        provider: anthropic
+        prompt: "Final grade for paper {{ index }}: ..."
+    for_each: "{{ inputs.papers }}"
+    writes: output.grades
 ```
 
 **Workflow node** — executes a sub-workflow inline:
@@ -122,6 +145,96 @@ nodes:
 | `writes` | Yes | string | Dot-notation context path where the agent's response is stored. |
 | `retry` | No | object | Per-node retry policy. Overrides `defaults.retry`. See [Retry Policies](/retry-policies). |
 | `on_failure` | No | object | Failure action when retries are exhausted. Overrides `defaults.on_failure`. See [Retry Policies](/retry-policies). |
+
+### Factory node fields
+
+A factory node supports three mutually exclusive execution modes:
+
+**Mode 1: Agent + for_each** — one agent call per item in a runtime JSON list.
+
+```yaml
+nodes:
+  execute:
+    type: factory
+    agent: worker_agent
+    for_each: "{{ plan.output }}"
+    inputs:
+      task: "{{ item }}"
+    concurrency: 4
+    writes: working.execute.outputs
+```
+
+**Mode 2: Agent + swarm_size** — N identical agent calls on the same input.
+
+```yaml
+nodes:
+  execute:
+    type: factory
+    agent: worker_agent
+    swarm_size: 5
+    inputs:
+      position: "{{ index }} of {{ total }}"
+    concurrency: 5
+    writes: working.execute.outputs
+```
+
+**Mode 3: Swrm + for_each** — one full swrm (parallel specialist agents with optional synthesis) per item in a runtime JSON list.
+
+```yaml
+nodes:
+  grade_papers:
+    type: factory
+    swrm:
+      agents:
+        - id: editor
+          provider: openai
+          model: gpt-4o-mini
+          prompt: "Review: {{ item }}"
+        - id: grader
+          provider: anthropic
+          model: claude-haiku-4-5-20251001
+          prompt: "Grade: {{ item }}"
+      synthesis:
+        provider: anthropic
+        prompt: "Final grade for paper {{ index }}: ..."
+    for_each: "{{ inputs.papers }}"
+    concurrency: 3
+    writes: working.grades
+```
+
+| Field | Required | Type | Description |
+|-------|----------|------|-------------|
+| `agent` | One of `agent` or `swrm` | string | Named agent from the workflow's top-level agents map. Mutually exclusive with `swrm`. |
+| `swrm` | One of `agent` or `swrm` | object | Inline swrm spec (with `agents`, optional `synthesis`, optional `concurrency`). Executed per item. Mutually exclusive with `agent`. |
+| `for_each` | One of `for_each` or `swarm_size` | string | Template expression that resolves to a JSON list at runtime. |
+| `swarm_size` | One of `for_each` or `swarm_size` | int or string | Static count or template expression for parallel agent instances. Only valid with `agent` mode. |
+| `inputs` | No | object | Template strings for each input. Supports `{{ item }}`, `{{ index }}`, and `{{ total }}`. |
+| `concurrency` | No | integer | Max parallel worker instances. Default: `1`. |
+| `timeout_per_instance` | No | integer | Per-instance timeout in seconds. Default: `60`. |
+| `on_failure` | No | `"abort"` \| `"continue"` | Failure policy: `abort` (raise) or `continue` (skip). Default: `abort`. |
+| `writes` | Yes | string | Dot-notation context path where the outputs list is stored. |
+
+#### Loop Variables
+
+Inside `inputs:` templates, `agent` prompts, and swrm agent/synthesis prompts (when using `swrm` mode), three special variables are available:
+
+| Variable | Availability | Type | Description |
+|----------|--------------|------|-------------|
+| `{{ item }}` | `for_each` mode only | any | Current list element. |
+| `{{ index }}` | All modes | int | Zero-based position in the list. |
+| `{{ total }}` | All modes | int | Total number of items in the list. |
+
+#### Swrm Within Factory
+
+The `swrm` field in factory nodes accepts:
+
+| Field | Required | Type | Description |
+|-------|----------|------|-------------|
+| `agents` | Yes | list of agents | One or more agents to run in parallel for each factory item. |
+| `synthesis` | No | synthesis object | Optional synthesis step run after all agents complete per item. |
+| `concurrency` | No | integer | Max agents to run concurrently per item. Default: all agents. |
+
+Agent prompts and synthesis prompts support all standard interpolation namespaces plus the three loop variables (`{{ item }}`, `{{ index }}`, `{{ total }}`).
 
 See the following pages for detailed field reference and examples:
 - [Tool Nodes](/tool-nodes) — HTTP and Python adapters

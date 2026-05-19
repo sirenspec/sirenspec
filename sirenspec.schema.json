@@ -117,10 +117,33 @@
         }
       }
     },
+    "FactorySwrm": {
+      "type": "object",
+      "description": "Swrm specification executed per item in a factory fan-out. Agent prompts and the synthesis prompt support {{ item }}, {{ index }}, and {{ total }} in addition to all standard interpolation namespaces.",
+      "required": ["agents"],
+      "additionalProperties": false,
+      "properties": {
+        "agents": {
+          "type": "array",
+          "description": "One or more agents to run in parallel for each factory item.",
+          "minItems": 1,
+          "items": { "$ref": "#/definitions/SwrmAgent" }
+        },
+        "synthesis": {
+          "$ref": "#/definitions/SwrmSynthesis",
+          "description": "Optional synthesis step run after all agents complete for this item."
+        },
+        "concurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Max agents to run concurrently per item. Default: all agents."
+        }
+      }
+    },
     "FactoryNode": {
       "type": "object",
-      "description": "A factory node that dynamically spawns agent instances for each item in a runtime list. The for_each expression resolves to a JSON array; one agent call is made per item. Supports {{ item }} and {{ index }} interpolation inside inputs.",
-      "required": ["type", "agent", "for_each", "writes"],
+      "description": "A factory node that spawns agent instances in parallel. Supports two mutually exclusive modes: list mode (for_each) iterates over a runtime JSON list; swarm mode (swarm_size) spawns a fixed number of identical agents. Exactly one of for_each or swarm_size must be set. Runtime enforcement via model validator.",
+      "required": ["type", "writes"],
       "additionalProperties": false,
       "properties": {
         "type": {
@@ -130,12 +153,23 @@
         },
         "agent": {
           "type": "string",
-          "description": "Agent ID from the top-level agents map. This agent is instantiated once per list item."
+          "description": "Agent ID from the top-level agents map. Mutually exclusive with swrm. Required when swrm is not set."
+        },
+        "swrm": {
+          "$ref": "#/definitions/FactorySwrm",
+          "description": "Inline swrm spec executed per item. Mutually exclusive with agent. When set, for_each is required."
         },
         "for_each": {
           "type": "string",
-          "description": "Template expression that resolves to a JSON list at runtime. Example: \"{{ plan.output }}\". Supports {{ expr }} interpolation.",
+          "description": "Template expression that resolves to a JSON list at runtime. One agent instance per item. Supports {{ item }}, {{ index }}, {{ total }}. Mutually exclusive with swarm_size.",
           "x-interpolation": true
+        },
+        "swarm_size": {
+          "oneOf": [
+            { "type": "integer", "minimum": 1 },
+            { "type": "string", "x-interpolation": true }
+          ],
+          "description": "Static count or template expression (e.g. '{{ inputs.count }}') for parallel agent instances. Each instance receives {{ index }} and {{ total }}. Mutually exclusive with for_each. Runtime max: 100."
         },
         "inputs": {
           "type": "object",
