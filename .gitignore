@@ -13,6 +13,7 @@ wheels/
 
 # UV cache
 .uv/
+uv.lock
 
 # IDE
 .windsurf/
@@ -24,6 +25,9 @@ openspec/
 .agents/
 .hypothesis/
 skills-lock.json
+
+# ADRs — internal engineering decisions, not public docs
+docs/adr/
 
 # Worktrees
 .worktrees/

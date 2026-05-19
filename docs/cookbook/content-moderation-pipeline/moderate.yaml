@@ -1,0 +1,21 @@
+version: "0.1"
+
+agents:
+  responder:
+    model: "anthropic:claude-haiku-4-5-20251001"
+    system: |
+      Content classification: {{ inputs.classification }}
+
+      You will receive user-submitted content. Respond based on the classification:
+      - safe: answer helpfully in 2-3 sentences.
+      - borderline: add a brief one-sentence content warning, then respond carefully.
+      - harmful: politely decline in one sentence and explain why you cannot help.
+
+nodes:
+  respond:
+    agent: responder
+    writes: output.reply
+
+guardrails:
+  - injection
+  - pii

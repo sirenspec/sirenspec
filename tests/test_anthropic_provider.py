@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from sirenspec.core.usage import TokenUsage
 from sirenspec.providers.anthropic_provider import AnthropicProvider
 
 
@@ -31,7 +32,7 @@ class TestAnthropicProvider:
         assert isinstance(result, str)
 
     @pytest.mark.asyncio
-    async def test_token_count_is_sum(self, provider: AnthropicProvider) -> None:
+    async def test_token_usage_captured(self, provider: AnthropicProvider) -> None:
         mock_response = MagicMock()
         mock_response.content = [MagicMock()]
         mock_response.content[0].text = "ok"
@@ -41,7 +42,10 @@ class TestAnthropicProvider:
         with patch.object(provider._client.messages, "create", new=AsyncMock(return_value=mock_response)):
             await provider.complete([{"role": "user", "content": "test"}])
 
-        assert provider.last_token_count == 40
+        assert isinstance(provider.last_token_usage, TokenUsage)
+        assert provider.last_token_usage.prompt_tokens == 15
+        assert provider.last_token_usage.completion_tokens == 25
+        assert provider.last_token_usage.total == 40
 
     @pytest.mark.asyncio
     async def test_system_message_extracted(self, provider: AnthropicProvider) -> None:

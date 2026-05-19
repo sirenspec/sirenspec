@@ -27,11 +27,11 @@
         "groups": [
           {
             "group": "Getting Started",
-            "pages": ["introduction", "quickstart"]
+            "pages": ["introduction", "quickstart", "claude-code-skill"]
           },
           {
             "group": "Core Concepts",
-            "pages": ["assistant", "yaml-reference", "providers", "guardrails", "retry-policies", "swrm"]
+            "pages": ["assistant", "yaml-reference", "providers", "guardrails", "retry-policies", "swrm", "workflow-nodes", "interpolation"]
           },
           {
             "group": "Reference",
@@ -56,14 +56,30 @@
               "cookbook/adversarial-pair/README",
               "cookbook/blind-code-review/README",
               "cookbook/graphic-design-firm/README",
-              "cookbook/news-desk/README"
+              "cookbook/news-desk/README",
+              "cookbook/content-moderation-pipeline/README"
             ]
           },
           {
             "group": "Swrm & Fan-Out",
             "pages": [
               "cookbook/1000-monkeys/README",
-              "cookbook/market-analysis/README"
+              "cookbook/market-analysis/README",
+              "cookbook/email-triage/README"
+            ]
+          },
+          {
+            "group": "Factory & Iteration",
+            "pages": [
+              "cookbook/changelog-annotator/README",
+              "cookbook/github-issues-triage/README",
+              "cookbook/grading-factory/README"
+            ]
+          },
+          {
+            "group": "Guardrails",
+            "pages": [
+              "cookbook/structured-bug-reporter/README"
             ]
           },
           {
@@ -76,7 +92,8 @@
           {
             "group": "Tool Nodes",
             "pages": [
-              "cookbook/pr-summarizer/README"
+              "cookbook/pr-summarizer/README",
+              "cookbook/code-health-report/README"
             ]
           }
         ]

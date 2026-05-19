@@ -7,6 +7,8 @@ import os
 
 from anthropic import AsyncAnthropic
 
+from sirenspec.core.usage import TokenUsage
+
 
 class AnthropicProvider:
     """Wraps anthropic.AsyncAnthropic to satisfy the LLMProvider protocol."""
@@ -15,14 +17,22 @@ class AnthropicProvider:
         self.model = model
         api_key = os.environ.get("ANTHROPIC_API_KEY")
         self._client = AsyncAnthropic(api_key=api_key)
-        self._last_token_count: int = 0
+        self._last_token_usage: TokenUsage = TokenUsage(prompt_tokens=0, completion_tokens=0)
 
     @property
-    def last_token_count(self) -> int:
-        return self._last_token_count
+    def last_token_usage(self) -> TokenUsage:
+        """Structured token usage from the most recent call.
+
+        :returns: A :class:`~sirenspec.core.usage.TokenUsage` with prompt and completion counts.
+        """
+        return self._last_token_usage
 
     @property
     def client(self) -> AsyncAnthropic:
+        """Return the underlying AsyncAnthropic client.
+
+        :returns: The AsyncAnthropic client instance.
+        """
         return self._client
 
     async def complete(self, messages: list[dict]) -> str:
@@ -46,7 +56,10 @@ class AnthropicProvider:
             kwargs["system"] = system_prompt
 
         response = await self.client.messages.create(**kwargs)
-        self._last_token_count = response.usage.input_tokens + response.usage.output_tokens
+        self._last_token_usage = TokenUsage(
+            prompt_tokens=response.usage.input_tokens,
+            completion_tokens=response.usage.output_tokens,
+        )
         return response.content[0].text
 
 
@@ -54,4 +67,4 @@ if __name__ == "__main__":
     provider = AnthropicProvider(model="claude-haiku-4-5-20251001")
     reply = asyncio.run(provider.complete([{"role": "user", "content": "Say hello in one sentence."}]))
     print(reply)
-    print(f"tokens: {provider.last_token_count}")
+    print(f"tokens: {provider.last_token_usage.total}")

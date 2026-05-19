@@ -1,0 +1,137 @@
+---
+title: AI Coding Agent Skill
+description: AI-assisted workflow authoring inside Claude Code, Codex, OpenCode, Gemini, and other coding agents — scaffold, edit, and validate SirenSpec workflows conversationally.
+---
+
+## Overview
+
+SirenSpec ships a coding agent skill that gives AI assistants deep, context-aware knowledge of the SirenSpec YAML schema, node types, guardrails, and interpolation system. Instead of looking up field names or checking examples, you describe what you want and the agent generates correct YAML — ready to run.
+
+The skill works with any coding agent that supports project-level context or custom instructions, including:
+
+- **Claude Code** — loaded automatically via `skills/sirenspec/`
+- **OpenAI Codex CLI** — add the skill prompt to your `codex.md` or system instructions
+- **OpenCode** — place the skill file in your project context directory
+- **Gemini CLI** — include the skill content in your `GEMINI.md` or project instructions
+
+The skill covers:
+- Scaffolding new workflows from a plain-English description
+- Editing or extending existing workflow files
+- Explaining how a workflow will execute before you run it
+- Validating structure and catching schema errors conversationally
+- Suggesting the right node type, guardrail, or retry policy for a use case
+
+---
+
+## Prerequisites
+
+- A supported coding agent (Claude Code, Codex CLI, OpenCode, Gemini CLI, or any agent that accepts project-level instructions)
+- SirenSpec installed (`uv add sirenspec` or `pip install sirenspec`)
+- At least one provider API key set (`OPENAI_API_KEY` or `ANTHROPIC_API_KEY`)
+
+---
+
+## Setup
+
+### Claude Code
+
+The skill lives in the `skills/sirenspec/` directory at the root of this repository. Claude Code automatically loads project skills when you open the repo.
+
+```bash
+git clone https://github.com/TJLSmith0831/sirenspec.git
+cd sirenspec
+claude  # opens Claude Code — skill is loaded automatically
+```
+
+If you are working in your own project and want the skill available there, copy the `skills/sirenspec/` directory into your project root:
+
+```bash
+cp -r /path/to/sirenspec/skills/sirenspec ./skills/sirenspec
+```
+
+### Other Coding Agents (Codex, OpenCode, Gemini, etc.)
+
+The skill is plain text and works with any agent that accepts project-level context files or custom system instructions. Copy the skill content into whichever file your agent reads on startup:
+
+| Agent | Context file |
+|-------|-------------|
+| OpenAI Codex CLI | `codex.md` or `AGENTS.md` in your project root |
+| OpenCode | `.opencode/instructions.md` or your project context directory |
+| Gemini CLI | `GEMINI.md` in your project root |
+| Other agents | Whatever file your agent reads as its project prompt |
+
+```bash
+# Copy the skill prompt into your agent's context file
+cat /path/to/sirenspec/skills/sirenspec/skill.md >> AGENTS.md
+```
+
+Once the skill content is in your context file, the agent will have full knowledge of the SirenSpec schema without any additional configuration.
+
+---
+
+## Usage
+
+In Claude Code, the skill activates automatically when you describe a workflow authoring task. You can also invoke it explicitly with the `/sirenspec` slash command. In other agents, simply describe your workflow task — the injected skill context guides the agent's responses.
+
+### Example prompts
+
+**Scaffold a new workflow**
+
+```
+/sirenspec Build a workflow that classifies a support ticket as "billing",
+"technical", or "general", then routes it to the right handler agent.
+```
+
+**Edit an existing workflow**
+
+```
+/sirenspec Add a schema guardrail to the extractor node in workflow.yaml
+to enforce {"name": string, "age": integer} output.
+```
+
+**Explain before running**
+
+```
+/sirenspec Walk me through how this workflow will execute and what each node writes.
+```
+
+**Pick the right pattern**
+
+```
+/sirenspec I need to run three analysis agents in parallel and combine their
+output into a final report. What's the right node type?
+```
+
+**Add resilience**
+
+```
+/sirenspec Add exponential-backoff retry with a 429/503 trigger to every
+node in my workflow, with a fallback to a cheaper model on exhaustion.
+```
+
+---
+
+## What the skill knows
+
+The skill has full knowledge of the SirenSpec schema, including:
+
+| Area | Details |
+|------|---------|
+| Node types | `agent`, `tool` (http/python), `swrm`, `factory`, `workflow` |
+| Guardrails | `injection`, `length`, `schema`, `cost_cap` — fields and config |
+| Interpolation | All `{{ expr }}` namespaces: `inputs`, `working`, `output`, `env`, `item`, `index` |
+| Retry policies | `backoff` strategies, `on_failure` actions, workflow-level `defaults` |
+| Provider URIs | OpenAI, Anthropic, Ollama — model names and authentication |
+| Context paths | `output.*` vs `working.*` conventions and when to use each |
+| Edges | `when:` expression syntax and evaluation rules |
+
+---
+
+## Tips
+
+- Be specific about providers and models if you have a preference; otherwise the skill will choose sensible defaults.
+- Paste your existing YAML directly into the prompt — the skill can read and modify it in-context.
+- Ask for a `sirenspec explain` walkthrough after scaffolding to verify execution order before running.
+- The skill will not make real API calls — it authors YAML and explains behavior, but execution happens when you run `sirenspec run`.
+- If your agent has a context size limit, paste only the relevant workflow section rather than the entire file.
+- The skill content is agent-agnostic — the same instructions work regardless of which model or agent you use.

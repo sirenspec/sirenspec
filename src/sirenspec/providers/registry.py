@@ -59,6 +59,23 @@ _PROVIDER_FACTORIES: dict[str, Callable[[str], LLMProvider]] = {
     "ollama": make_ollama_provider,
 }
 
+# When set, all resolve_provider calls return the result of this function instead
+# of the normal factory lookup. Used by the test framework to inject mock providers.
+_provider_override: Callable[[str], LLMProvider] | None = None
+
+
+def set_provider_override(factory: Callable[[str], LLMProvider] | None) -> None:
+    """Install or clear a global provider override for testing.
+
+    When *factory* is not ``None``, every subsequent :func:`resolve_provider`
+    call returns ``factory(uri)`` instead of the real provider.  Pass ``None``
+    to restore normal dispatch.
+
+    :param factory: A callable ``(uri: str) -> LLMProvider``, or ``None`` to clear.
+    """
+    global _provider_override
+    _provider_override = factory
+
 
 def resolve_provider(uri: str) -> LLMProvider:
     """Parse a *provider:model* URI and return a configured LLMProvider.
@@ -67,6 +84,9 @@ def resolve_provider(uri: str) -> LLMProvider:
     :raises ProviderError: If the URI is malformed or the provider name is not registered.
     :returns: A configured LLMProvider instance.
     """
+    if _provider_override is not None:
+        return _provider_override(uri)
+
     if ":" not in uri:
         raise ProviderError(f"Malformed provider URI '{uri}'; expected 'provider:model' format")
 

@@ -16,6 +16,7 @@ from sirenspec.core.models import (
     ToolNode,
     Workflow,
 )
+from sirenspec.core.usage import TokenUsage
 from sirenspec.exceptions import ToolError
 
 # ---------------------------------------------------------------------------
@@ -323,7 +324,7 @@ class TestPythonAdapter:
 def _make_provider_mock(response_text: str = "mock response", tokens: int = 10) -> MagicMock:
     mock = MagicMock()
     mock.complete = AsyncMock(return_value=response_text)
-    mock.last_token_count = tokens
+    mock.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=tokens)
     return mock
 
 

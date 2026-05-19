@@ -98,6 +98,33 @@ class InterpolationError(SirenSpecError):
         self.reason = reason
 
 
+class PIIDetectedError(GuardrailError):
+    """Raised when PII is detected and the guardrail action is ``'block'``.
+
+    :param entity_types: List of entity type names that were detected (e.g. ``['email', 'ssn']``).
+        Matched values are intentionally omitted from the message to avoid leaking PII.
+    """
+
+    def __init__(self, entity_types: list[str]) -> None:
+        super().__init__(f"PII detected: {entity_types}")
+        self.entity_types = entity_types
+
+
+class BudgetExceededError(GuardrailError):
+    """Raised when a workflow run exceeds its configured token or USD budget.
+
+    :param reason: Human-readable description of which ceiling was hit.
+    :param tokens_used: Total tokens consumed at the point of the violation.
+    :param estimated_usd: Accumulated USD estimate at the point of the violation, or ``None``
+        if cost could not be estimated (e.g. local/Ollama models).
+    """
+
+    def __init__(self, reason: str, tokens_used: int, estimated_usd: float | None) -> None:
+        super().__init__(reason)
+        self.tokens_used = tokens_used
+        self.estimated_usd = estimated_usd
+
+
 class FactoryNodeError(SirenSpecError):
     """Raised when a factory node instance fails and ``on_failure`` is ``'abort'``.
 

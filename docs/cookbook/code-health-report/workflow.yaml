@@ -1,0 +1,51 @@
+version: "0.1"
+
+# Python tool node calls analyze.run_analysis from the bundled analyze.py module.
+# By default it analyzes the bundled sample.py. Point at your own file with CODE_HEALTH_FILE.
+#
+# Run (from repo root):
+#   PYTHONPATH=docs/cookbook/code-health-report \
+#     sirenspec run docs/cookbook/code-health-report/workflow.yaml
+#
+# Analyze your own file:
+#   CODE_HEALTH_FILE=src/myapp/core.py \
+#   PYTHONPATH=docs/cookbook/code-health-report \
+#     sirenspec run docs/cookbook/code-health-report/workflow.yaml
+
+agents:
+  interpreter:
+    model: "openai:gpt-4o-mini"
+    system: |
+      You are a senior engineer reviewing Python code quality metrics.
+      Here are the raw static analysis results for the file:
+
+      {{ analyze.metrics }}
+
+      Write a concise, actionable health report:
+      - Identify the top 2-3 concerns based on the numbers
+      - Suggest one concrete improvement for each concern
+      - Keep the total report under 200 words
+      - Use markdown bullet points
+
+nodes:
+  analyze:
+    type: tool
+    tool: python
+    config:
+      module: analyze
+      function: run_analysis
+    output_key: metrics
+
+  interpret:
+    agent: interpreter
+    writes: output.report
+
+edges:
+  - from: analyze
+    to: interpret
+
+guardrails:
+  - injection
+
+input:
+  message: "Analyze this code and tell me how to improve it."
