@@ -962,6 +962,8 @@ async def execute_streaming(
                 writes=node.writes,
                 status="success",
                 tokens=factory_trace["tokens"],
+                instances=factory_trace["instances"],
+                duration_ms=factory_trace["duration_ms"],
             )
             continue
 

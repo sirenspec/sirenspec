@@ -10,6 +10,8 @@ from rich.console import Console
 
 from sirenspec.cli.run import (
     format_agent_duration,
+    render_factory_instance_panel,
+    render_factory_panel,
     render_node_panel,
     render_swarm_agent_panel,
     render_swarm_panel,
@@ -234,3 +236,190 @@ class TestFormatAgentDuration:
 
     def test_zero(self) -> None:
         assert format_agent_duration(0.0) == "0.0s"
+
+
+# ---------------------------------------------------------------------------
+# Factory renderer tests
+# ---------------------------------------------------------------------------
+
+
+def _make_instance(
+    index: int = 0,
+    *,
+    item: str = "test item",
+    response: str = "test output",
+    duration_ms: float = 500.0,
+    error: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "index": index,
+        "item": item,
+        "prompt_sent": "test prompt",
+        "response_received": None if error else response,
+        "tokens": 10,
+        "duration_ms": duration_ms,
+        "error": error,
+    }
+
+
+def _make_factory_event(
+    *,
+    node_id: str = "grade_papers",
+    instances: list[dict[str, Any]] | None = None,
+    output: Any = None,
+    status: str = "success",
+    duration_ms: float = 900.0,
+    writes: str = "working.grade_reports",
+) -> NodeCompleteEvent:
+    if instances is None:
+        instances = [
+            _make_instance(0, response="Grade: A"),
+            _make_instance(1, response="Grade: D"),
+            _make_instance(2, response="Grade: C"),
+        ]
+    if output is None:
+        output = [inst.get("response_received") or "" for inst in instances]
+    return NodeCompleteEvent(
+        node_id=node_id,
+        node_type="factory",
+        output=output,
+        writes=writes,
+        status=status,  # type: ignore[arg-type]
+        tokens=30,
+        instances=instances,
+        duration_ms=duration_ms,
+    )
+
+
+def _capture_factory(event: NodeCompleteEvent, *, tty: bool = False) -> str:
+    buf = io.StringIO()
+    console = Console(file=buf, force_terminal=tty, no_color=not tty)
+    box_style = ROUNDED if tty else ASCII
+    render_node_panel(event, console, box_style)
+    return buf.getvalue()
+
+
+class TestRenderFactoryPanelHeader:
+    def test_header_contains_node_id(self) -> None:
+        output = _capture_factory(_make_factory_event(node_id="grade_papers"))
+        assert "grade_papers" in output
+
+    def test_header_contains_instance_count(self) -> None:
+        output = _capture_factory(_make_factory_event())
+        assert "3 instances" in output
+
+    def test_header_singular_instance(self) -> None:
+        output = _capture_factory(_make_factory_event(instances=[_make_instance(0)]))
+        assert "1 instance" in output
+        assert "1 instances" not in output
+
+
+class TestRenderFactoryPanelFooter:
+    def test_footer_shows_success_ratio(self) -> None:
+        instances = [_make_instance(0), _make_instance(1), _make_instance(2, error="timeout")]
+        output = _capture_factory(_make_factory_event(instances=instances))
+        assert "2/3 succeeded" in output
+
+    def test_footer_shows_total_duration(self) -> None:
+        output = _capture_factory(_make_factory_event(duration_ms=900.0))
+        assert "0.9s total" in output
+
+    def test_footer_omits_failed_when_all_succeed(self) -> None:
+        output = _capture_factory(_make_factory_event())
+        assert "Factory complete:" in output
+        assert "failed" not in output
+
+    def test_footer_includes_failed_count_when_partial(self) -> None:
+        instances = [_make_instance(0), _make_instance(1, error="boom")]
+        output = _capture_factory(_make_factory_event(instances=instances))
+        assert "1 failed" in output
+
+
+class TestRenderFactoryInstancePanels:
+    def test_instance_output_shown(self) -> None:
+        instances = [_make_instance(0, response="Grade: A")]
+        output = _capture_factory(_make_factory_event(instances=instances))
+        assert "Grade: A" in output
+
+    def test_all_instance_outputs_present(self) -> None:
+        instances = [_make_instance(i, response=f"result_{i}") for i in range(3)]
+        output = _capture_factory(_make_factory_event(instances=instances))
+        for i in range(3):
+            assert f"result_{i}" in output
+
+    def test_failed_instance_shows_error(self) -> None:
+        instances = [_make_instance(0, error="GuardrailError")]
+        output = _capture_factory(_make_factory_event(instances=instances))
+        assert "GuardrailError" in output
+
+    def test_index_labels_shown(self) -> None:
+        instances = [_make_instance(i) for i in range(3)]
+        output = _capture_factory(_make_factory_event(instances=instances))
+        assert "[1/3]" in output
+        assert "[3/3]" in output
+
+
+class TestRenderFactoryPanelWritesArrow:
+    def test_writes_arrow_after_success(self) -> None:
+        output = _capture_factory(_make_factory_event(status="success", writes="working.results"))
+        assert "↓ working.results" in output
+
+    def test_writes_arrow_omitted_on_failure(self) -> None:
+        event = NodeCompleteEvent(
+            node_id="grade_papers",
+            node_type="factory",
+            status="failed",
+            error="FactoryNodeError",
+            instances=None,
+        )
+        output = _capture_factory(event)
+        assert "↓" not in output
+
+
+class TestRenderNodePanelFactoryDispatch:
+    def test_dispatches_factory_when_instances_populated(self) -> None:
+        output = _capture_factory(_make_factory_event())
+        assert "Factory:" in output
+        assert "Factory complete:" in output
+
+    def test_falls_through_to_panel_when_instances_none(self) -> None:
+        event = NodeCompleteEvent(
+            node_id="grade_papers",
+            node_type="factory",
+            status="failed",
+            error="FactoryNodeError: something failed",
+            instances=None,
+        )
+        output = _capture_factory(event)
+        assert "FactoryNodeError" in output
+        assert "Factory:" not in output
+
+
+class TestRenderFactoryInstancePanelDirect:
+    def test_success_instance_renders_response(self) -> None:
+        instance = _make_instance(0, response="the grade")
+        buf = io.StringIO()
+        console = Console(file=buf, force_terminal=False, no_color=True)
+        render_factory_instance_panel(instance, 3, console, ASCII)
+        output = buf.getvalue()
+        assert "the grade" in output
+        assert "[1/3]" in output
+
+    def test_failed_instance_renders_error(self) -> None:
+        instance = _make_instance(1, error="LengthError")
+        buf = io.StringIO()
+        console = Console(file=buf, force_terminal=False, no_color=True)
+        render_factory_instance_panel(instance, 3, console, ASCII)
+        output = buf.getvalue()
+        assert "LengthError" in output
+
+
+class TestRenderFactoryPanelDirectCall:
+    def test_direct_call_produces_header_and_footer(self) -> None:
+        event = _make_factory_event()
+        buf = io.StringIO()
+        console = Console(file=buf, force_terminal=False, no_color=True)
+        render_factory_panel(event, console, ASCII)
+        output = buf.getvalue()
+        assert "Factory:" in output
+        assert "Factory complete:" in output

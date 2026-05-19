@@ -21,7 +21,11 @@ class NodeCompleteEvent:
     :param agents: Per-agent execution traces for ``node_type="swrm"`` nodes only.
         Each dict contains ``id``, ``prompt_sent``, ``response_received``, ``tokens``,
         ``duration_ms``, and ``error``. ``None`` for all non-swrm node types.
-    :param duration_ms: Wall-clock execution time in milliseconds for swrm nodes. ``None`` otherwise.
+    :param instances: Per-instance execution traces for ``node_type="factory"`` nodes only.
+        Each dict contains ``index``, ``item``, ``response_received``, ``tokens``,
+        ``duration_ms``, and ``error``. ``None`` for all non-factory node types.
+    :param duration_ms: Wall-clock execution time in milliseconds for swrm and factory nodes.
+        ``None`` otherwise.
     """
 
     kind: Literal["node_complete"] = field(default="node_complete")
@@ -33,6 +37,7 @@ class NodeCompleteEvent:
     error: str | None = field(default=None)
     tokens: int = field(default=0)
     agents: list[dict[str, Any]] | None = field(default=None)
+    instances: list[dict[str, Any]] | None = field(default=None)
     duration_ms: float | None = field(default=None)
 
 

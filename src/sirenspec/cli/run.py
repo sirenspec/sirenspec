@@ -145,12 +145,75 @@ def render_swarm_panel(event: NodeCompleteEvent, console: Console, box_style: Bo
         console.print(f"  [dim]↓ {event.writes}[/dim]")
 
 
+def render_factory_instance_panel(instance: dict[str, Any], total: int, console: Console, box_style: Box) -> None:
+    """Render a single factory instance's output as a Rich panel.
+
+    Failed instances use a red border with the error message as content.
+    Successful instances display the response text with the default border.
+
+    :param instance: Instance trace dict with keys ``index``, ``response_received``, ``duration_ms``, ``error``.
+    :param total: Total number of instances in the factory run.
+    :param console: The Rich console to print to.
+    :param box_style: Rich box style (``ROUNDED`` for TTY, ``ASCII`` for pipes/CI).
+    """
+    idx = instance["index"]
+    if instance.get("error"):
+        content = instance["error"]
+        border_style = "red"
+    else:
+        content = format_output_content(instance.get("response_received") or "")
+        border_style = "default"
+
+    terminal_width = shutil.get_terminal_size((80, 24)).columns
+    panel = Panel(
+        content,
+        title=Text(f"[{idx + 1}/{total}]", style="bold"),
+        border_style=border_style,
+        box=box_style,
+        width=min(terminal_width, 100),
+    )
+    console.print(panel)
+
+
+def render_factory_panel(event: NodeCompleteEvent, console: Console, box_style: Box) -> None:
+    """Render a factory node as a parallel execution block.
+
+    Prints an opening rule, a Rich panel per instance, and a closing rule with
+    success counts and timing, followed by the writes arrow.
+
+    :param event: A factory ``NodeCompleteEvent`` with ``event.instances`` populated.
+    :param console: The Rich console to print to.
+    :param box_style: Rich box style — controls whether the rule is styled or plain.
+    """
+    instances: list[dict[str, Any]] = event.instances  # type: ignore[assignment]  # always set when node_type="factory"
+    total = len(instances)
+    succeeded = sum(1 for inst in instances if not inst.get("error"))
+    failed = total - succeeded
+
+    rule_style = "bold blue" if box_style is not ASCII else "default"
+    header = f"Factory: {event.node_id} [{total} instance{'s' if total != 1 else ''}]"
+    console.rule(header, style=rule_style)
+
+    for instance in instances:
+        render_factory_instance_panel(instance, total, console, box_style)
+
+    footer_parts = [f"{succeeded}/{total} succeeded"]
+    if failed:
+        footer_parts.append(f"{failed} failed")
+    footer_parts.append(f"({format_agent_duration(event.duration_ms or 0.0)} total)")
+    console.rule(f"Factory complete: {', '.join(footer_parts)}", style=rule_style)
+
+    if event.status == "success" and event.writes:
+        console.print(f"  [dim]↓ {event.writes}[/dim]")
+
+
 def render_node_panel(event: NodeCompleteEvent, console: Console, box_style: Box) -> None:
     """Render a completed node as a Rich panel followed by its writes arrow.
 
     Skipped nodes are printed as a single dimmed line.  Failed nodes use a
-    red border.  Successful nodes use the default rounded border.  Swarm nodes
-    with per-agent trace data are delegated to :func:`render_swarm_panel`.
+    red border.  Successful nodes use the default rounded border.  Swarm and
+    factory nodes with per-instance trace data are delegated to their dedicated
+    renderers.
 
     :param event: The node completion event to render.
     :param console: The Rich console to print to.
@@ -158,6 +221,10 @@ def render_node_panel(event: NodeCompleteEvent, console: Console, box_style: Box
     """
     if event.node_type == "swrm" and event.agents is not None:
         render_swarm_panel(event, console, box_style)
+        return
+
+    if event.node_type == "factory" and event.instances is not None:
+        render_factory_panel(event, console, box_style)
         return
 
     if event.status == "skipped":
