@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 import typer
-from rich.box import ASCII, ROUNDED
+from rich.box import ASCII, ROUNDED, Box
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
@@ -42,6 +42,43 @@ def build_console() -> Console:
     return Console(force_terminal=False, no_color=True)
 
 
+def format_agent_duration(duration_ms: float) -> str:
+    """Format a per-agent duration as a compact seconds string.
+
+    :param duration_ms: Duration in milliseconds.
+    :returns: A string like ``"0.8s"`` or ``"12.3s"``.
+    """
+    return f"{duration_ms / 1000:.1f}s"
+
+
+def render_swarm_agent_panel(agent: dict[str, Any], console: Console, box_style: Box) -> None:
+    """Render a single swarm agent's output as a Rich panel.
+
+    Failed agents use a red border with the error message as content.
+    Successful agents display the response text with the default border.
+
+    :param agent: Agent trace dict with keys ``id``, ``response_received``, ``duration_ms``, ``error``.
+    :param console: The Rich console to print to.
+    :param box_style: Rich box style (``ROUNDED`` for TTY, ``ASCII`` for pipes/CI).
+    """
+    if agent.get("error"):
+        content = agent["error"]
+        border_style = "red"
+    else:
+        content = format_output_content(agent.get("response_received") or "")
+        border_style = "default"
+
+    terminal_width = shutil.get_terminal_size((80, 24)).columns
+    panel = Panel(
+        content,
+        title=Text(agent["id"], style="bold"),
+        border_style=border_style,
+        box=box_style,
+        width=min(terminal_width, 100),
+    )
+    console.print(panel)
+
+
 def format_output_content(output: Any) -> str:
     """Format a node output value as a printable string.
 
@@ -63,16 +100,66 @@ def format_output_content(output: Any) -> str:
     return str(output) if output is not None else ""
 
 
-def render_node_panel(event: NodeCompleteEvent, console: Console, box_style: Any) -> None:
+def render_swarm_panel(event: NodeCompleteEvent, console: Console, box_style: Box) -> None:
+    """Render a swarm node as a parallel execution block.
+
+    Prints an opening rule, a Rich panel per agent, a closing rule with success counts
+    and timing, and (when synthesis produced a single string output) a panel for the
+    synthesised result followed by the writes arrow.
+
+    :param event: A swarm ``NodeCompleteEvent`` with ``event.agents`` populated.
+    :param console: The Rich console to print to.
+    :param box_style: Rich box style — controls whether the rule is styled or plain.
+    """
+    agents: list[dict[str, Any]] = event.agents  # type: ignore[assignment]  # always set when node_type="swrm"
+    total = len(agents)
+    succeeded = sum(1 for a in agents if not a.get("error"))
+    failed = total - succeeded
+
+    rule_style = "bold blue" if box_style is not ASCII else "default"
+    header = f"Swarm: {event.node_id} [{total} agent{'s' if total != 1 else ''}]"
+    console.rule(header, style=rule_style)
+
+    for agent in agents:
+        render_swarm_agent_panel(agent, console, box_style)
+
+    footer_parts = [f"{succeeded}/{total} succeeded"]
+    if failed:
+        footer_parts.append(f"{failed} failed")
+    footer_parts.append(f"({format_agent_duration(event.duration_ms or 0.0)} total)")
+    console.rule(f"Swarm complete: {', '.join(footer_parts)}", style=rule_style)
+
+    if event.status == "success" and not isinstance(event.output, list) and event.output is not None:
+        terminal_width = shutil.get_terminal_size((80, 24)).columns
+        console.print(
+            Panel(
+                format_output_content(event.output),
+                title=Text(event.node_id, style="bold"),
+                border_style="default",
+                box=box_style,
+                width=min(terminal_width, 100),
+            )
+        )
+
+    if event.status == "success" and event.writes:
+        console.print(f"  [dim]↓ {event.writes}[/dim]")
+
+
+def render_node_panel(event: NodeCompleteEvent, console: Console, box_style: Box) -> None:
     """Render a completed node as a Rich panel followed by its writes arrow.
 
     Skipped nodes are printed as a single dimmed line.  Failed nodes use a
-    red border.  Successful nodes use the default rounded border.
+    red border.  Successful nodes use the default rounded border.  Swarm nodes
+    with per-agent trace data are delegated to :func:`render_swarm_panel`.
 
     :param event: The node completion event to render.
     :param console: The Rich console to print to.
     :param box_style: The Rich box style to use (``ROUNDED`` for TTY, ``ASCII`` for pipes/CI).
     """
+    if event.node_type == "swrm" and event.agents is not None:
+        render_swarm_panel(event, console, box_style)
+        return
+
     if event.status == "skipped":
         console.print(f"  [dim](skipped) {event.node_id}[/dim]")
         return

@@ -236,6 +236,41 @@ input ─────┤  ┌─────────┐ ┌─────�
 
 ---
 
+## CLI Output
+
+When you run a workflow containing a swrm node with `sirenspec run`, the output is rendered with a dedicated visual layout:
+
+```
+─── Swarm: analyze [3 agents] ─────────────────────────
+╭─── sentiment ─────────────────────────────────────╮
+│ The market sentiment is cautiously optimistic...   │
+╰───────────────────────────────────────────────────╯
+╭─── risk ─────────────────────────────────────────╮
+│ 1. Rising interest rates                          │
+│ 2. Geopolitical uncertainty...                    │
+╰───────────────────────────────────────────────────╯
+╭─── opportunity ───────────────────────────────────╮
+│ - Beaten-down tech sector                         │
+│ - Infrastructure momentum...                      │
+╰───────────────────────────────────────────────────╯
+─── Swarm complete: 3/3 succeeded  (2.8s total) ───
+╭─── analyze ───────────────────────────────────────╮
+│ Based on the three perspectives, this stock...    │
+╰───────────────────────────────────────────────────╯
+  ↓ output.analyze
+```
+
+**Layout:**
+- **Opening rule** — Shows the swarm name and agent count.
+- **Agent panels** — Each agent's output is rendered in its own Rich panel, in definition order.
+- **Closing rule** — Displays success/failure tally (e.g., `3/3 succeeded` or `2/3 succeeded, 1 failed`) and total swarm duration.
+- **Synthesis panel** — If synthesis is configured and successful, its output is shown in a final panel (omitted if no synthesis or no string output).
+- **Writes arrow** — Shows the context path where the node output was written.
+
+Failed agents display their error message in a red-bordered panel instead of the response text.
+
+---
+
 ## Complete Example
 
 See the [Market Analysis cookbook recipe](/cookbook/market-analysis/README) for a full working workflow.

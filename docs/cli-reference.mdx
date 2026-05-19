@@ -78,6 +78,31 @@ When run in a TTY without `--trace` or `--output json`, the CLI renders each com
 Run complete  │  1 node  │  24 tokens  │  cost unavailable (pricing not configured)
 ```
 
+For **swarm nodes** (`type: swrm`), the output shows a dedicated parallel execution block:
+
+```
+─── Swarm: analyze [3 agents] ─────────────────────────
+╭─── sentiment ─────────────────────────────────────╮
+│ The market sentiment is cautiously optimistic...   │
+╰───────────────────────────────────────────────────╯
+╭─── risk ─────────────────────────────────────────╮
+│ 1. Rising interest rates                          │
+│ 2. Geopolitical uncertainty                       │
+│ 3. Earnings weakness...                           │
+╰───────────────────────────────────────────────────╯
+╭─── opportunity ───────────────────────────────────╮
+│ - Beaten-down tech sector                         │
+│ - Infrastructure momentum...                      │
+╰───────────────────────────────────────────────────╯
+─── Swarm complete: 3/3 succeeded  (2.8s total) ───
+╭─── analyze ───────────────────────────────────────╮
+│ Based on the three perspectives, this stock...    │
+╰───────────────────────────────────────────────────╯
+  ↓ output.analyze
+```
+
+When synthesis is configured, its output is shown in a final panel after the swarm footer. If any agent fails, the footer shows the failure count (e.g., `2/3 succeeded, 1 failed`). Failed agents display their error message in a red-bordered panel.
+
 **JSON Trace Format:**
 
 When `--trace`, `--output json`, or `--trace-file` is used, the full execution trace is written as JSON:

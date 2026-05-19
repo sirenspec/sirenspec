@@ -181,6 +181,8 @@ The generator yields two types of events:
    - `writes: str` — The context path written by this node (only for successful agent nodes).
    - `error: str | None` — Error message when `status="failed"`.
    - `tokens: int` — Total tokens consumed by this node (0 for tool and skipped nodes).
+   - `agents: list[dict[str, Any]] | None` — Per-agent execution traces (swrm nodes only). Each dict contains `id`, `prompt_sent`, `response_received`, `tokens`, `duration_ms`, and `error`. `None` for all non-swrm node types.
+   - `duration_ms: float | None` — Wall-clock execution time in milliseconds for swrm nodes. `None` for all other node types.
 
 2. **`SummaryEvent`** — Emitted once at the end of execution:
    - `total_nodes: int` — Number of nodes that ran (active nodes only, excluding skipped).

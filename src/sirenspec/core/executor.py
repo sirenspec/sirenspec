@@ -863,6 +863,8 @@ async def execute_streaming(
                 writes=f"output.{node_id}",
                 status="success",
                 tokens=swrm_trace["tokens"],
+                agents=swrm_trace["agents"],
+                duration_ms=swrm_trace["duration_ms"],
             )
             continue
 
