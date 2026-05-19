@@ -1,0 +1,31 @@
+version: "0.1"
+
+agents:
+  classifier:
+    model: "openai:gpt-4o-mini"
+    system: |
+      Classify the following content as exactly one of: safe, borderline, or harmful.
+      Reply with ONLY one word.
+
+nodes:
+  classify:
+    agent: classifier
+    writes: working.content_class
+
+  moderate:
+    type: workflow
+    ref: ./docs/cookbook/content-moderation-pipeline/moderate.yaml
+    inputs:
+      classification: "{{ classify.output }}"
+    writes: output.moderated
+
+edges:
+  - from: classify
+    to: moderate
+
+guardrails:
+  - injection
+  - pii
+
+input:
+  message: "How do I write a Python script that reads all files from a directory?"
