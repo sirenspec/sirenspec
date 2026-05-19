@@ -145,17 +145,56 @@ def render_swarm_panel(event: NodeCompleteEvent, console: Console, box_style: Bo
         console.print(f"  [dim]↓ {event.writes}[/dim]")
 
 
+def render_swrm_factory_instance(instance: dict[str, Any], total: int, console: Console, box_style: Box) -> None:
+    """Render a swrm factory instance as an expanded per-agent block.
+
+    Prints a labelled divider rule, a Rich panel per agent, and (when synthesis
+    is present) a synthesis panel.
+
+    :param instance: Instance trace dict with a populated ``swrm`` key.
+    :param total: Total number of factory instances.
+    :param console: The Rich console to print to.
+    :param box_style: Rich box style (``ROUNDED`` for TTY, ``ASCII`` for pipes/CI).
+    """
+    idx = instance["index"]
+    swrm = instance["swrm"]
+    rule_style = "bold blue" if box_style is not ASCII else "default"
+    console.rule(f"[{idx + 1}/{total}]", style=rule_style)
+
+    for agent in swrm.get("agents", []):
+        render_swarm_agent_panel(agent, console, box_style)
+
+    synthesis_output = swrm.get("output")
+    if synthesis_output is not None and not isinstance(synthesis_output, list):
+        terminal_width = shutil.get_terminal_size((80, 24)).columns
+        console.print(
+            Panel(
+                format_output_content(synthesis_output),
+                title=Text(f"[{idx + 1}/{total}] synthesis", style="bold"),
+                border_style="default",
+                box=box_style,
+                width=min(terminal_width, 100),
+            )
+        )
+
+
 def render_factory_instance_panel(instance: dict[str, Any], total: int, console: Console, box_style: Box) -> None:
-    """Render a single factory instance's output as a Rich panel.
+    """Render a single factory instance's output.
 
-    Failed instances use a red border with the error message as content.
-    Successful instances display the response text with the default border.
+    Swrm factory instances are expanded into per-agent panels via
+    :func:`render_swrm_factory_instance`.  Regular agent instances and failed
+    instances render as a single Rich panel.
 
-    :param instance: Instance trace dict with keys ``index``, ``response_received``, ``duration_ms``, ``error``.
+    :param instance: Instance trace dict with keys ``index``, ``response_received``, ``swrm``,
+        ``duration_ms``, and ``error``.
     :param total: Total number of instances in the factory run.
     :param console: The Rich console to print to.
     :param box_style: Rich box style (``ROUNDED`` for TTY, ``ASCII`` for pipes/CI).
     """
+    if instance.get("swrm") is not None:
+        render_swrm_factory_instance(instance, total, console, box_style)
+        return
+
     idx = instance["index"]
     if instance.get("error"):
         content = instance["error"]
@@ -165,14 +204,15 @@ def render_factory_instance_panel(instance: dict[str, Any], total: int, console:
         border_style = "default"
 
     terminal_width = shutil.get_terminal_size((80, 24)).columns
-    panel = Panel(
-        content,
-        title=Text(f"[{idx + 1}/{total}]", style="bold"),
-        border_style=border_style,
-        box=box_style,
-        width=min(terminal_width, 100),
+    console.print(
+        Panel(
+            content,
+            title=Text(f"[{idx + 1}/{total}]", style="bold"),
+            border_style=border_style,
+            box=box_style,
+            width=min(terminal_width, 100),
+        )
     )
-    console.print(panel)
 
 
 def render_factory_panel(event: NodeCompleteEvent, console: Console, box_style: Box) -> None:
