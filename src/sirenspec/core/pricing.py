@@ -179,14 +179,17 @@ def reset_pricing_cache() -> None:
 def lookup_pricing(model_uri: str) -> ModelPricing | None:
     """Return pricing for *model_uri*, or ``None`` if the model is not known.
 
-    SirenSpec model URIs use the form ``"<provider>/<model-id>"``.  The provider
-    prefix is stripped to obtain the LiteLLM key, so ``"openai/gpt-4o-mini"``
-    resolves to LiteLLM key ``"gpt-4o-mini"``.
+    SirenSpec model URIs use the form ``"<provider>/<model-id>"`` or
+    ``"<provider>:<model-id>"``.  The provider prefix is stripped to obtain the
+    LiteLLM key, so both ``"openai/gpt-4o-mini"`` and ``"openai:gpt-4o-mini"``
+    resolve to LiteLLM key ``"gpt-4o-mini"``.
 
-    :param model_uri: A SirenSpec model URI of the form ``"<provider>/<model-id>"``.
+    :param model_uri: A SirenSpec model URI of the form ``"<provider>/<model-id>"``
+        or ``"<provider>:<model-id>"``.
     :returns: A ModelPricing instance, or None for unknown or local models.
     """
-    litellm_key = model_uri.split("/", 1)[-1] if "/" in model_uri else model_uri
+    sep = next((c for c in model_uri if c in "/:")  , None)
+    litellm_key = model_uri.split(sep, 1)[-1] if sep else model_uri
     return get_pricing().get(litellm_key)
 
 
