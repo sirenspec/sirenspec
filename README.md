@@ -7,13 +7,25 @@
 
 YAML-first agent orchestration SDK. Define multi-agent workflows in human-readable YAML and execute them against OpenAI or Anthropic backends.
 
-## Quick Start
+## Installation
 
 ```bash
-pip install sirenspec
-# or
+# uv (recommended)
 uv add sirenspec
+
+# pip
+pip install sirenspec
+
+# pipx (isolated global install)
+pipx install sirenspec
+
+# curl (auto-detects best installer)
+curl -fsSL https://sirenspec.dev/install.sh | sh
 ```
+
+Python 3.11 or later is required.
+
+## Quick Start
 
 ```bash
 export OPENAI_API_KEY=sk-...
