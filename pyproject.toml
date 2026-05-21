@@ -29,9 +29,11 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/TJLSmith0831/sirenspec"
-Repository = "https://github.com/TJLSmith0831/sirenspec"
-Issues = "https://github.com/TJLSmith0831/sirenspec/issues"
+Website = "https://sirenspec.dev"
+Documentation = "https://docs.sirenspec.dev"
+Homepage = "https://github.com/sirenspec/sirenspec"
+Repository = "https://github.com/sirenspec/sirenspec"
+Issues = "https://github.com/sirenspec/sirenspec/issues"
 
 [project.optional-dependencies]
 dev = [
