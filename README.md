@@ -10,17 +10,16 @@ YAML-first agent orchestration SDK. Define multi-agent workflows in human-readab
 ## Installation
 
 ```bash
-# uv (recommended)
-uv add sirenspec
-
-# pip
-pip install sirenspec
-
-# pipx (isolated global install)
-pipx install sirenspec
-
-# curl (auto-detects best installer)
+# curl — easiest, auto-detects uv / pipx / pip
 curl -fsSL https://sirenspec.dev/install.sh | sh
+```
+
+Or install directly with your preferred Python tool:
+
+```bash
+uv add sirenspec          # uv
+pipx install sirenspec    # pipx (isolated global install)
+pip install sirenspec     # pip
 ```
 
 Python 3.11 or later is required.
