@@ -1,0 +1,52 @@
+---
+title: Changelog
+description: Latest updates and improvements to SirenSpec.
+---
+
+<Update label="May 22, 2026" description="Weekly release">
+
+## New features
+
+**Token streaming in the CLI**
+LLM output now streams token-by-token by default when you run a workflow, so you see results as they're generated instead of waiting for the full response. Pass `--no-stream` if you'd rather see the final output all at once. See the [CLI reference](/cli-reference).
+
+**`sirenspec init` scaffolding**
+A new interactive `sirenspec init` command bootstraps a ready-to-run workflow project with a YAML spec, sensible defaults, and example structure — useful for getting from zero to a first run quickly. See the [Quickstart](/quickstart).
+
+**One-line install via curl**
+You can now install SirenSpec with a single `curl` command. The [Quickstart](/quickstart) leads with this path and the README install block has been reorganized to match.
+
+**Swrm factory mode**
+The new factory mode (`FactoryNode.swrm`) fans out a list of items across per-item parallel agents, so each input gets its own agent panel. The CLI now renders factory and swarm nodes as parallel execution blocks for clearer visibility into concurrent runs. See [Swrm](/swrm).
+
+**Nested workflow nodes**
+A new `workflow` node type lets you compose a workflow inside another workflow, enabling reuse and modular design. See [Workflow Nodes](/workflow-nodes).
+
+**Cost cap guardrail**
+Set a USD or token budget on a workflow with the new `cost_cap` guardrail. Runs are halted when the budget is exceeded, preventing surprise bills. See [Guardrails](/guardrails).
+
+**`sirenspec test` command**
+A new `sirenspec test` command runs YAML fixtures against your workflow so you can verify behavior without writing custom test harnesses. See the [CLI reference](/cli-reference).
+
+**Claude Code, Codex, OpenCode, and Gemini skill**
+The installable SirenSpec skill for coding agents now works with Claude Code, Codex, OpenCode, and Gemini. See [Claude Code Skill](/claude-code-skill).
+
+**Expanded public SDK**
+The public Python API has been broadened with new exported entry points, kept in sync with the [SDK reference](/sdk).
+
+**Dynamic provider pricing**
+Pricing now pulls live from LiteLLM with a 24-hour cache instead of relying on hardcoded values, so cost estimates stay accurate as provider pricing changes.
+
+## Updates
+
+- Run cost (`estimated_usd`) is now displayed in the CLI summary at the end of every run.
+- PyPI publishes are gated on lint and test passing, reducing the chance of broken releases.
+
+## Bug fixes
+
+- Workflow runs no longer hang silently mid-execution due to lazy imports.
+- The streaming path now only activates when a callback is present, fixing a related hang.
+- Cost lookups correctly handle provider names with a `colon:` prefix.
+- The Python version requirement in docs has been corrected to 3.11+.
+
+</Update>
