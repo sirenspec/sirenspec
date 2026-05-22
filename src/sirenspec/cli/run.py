@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -295,6 +296,18 @@ def render_node_panel(event: NodeCompleteEvent, console: Console, box_style: Box
         console.print(f"  [dim]↓ {arrow_label}[/dim]")
 
 
+def make_stream_callback() -> Callable[[str], None]:
+    """Return a callback that writes each token chunk to stdout without a trailing newline.
+
+    :returns: A callable that accepts a text chunk and flushes it to stdout immediately.
+    """
+
+    def callback(chunk: str) -> None:
+        print(chunk, end="", flush=True)  # noqa: T201
+
+    return callback
+
+
 def format_summary_line(event: SummaryEvent) -> str:
     """Produce the one-line run summary string from a :class:`SummaryEvent`.
 
@@ -316,8 +329,13 @@ async def run_streaming(
     user_input: str,
     quiet: bool,
     trace_file: str | None,
+    stream_callback: Callable[[str], None] | None = None,
 ) -> int:
     """Stream workflow execution, printing node panels to stdout.
+
+    When *stream_callback* is provided, token chunks are forwarded to it as they
+    arrive from the LLM.  A newline is printed between the streamed tokens and the
+    node panel so they don't run together visually.
 
     When *trace_file* is given, the complete trace dict is also written to that
     path as JSON after execution finishes.
@@ -326,6 +344,7 @@ async def run_streaming(
     :param user_input: The user input message to pass to the workflow.
     :param quiet: When ``True``, suppress node panels; only print the summary.
     :param trace_file: Optional file path for writing the full JSON trace.
+    :param stream_callback: Optional token-level callback passed to the executor.
     :returns: Exit code — 0 for success, 1 for failure.
     """
     console = build_console()
@@ -333,9 +352,24 @@ async def run_streaming(
     trace_nodes: list[dict[str, Any]] = []
     summary_event: SummaryEvent | None = None
 
+    # Wrap the callback to track whether any chunks were emitted for the current
+    # node so we can print a separating newline before the panel renders.
+    tokens_emitted = False
+
+    def tracking_callback(chunk: str) -> None:
+        nonlocal tokens_emitted
+        tokens_emitted = True
+        if stream_callback is not None:
+            stream_callback(chunk)
+
+    effective_callback: Callable[[str], None] | None = tracking_callback if stream_callback is not None else None
+
     try:
-        async for event in execute_streaming(workflow, user_input):
+        async for event in execute_streaming(workflow, user_input, stream_callback=effective_callback):
             if isinstance(event, NodeCompleteEvent):
+                if tokens_emitted:
+                    print()  # noqa: T201  — separate streamed tokens from the panel
+                    tokens_emitted = False
                 if not quiet:
                     render_node_panel(event, console, box_style)
                 if trace_file is not None:
@@ -435,6 +469,9 @@ def run_command(
     output_format: Annotated[
         str | None, typer.Option("--output", help="Output format. Use 'json' for raw JSON trace.")
     ] = None,
+    no_stream: Annotated[
+        bool, typer.Option("--no-stream", help="Disable token streaming; show only node panels and summary")
+    ] = False,
 ) -> None:
     """Execute a SirenSpec workflow with a streaming per-node view."""
     workflow = load_workflow_with_env(workflow_file)
@@ -453,6 +490,7 @@ def run_command(
             sys.exit(1)
         return
 
-    exit_code = asyncio.run(run_streaming(workflow, user_input, quiet, trace_file))
+    callback = None if no_stream else make_stream_callback()
+    exit_code = asyncio.run(run_streaming(workflow, user_input, quiet, trace_file, stream_callback=callback))
     if exit_code != 0:
         sys.exit(exit_code)

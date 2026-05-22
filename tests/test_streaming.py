@@ -527,6 +527,47 @@ class TestExecuteStreamingConsistencyWithExecute:
         assert summary.status == trace["summary"]["status"]
 
 
+class TestExecuteStreamingWithCallback:
+    @pytest.mark.asyncio
+    async def test_callback_receives_chunks_from_streaming_provider(self) -> None:
+        """execute_streaming forwards token chunks to stream_callback for streaming providers."""
+        wf = _minimal_workflow(streaming=True)
+        provider = _make_streaming_provider(["Hello", " world"])
+        received: list[str] = []
+
+        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=provider):
+            async for _ in execute_streaming(wf, "hi", stream_callback=received.append):
+                pass
+
+        assert received == ["Hello", " world"]
+
+    @pytest.mark.asyncio
+    async def test_no_callback_does_not_raise(self) -> None:
+        """execute_streaming runs normally when stream_callback is None."""
+        wf = _minimal_workflow(streaming=True)
+        provider = _make_streaming_provider(["response"])
+        events = []
+
+        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=provider):
+            async for event in execute_streaming(wf, "hi", stream_callback=None):
+                events.append(event)
+
+        assert any(isinstance(e, NodeCompleteEvent) and e.status == "success" for e in events)
+
+    @pytest.mark.asyncio
+    async def test_streaming_false_node_skips_callback(self) -> None:
+        """A node with streaming=False does not invoke the callback even when one is provided."""
+        wf = _minimal_workflow(streaming=False)
+        provider = _make_streaming_provider(["ignored"])
+        received: list[str] = []
+
+        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=provider):
+            async for _ in execute_streaming(wf, "hi", stream_callback=received.append):
+                pass
+
+        assert received == []
+
+
 class TestExecuteStreamingFailure:
     @pytest.mark.asyncio
     async def test_guardrail_violation_yields_failed_event_and_failed_summary(self) -> None:
@@ -638,6 +679,50 @@ class TestCliQuietFlag:
 
         assert result.exit_code == 0
         assert "Run complete" in result.output
+
+
+class TestCliNoStreamFlag:
+    def test_no_stream_suppresses_token_output(self, tmp_path: Path) -> None:
+        """--no-stream passes None callback so no token chunks are printed mid-stream."""
+        f = _write_workflow(tmp_path, MINIMAL_YAML)
+        provider = _make_streaming_provider(["Hello", " world"])
+        captured_callbacks: list = []
+
+        original_run_streaming = __import__(
+            "sirenspec.cli.run", fromlist=["run_streaming"]
+        ).run_streaming
+
+        async def spy_run_streaming(workflow, user_input, quiet, trace_file, stream_callback=None):  # type: ignore[no-untyped-def]
+            captured_callbacks.append(stream_callback)
+            return await original_run_streaming(workflow, user_input, quiet, trace_file, stream_callback=stream_callback)
+
+        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=provider):
+            with patch("sirenspec.cli.run.run_streaming", side_effect=spy_run_streaming):
+                result = runner.invoke(app, ["run", str(f), "--no-stream"])
+
+        assert result.exit_code == 0
+        assert captured_callbacks[0] is None
+
+    def test_default_streaming_passes_callback(self, tmp_path: Path) -> None:
+        """Without --no-stream the CLI passes a non-None callback to run_streaming."""
+        f = _write_workflow(tmp_path, MINIMAL_YAML)
+        provider = _make_streaming_provider(["Hello", " world"])
+        captured_callbacks: list = []
+
+        original_run_streaming = __import__(
+            "sirenspec.cli.run", fromlist=["run_streaming"]
+        ).run_streaming
+
+        async def spy_run_streaming(workflow, user_input, quiet, trace_file, stream_callback=None):  # type: ignore[no-untyped-def]
+            captured_callbacks.append(stream_callback)
+            return await original_run_streaming(workflow, user_input, quiet, trace_file, stream_callback=stream_callback)
+
+        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=provider):
+            with patch("sirenspec.cli.run.run_streaming", side_effect=spy_run_streaming):
+                result = runner.invoke(app, ["run", str(f)])
+
+        assert result.exit_code == 0
+        assert captured_callbacks[0] is not None
 
 
 class TestCliTraceFile:

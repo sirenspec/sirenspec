@@ -742,6 +742,7 @@ async def execute_streaming(
     registry: WorkflowRegistry | None = None,
     depth: int = 0,
     initial_inputs: dict[str, Any] | None = None,
+    stream_callback: Callable[[str], None] | None = None,
 ) -> AsyncGenerator[NodeCompleteEvent | SummaryEvent]:
     """Execute a workflow and yield typed events as each node completes.
 
@@ -760,6 +761,10 @@ async def execute_streaming(
     :param depth: Current nesting depth; incremented for each sub-workflow call.
     :param initial_inputs: Extra key/value pairs injected into the ``inputs`` template
         namespace. Used by workflow nodes to pass bound inputs into sub-workflows.
+    :param stream_callback: Optional callable invoked with each text chunk when an agent
+        node streams its response. Passed through to
+        :func:`~sirenspec.core.agent_runner.execute_agent_node` for each agent node that
+        has ``streaming: true``. Ignored for non-streaming nodes.
     :returns: An async generator of ``NodeCompleteEvent`` (one per node) followed
         by a final ``SummaryEvent``.
     """
@@ -1069,6 +1074,8 @@ async def execute_streaming(
                 user_input=node_input,
                 guardrail_names=guardrail_names,
                 retry_policy=retry_policy,
+                streaming=node.streaming,
+                stream_callback=stream_callback,
             )
 
             context.write(node.writes, run_result.output)
