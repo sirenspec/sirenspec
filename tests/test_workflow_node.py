@@ -8,9 +8,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import ValidationError as PydanticValidationError
 
+from sirenspec.core.executor import execute_workflow_node
 from sirenspec.core.models import WorkflowNode, parse_node
 from sirenspec.core.workflow_registry import WorkflowRegistry
-from sirenspec.core.workflow_runner import execute_workflow_node, resolve_node_inputs, resolve_sub_workflow
+from sirenspec.core.workflow_runner import resolve_node_inputs, resolve_sub_workflow
 from sirenspec.exceptions import ValidationError
 
 # ---------------------------------------------------------------------------
@@ -186,7 +187,7 @@ class TestExecuteWorkflowNode:
         }
         mock_workflow = MagicMock()
         with (
-            patch("sirenspec.core.workflow_runner.resolve_sub_workflow", return_value=mock_workflow),
+            patch("sirenspec.core.executor.resolve_sub_workflow", return_value=mock_workflow),
             patch("sirenspec.core.executor.execute", new_callable=AsyncMock, return_value=sub_trace),
         ):
             trace = await execute_workflow_node(
@@ -220,7 +221,7 @@ class TestExecuteWorkflowNode:
         mock_execute = AsyncMock(return_value=sub_trace)
 
         with (
-            patch("sirenspec.core.workflow_runner.resolve_sub_workflow", return_value=mock_workflow),
+            patch("sirenspec.core.executor.resolve_sub_workflow", return_value=mock_workflow),
             patch("sirenspec.core.executor.execute", mock_execute),
         ):
             await execute_workflow_node(
@@ -243,7 +244,7 @@ class TestExecuteWorkflowNode:
         mock_execute = AsyncMock(return_value=sub_trace)
 
         with (
-            patch("sirenspec.core.workflow_runner.resolve_sub_workflow", return_value=MagicMock()),
+            patch("sirenspec.core.executor.resolve_sub_workflow", return_value=MagicMock()),
             patch("sirenspec.core.executor.execute", mock_execute),
         ):
             await execute_workflow_node(

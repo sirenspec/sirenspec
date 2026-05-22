@@ -579,7 +579,7 @@ class TestRunFixture:
         mock_provider.last_token_usage = TokenUsage(prompt_tokens=5, completion_tokens=3)
         mock_provider.client = None
 
-        with patch("sirenspec.providers.registry._PROVIDER_FACTORIES", {"openai": lambda m: mock_provider}):
+        with patch("sirenspec.testing.runner._PROVIDER_FACTORIES", {"openai": lambda m: mock_provider}):
             asyncio.run(run_fixture(fx, cassette_path, mode="record"))
 
         assert cassette_path.exists()
@@ -622,7 +622,7 @@ class TestRunFixtures:
         mock_provider.last_token_usage = TokenUsage(prompt_tokens=2, completion_tokens=2)
         mock_provider.client = None
 
-        with patch("sirenspec.providers.registry._PROVIDER_FACTORIES", {"openai": lambda m: mock_provider}):
+        with patch("sirenspec.testing.runner._PROVIDER_FACTORIES", {"openai": lambda m: mock_provider}):
             results = run_fixtures(
                 [tmp_path / "a.test.yaml", tmp_path / "b.test.yaml"],
                 cassette_path=None,

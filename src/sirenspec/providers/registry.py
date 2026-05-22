@@ -5,49 +5,36 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from sirenspec.exceptions import ProviderError
+from sirenspec.providers.anthropic_provider import AnthropicProvider
 from sirenspec.providers.base import LLMProvider
+from sirenspec.providers.ollama_provider import OllamaProvider
+from sirenspec.providers.openai_provider import OpenAIProvider
 
 
 def make_openai_provider(model: str) -> LLMProvider:
     """Instantiate an OpenAIProvider for the given model.
 
-    The import is inside the function so that the ``openai`` SDK is only loaded
-    when this provider is actually used — avoiding a startup-time import error
-    if the package is not installed.
-
     :param model: Model identifier (e.g. ``'gpt-4o-mini'``).
     :returns: Configured :class:`~sirenspec.providers.openai_provider.OpenAIProvider`.
     """
-    from sirenspec.providers.openai_provider import OpenAIProvider
-
     return OpenAIProvider(model=model)
 
 
 def make_anthropic_provider(model: str) -> LLMProvider:
     """Instantiate an AnthropicProvider for the given model.
 
-    The import is inside the function so that the ``anthropic`` SDK is only loaded
-    when this provider is actually used.
-
     :param model: Model identifier (e.g. ``'claude-haiku-4-5-20251001'``).
     :returns: Configured :class:`~sirenspec.providers.anthropic_provider.AnthropicProvider`.
     """
-    from sirenspec.providers.anthropic_provider import AnthropicProvider
-
     return AnthropicProvider(model=model)
 
 
 def make_ollama_provider(model: str) -> LLMProvider:
     """Instantiate an OllamaProvider for the given model.
 
-    The import is inside the function so that the ``ollama`` SDK is only loaded
-    when this provider is actually used.
-
     :param model: Model identifier (e.g. ``'llama3'``).
     :returns: Configured :class:`~sirenspec.providers.ollama_provider.OllamaProvider`.
     """
-    from sirenspec.providers.ollama_provider import OllamaProvider
-
     return OllamaProvider(model=model)
 
 

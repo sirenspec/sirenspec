@@ -29,8 +29,8 @@ from sirenspec.core.swrm_runner import execute_swrm
 from sirenspec.core.tool_runner import execute_tool_node
 from sirenspec.core.usage import TokenUsage
 from sirenspec.core.workflow_registry import WorkflowRegistry
-from sirenspec.core.workflow_runner import execute_workflow_node
-from sirenspec.exceptions import BudgetExceededError, RetryExhaustedError
+from sirenspec.core.workflow_runner import resolve_node_inputs, resolve_sub_workflow
+from sirenspec.exceptions import BudgetExceededError, RetryExhaustedError, ValidationError
 from sirenspec.guardrails.base import GuardrailViolation, WorkflowGuardrail
 from sirenspec.guardrails.registry import build_guardrails
 
@@ -231,6 +231,57 @@ def resolve_on_failure_policy(workflow: Workflow, node_id: str) -> OnFailurePoli
     if workflow.defaults and workflow.defaults.on_failure is not None:
         return workflow.defaults.on_failure
     return OnFailurePolicy()
+
+
+async def execute_workflow_node(
+    node_id: str,
+    node: WorkflowNode,
+    user_input: str,
+    working: dict[str, Any],
+    registry: WorkflowRegistry | None,
+    depth: int,
+) -> dict[str, Any]:
+    """Execute a sub-workflow node and return a structured trace dict.
+
+    The sub-workflow runs inline and blocking.  Its output dict (keyed by sub-node ID)
+    is returned as ``output`` in the trace so the executor can write it into the parent
+    context.
+
+    :param node_id: The parent node's identifier (used in error messages and the trace).
+    :param node: The :class:`~sirenspec.core.models.WorkflowNode` definition.
+    :param user_input: The parent workflow's user input string (passed through to the sub-workflow).
+    :param working: The parent workflow's current ``working`` dict, used to resolve ``inputs``.
+    :param registry: Optional registry for named workflow refs.
+    :param depth: Current nesting depth (0 = top-level parent).
+    :raises ValidationError: If the nesting depth exceeds ``node.max_depth``.
+    :returns: Trace dict with keys ``id``, ``type``, ``ref``, ``inputs``, ``output``,
+        ``tokens``, ``duration_ms``, ``sub_trace``, and ``error``.
+    """
+    if depth >= node.max_depth:
+        raise ValidationError(f"Max workflow nesting depth {node.max_depth} exceeded at node '{node_id}'")
+
+    sub_workflow = resolve_sub_workflow(node.ref, registry)
+    resolved_inputs = resolve_node_inputs(node, user_input, working)
+
+    sub_trace = await execute(
+        sub_workflow,
+        user_input,
+        registry=registry,
+        depth=depth + 1,
+        initial_inputs=resolved_inputs,
+    )
+
+    return {
+        "id": node_id,
+        "type": "workflow",
+        "ref": node.ref,
+        "inputs": resolved_inputs,
+        "output": sub_trace["output"],
+        "tokens": sub_trace["summary"]["total_tokens"],
+        "duration_ms": sub_trace["summary"]["total_duration_ms"],
+        "sub_trace": sub_trace,
+        "error": None,
+    }
 
 
 async def execute(

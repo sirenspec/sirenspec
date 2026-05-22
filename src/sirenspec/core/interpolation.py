@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -316,8 +317,6 @@ def _topological_sort_deps(node_ids: set[str], deps: dict[str, set[str]]) -> lis
     :raises ValueError: If a cycle is detected.
     :returns: Topologically sorted list of node IDs.
     """
-    from collections import deque
-
     in_degree: dict[str, int] = dict.fromkeys(node_ids, 0)
     adjacency: dict[str, list[str]] = {nid: [] for nid in node_ids}
 

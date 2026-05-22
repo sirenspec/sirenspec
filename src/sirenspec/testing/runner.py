@@ -11,7 +11,8 @@ from pydantic import ValidationError
 from ruamel.yaml import YAML
 
 from sirenspec.core.executor import execute
-from sirenspec.providers.registry import set_provider_override
+from sirenspec.exceptions import ProviderError
+from sirenspec.providers.registry import _PROVIDER_FACTORIES, set_provider_override
 from sirenspec.testing.assertions import AssertionResult, evaluate_assertion
 from sirenspec.testing.cassette import (
     Cassette,
@@ -123,18 +124,13 @@ def make_recording_factory(cassette: Cassette):
     :param cassette: The cassette to append recorded interactions to.
     :returns: A ``(uri: str) -> LLMProvider`` callable suitable for :func:`~sirenspec.providers.registry.set_provider_override`.
     """
-    from sirenspec.providers.registry import _PROVIDER_FACTORIES
 
     def factory(uri: str) -> RecordingProvider:
         if ":" not in uri:
-            from sirenspec.exceptions import ProviderError
-
             raise ProviderError(f"Malformed provider URI '{uri}'")
         provider_name, _, model = uri.partition(":")
         real_factory = _PROVIDER_FACTORIES.get(provider_name)
         if real_factory is None:
-            from sirenspec.exceptions import ProviderError
-
             raise ProviderError(f"Unknown provider '{provider_name}'")
         real = real_factory(model)
         return RecordingProvider(uri=uri, real_provider=real, cassette=cassette)
