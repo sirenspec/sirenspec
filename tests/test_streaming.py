@@ -228,8 +228,13 @@ class TestExecuteAgentNodeStreaming:
                 )
 
     @pytest.mark.asyncio
-    async def test_no_callback_still_streams(self) -> None:
-        """Streaming works without a callback — output is still assembled correctly."""
+    async def test_no_callback_falls_back_to_complete(self) -> None:
+        """When stream_callback is None, complete() is used even for streaming-capable providers.
+
+        This prevents the streaming API path from being taken when no caller is
+        listening — avoiding unnecessary complexity and potential hangs on API
+        endpoints that behave differently for streaming vs non-streaming requests.
+        """
         provider = _make_streaming_provider(["chunk1", "chunk2"])
 
         with patch("sirenspec.core.agent_runner.resolve_provider", return_value=provider):
@@ -244,6 +249,7 @@ class TestExecuteAgentNodeStreaming:
                 stream_callback=None,
             )
 
+        provider.complete.assert_called_once()
         assert result.output == "chunk1chunk2"
 
 

@@ -115,7 +115,7 @@ async def execute_agent_node(
 
     start = time.monotonic()
 
-    use_streaming = streaming and isinstance(provider, StreamingLLMProvider)
+    use_streaming = streaming and stream_callback is not None and isinstance(provider, StreamingLLMProvider)
 
     if use_streaming:
         effective_callback: Callable[[str], None] = stream_callback if stream_callback is not None else lambda _: None
