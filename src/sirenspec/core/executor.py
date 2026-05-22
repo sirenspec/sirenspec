@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from collections import defaultdict, deque
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from typing import Any
 
 from sirenspec.core.agent_runner import execute_agent_node
@@ -239,6 +239,7 @@ async def execute(
     registry: WorkflowRegistry | None = None,
     depth: int = 0,
     initial_inputs: dict[str, Any] | None = None,
+    stream_callback: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """Execute a workflow and return a structured JSON-serialisable trace.
 
@@ -267,6 +268,10 @@ async def execute(
     :param depth: Current nesting depth; incremented for each sub-workflow call.
     :param initial_inputs: Extra key/value pairs injected into the ``inputs`` template
         namespace. Used by workflow nodes to pass bound inputs into sub-workflows.
+    :param stream_callback: Optional callable invoked with each text chunk when an agent
+        node streams its response. Passed through to
+        :func:`~sirenspec.core.agent_runner.execute_agent_node` for each agent node that
+        has ``streaming: true``. Ignored for non-streaming nodes.
     :returns: Execution trace dict with workflow metadata, per-node entries, and summary.
     """
     context = WorkflowContext(initial_state=workflow.state)
@@ -602,6 +607,8 @@ async def execute(
                 user_input=node_input,
                 guardrail_names=guardrail_names,
                 retry_policy=retry_policy,
+                streaming=node.streaming,
+                stream_callback=stream_callback,
             )
 
             context.write(node.writes, run_result.output)
