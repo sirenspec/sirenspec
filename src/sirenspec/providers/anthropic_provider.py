@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from collections.abc import AsyncIterator
 
 from anthropic import AsyncAnthropic
 
@@ -11,7 +12,7 @@ from sirenspec.core.usage import TokenUsage
 
 
 class AnthropicProvider:
-    """Wraps anthropic.AsyncAnthropic to satisfy the LLMProvider protocol."""
+    """Wraps anthropic.AsyncAnthropic to satisfy the StreamingLLMProvider protocol."""
 
     def __init__(self, model: str) -> None:
         self.model = model
@@ -61,6 +62,40 @@ class AnthropicProvider:
             completion_tokens=response.usage.output_tokens,
         )
         return response.content[0].text
+
+    async def stream(self, messages: list[dict]) -> AsyncIterator[str]:
+        """Stream the Anthropic messages API and yield text chunks.
+
+        Extracts any system message from *messages* and passes it as the
+        ``system`` kwarg, matching the same behaviour as :meth:`complete`.
+        Token counts are captured from the stream's usage metadata after the
+        stream completes.
+
+        :param messages: List of ``{"role": ..., "content": ...}`` dicts; any system
+            message is extracted and passed separately.
+        :returns: An async iterator that yields text chunks as they arrive.
+        """
+        system_prompt = ""
+        user_messages: list[dict] = []
+
+        for msg in messages:
+            if msg.get("role") == "system":
+                system_prompt = msg.get("content", "")
+            else:
+                user_messages.append(msg)
+
+        kwargs: dict = {"model": self.model, "max_tokens": 4096, "messages": user_messages}
+        if system_prompt:
+            kwargs["system"] = system_prompt
+
+        async with self.client.messages.stream(**kwargs) as stream:
+            async for text in stream.text_stream:
+                yield text
+            usage = (await stream.get_final_message()).usage
+            self._last_token_usage = TokenUsage(
+                prompt_tokens=usage.input_tokens,
+                completion_tokens=usage.output_tokens,
+            )
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Protocol, runtime_checkable
 
 from sirenspec.core.usage import TokenUsage
@@ -26,4 +27,20 @@ class LLMProvider(Protocol):
     @property
     def client(self) -> object:
         """Return the underlying client object for direct access."""
+        ...
+
+
+class StreamingLLMProvider(LLMProvider, Protocol):
+    """Extension of LLMProvider for providers that support token streaming.
+
+    Providers that implement this protocol yield text chunks incrementally.
+    Callers can detect streaming support with ``isinstance(provider, StreamingLLMProvider)``.
+    """
+
+    async def stream(self, messages: list[dict]) -> AsyncIterator[str]:
+        """Stream *messages* to the LLM and yield response text chunks.
+
+        :param messages: List of ``{"role": ..., "content": ...}`` dicts.
+        :returns: An async iterator that yields text chunks as they arrive.
+        """
         ...

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from collections.abc import AsyncIterator
 
 from openai import AsyncOpenAI
 
@@ -11,7 +12,7 @@ from sirenspec.core.usage import TokenUsage
 
 
 class OpenAIProvider:
-    """Wraps openai.AsyncOpenAI to satisfy the LLMProvider protocol."""
+    """Wraps openai.AsyncOpenAI to satisfy the StreamingLLMProvider protocol."""
 
     def __init__(self, model: str) -> None:
         self.model = model
@@ -54,6 +55,35 @@ class OpenAIProvider:
             self._last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=0)
         content = response.choices[0].message.content
         return content or ""
+
+    async def stream(self, messages: list[dict]) -> AsyncIterator[str]:
+        """Stream the OpenAI chat completions API and yield text chunks.
+
+        Accumulates total character length as a token-count approximation
+        (chars / 4) stored in ``last_token_count`` after the stream completes.
+        If the final chunk includes a ``usage`` field, that value is used instead.
+
+        :param messages: List of ``{"role": ..., "content": ...}`` dicts.
+        :returns: An async iterator that yields text chunks as they arrive.
+        """
+        response = await self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            stream=True,
+            stream_options={"include_usage": True},
+        )
+        char_count = 0
+        usage_tokens: int | None = None
+        async for chunk in response:
+            if chunk.usage is not None:
+                usage_tokens = chunk.usage.total_tokens
+            if chunk.choices:
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    char_count += len(delta)
+                    yield delta
+        total = usage_tokens if usage_tokens is not None else char_count // 4
+        self._last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=total)
 
 
 if __name__ == "__main__":
