@@ -19,7 +19,7 @@ Initial public release.
 - **Guardrails** — prompt injection detection, length limits, PII redaction, JSON Schema output validation, and cost cap enforcement
 - **Retry policies** — configurable per-node retry with backoff
 - **Token usage accounting** — per-node and per-run token tracking
-- **CLI** — five commands: `run`, `validate`, `test`, `explain`, `render`
+- **CLI** — six commands: `run`, `validate`, `test`, `explain`, `render`, `init`
 - **Cassette-based testing** — deterministic, reproducible agent tests via YAML fixture recording (`sirenspec test`)
 - **JSON Schema artifact** — `sirenspec.schema.json` for IDE autocomplete on workflow files
 - **12 cookbook recipes** — runnable examples from simple pipelines to adversarial agent pairs
