@@ -457,7 +457,6 @@ def resolve_user_input(workflow: Workflow, input_message: str | None) -> str:
     return user_input
 
 
-
 def run_command(
     workflow_file: Annotated[str, typer.Argument(help="Path to the workflow YAML file")],
     input_message: Annotated[str | None, typer.Option("--input", "-i", help="User input message")] = None,

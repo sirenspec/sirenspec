@@ -694,13 +694,13 @@ class TestCliNoStreamFlag:
         provider = _make_streaming_provider(["Hello", " world"])
         captured_callbacks: list = []
 
-        original_run_streaming = __import__(
-            "sirenspec.cli.run", fromlist=["run_streaming"]
-        ).run_streaming
+        original_run_streaming = __import__("sirenspec.cli.run", fromlist=["run_streaming"]).run_streaming
 
         async def spy_run_streaming(workflow, user_input, quiet, trace_file, stream_callback=None):  # type: ignore[no-untyped-def]
             captured_callbacks.append(stream_callback)
-            return await original_run_streaming(workflow, user_input, quiet, trace_file, stream_callback=stream_callback)
+            return await original_run_streaming(
+                workflow, user_input, quiet, trace_file, stream_callback=stream_callback
+            )
 
         with patch("sirenspec.core.agent_runner.resolve_provider", return_value=provider):
             with patch("sirenspec.cli.run.run_streaming", side_effect=spy_run_streaming):
@@ -715,13 +715,13 @@ class TestCliNoStreamFlag:
         provider = _make_streaming_provider(["Hello", " world"])
         captured_callbacks: list = []
 
-        original_run_streaming = __import__(
-            "sirenspec.cli.run", fromlist=["run_streaming"]
-        ).run_streaming
+        original_run_streaming = __import__("sirenspec.cli.run", fromlist=["run_streaming"]).run_streaming
 
         async def spy_run_streaming(workflow, user_input, quiet, trace_file, stream_callback=None):  # type: ignore[no-untyped-def]
             captured_callbacks.append(stream_callback)
-            return await original_run_streaming(workflow, user_input, quiet, trace_file, stream_callback=stream_callback)
+            return await original_run_streaming(
+                workflow, user_input, quiet, trace_file, stream_callback=stream_callback
+            )
 
         with patch("sirenspec.core.agent_runner.resolve_provider", return_value=provider):
             with patch("sirenspec.cli.run.run_streaming", side_effect=spy_run_streaming):
