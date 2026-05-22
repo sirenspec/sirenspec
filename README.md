@@ -35,14 +35,18 @@ Python 3.13 is required.
 
 Execute a workflow and print a JSON execution trace to stdout.
 
+By default, agent tokens are streamed to stdout as they arrive so you see output immediately. After all nodes complete, a newline is printed followed by the full JSON trace.
+
 ```bash
 sirenspec run workflow.yaml
 sirenspec run workflow.yaml --input "What is the speed of light?"
-sirenspec run workflow.yaml | jq -r '.output[]'
+sirenspec run workflow.yaml --no-stream          # disable streaming; print only the JSON trace
+sirenspec run workflow.yaml --no-stream | jq -r '.output[]'
 ```
 
 Options:
 - `--input / -i` — User message (overrides `input.message` in the YAML)
+- `--no-stream` — Disable token streaming; only the final JSON trace is printed
 
 Exit code `0` on success, `1` on failure.
 
@@ -87,13 +91,13 @@ guardrails:                              # workflow-level guardrails
 
 ### Provider URIs
 
-Credentials are read from environment variables:
+Credentials are read from environment variables. All three built-in providers support token streaming.
 
-| Provider | URI format | Environment variable |
-|----------|-----------|----------------------|
-| OpenAI | `openai:gpt-4o-mini` | `OPENAI_API_KEY` |
-| Anthropic | `anthropic:claude-haiku-4-5-20251001` | `ANTHROPIC_API_KEY` |
-| Ollama | `ollama:llama3` | _(none required)_ |
+| Provider | URI format | Environment variable | Streaming |
+|----------|-----------|----------------------|-----------|
+| OpenAI | `openai:gpt-4o-mini` | `OPENAI_API_KEY` | Yes |
+| Anthropic | `anthropic:claude-haiku-4-5-20251001` | `ANTHROPIC_API_KEY` | Yes |
+| Ollama | `ollama:llama3` | _(none required)_ | Yes |
 
 ### `env_file`
 
@@ -130,11 +134,16 @@ Use `{{ expr }}` in system prompts and agent prompts to reference runtime values
 
 Classic single-agent node. Runs one LLM call and writes the output to a context path.
 
+Streaming is **on by default** (`streaming: true`). Each agent node streams tokens to stdout when run via `sirenspec run`. Set `streaming: false` on individual nodes to opt out, or use `--no-stream` at the CLI level.
+
+Guardrails always apply to the **fully assembled response** after streaming completes — they are not applied per-chunk.
+
 ```yaml
 nodes:
   classify:
     agent: my_agent
     writes: working.intent
+    streaming: true          # default — stream tokens to stdout
     retry:
       max_attempts: 3
       backoff: exponential

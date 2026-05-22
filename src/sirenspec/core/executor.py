@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from collections import defaultdict, deque
+from collections.abc import Callable
 from typing import Any
 
 from sirenspec.core.agent_runner import execute_agent_node
@@ -40,9 +41,7 @@ def interpolate_tool_config(node: ToolNode, ctx: InterpolationContext) -> ToolNo
         return node
     cfg = node.config
     interpolated_url = resolve_template(cfg.url, ctx)
-    interpolated_headers = (
-        {k: resolve_template(v, ctx) for k, v in cfg.headers.items()} if cfg.headers else None
-    )
+    interpolated_headers = {k: resolve_template(v, ctx) for k, v in cfg.headers.items()} if cfg.headers else None
     interpolated_body = resolve_template(cfg.body, ctx) if cfg.body is not None else None
     new_config = HttpToolConfig(
         url=interpolated_url,
@@ -196,7 +195,11 @@ def resolve_on_failure_policy(workflow: Workflow, node_id: str) -> OnFailurePoli
     return OnFailurePolicy()
 
 
-async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
+async def execute(
+    workflow: Workflow,
+    user_input: str,
+    stream_callback: Callable[[str], None] | None = None,
+) -> dict[str, Any]:
     """Execute a workflow and return a structured JSON-serialisable trace.
 
     **Execution model**
@@ -218,6 +221,10 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
 
     :param workflow: Validated :class:`~sirenspec.core.models.Workflow` instance.
     :param user_input: The initial user message.
+    :param stream_callback: Optional callable invoked with each text chunk when an agent
+        node streams its response. Passed through to
+        :func:`~sirenspec.core.agent_runner.execute_agent_node` for each agent node that
+        has ``streaming: true``. Ignored for non-streaming nodes.
     :returns: Execution trace dict with workflow metadata, per-node entries, and summary.
     """
     context = WorkflowContext(initial_state=workflow.state)
@@ -472,6 +479,8 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
                 user_input=node_input,
                 guardrail_names=guardrail_names,
                 retry_policy=retry_policy,
+                streaming=node.streaming,
+                stream_callback=stream_callback,
             )
 
             context.write(node.writes, run_result.output)

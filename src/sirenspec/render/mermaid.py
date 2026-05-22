@@ -14,7 +14,7 @@ def swrm_subgraph_lines(node_id: str, node: SwrmNode) -> list[str]:
     """
     lines: list[str] = [f"    subgraph {node_id}"]
     agent_mermaid_ids = [f"{node_id}_{a.id}" for a in node.agents]
-    for agent, aid in zip(node.agents, agent_mermaid_ids):
+    for agent, aid in zip(node.agents, agent_mermaid_ids, strict=False):
         lines.append(f"        {aid}[{agent.id}]")
     if node.synthesis:
         synth_id = swrm_synthesis_id(node_id)

@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 from sirenspec.core.models import RetryPolicy
 from sirenspec.core.retry import run_with_retry
 from sirenspec.guardrails.registry import build_guardrails
+from sirenspec.providers.base import StreamingLLMProvider
 from sirenspec.providers.registry import resolve_provider
 
 
@@ -30,6 +32,21 @@ class AgentRunResult:
     retry_attempts: list[dict[str, Any]] = field(default_factory=list)
 
 
+async def collect_stream(provider: StreamingLLMProvider, messages: list[dict], callback: Callable[[str], None]) -> str:
+    """Consume a provider stream, invoke *callback* for each chunk, and return the full text.
+
+    :param provider: A streaming-capable provider instance.
+    :param messages: List of ``{"role": ..., "content": ...}`` dicts passed to the stream.
+    :param callback: Called with each text chunk as it arrives from the provider.
+    :returns: The fully assembled response text.
+    """
+    chunks: list[str] = []
+    async for chunk in provider.stream(messages):
+        callback(chunk)
+        chunks.append(chunk)
+    return "".join(chunks)
+
+
 async def execute_agent_node(
     node_id: str,
     model_uri: str,
@@ -37,8 +54,20 @@ async def execute_agent_node(
     user_input: str,
     guardrail_names: list[str] | None,
     retry_policy: RetryPolicy,
+    streaming: bool = True,
+    stream_callback: Callable[[str], None] | None = None,
 ) -> AgentRunResult:
     """Execute a single agent call: apply guardrails, call the provider with retry, check output.
+
+    When *streaming* is ``True`` and the provider supports the
+    :class:`~sirenspec.providers.base.StreamingLLMProvider` protocol, tokens are
+    streamed incrementally.  Each chunk is forwarded to *stream_callback* as it
+    arrives.  Guardrails still run against the fully assembled response after the
+    stream completes.
+
+    When *streaming* is ``False``, or when the provider does not implement
+    :meth:`~sirenspec.providers.base.StreamingLLMProvider.stream`, the non-streaming
+    :meth:`~sirenspec.providers.base.LLMProvider.complete` path is used instead.
 
     :param node_id: Node identifier used in retry error messages.
     :param model_uri: Provider URI in ``'provider:model'`` format (e.g. ``'openai:gpt-4o-mini'``).
@@ -49,6 +78,9 @@ async def execute_agent_node(
         Pass ``[]`` to explicitly disable all guardrails.
         These two cases are NOT the same — None is never silently coerced to [].
     :param retry_policy: Policy governing retry behaviour on provider failure.
+    :param streaming: Whether to use token-by-token streaming when supported.
+    :param stream_callback: Optional callable invoked with each text chunk during streaming.
+        Ignored when *streaming* is ``False`` or the provider does not support streaming.
     :raises GuardrailViolation: If any guardrail rejects the input or output.
     :raises RetryExhaustedError: If the provider fails on all retry attempts.
     :returns: :class:`AgentRunResult` with output, token count, timing, and audit trail.
@@ -82,12 +114,21 @@ async def execute_agent_node(
 
     start = time.monotonic()
 
-    # run_with_retry requires a zero-argument async callable so it can re-invoke
-    # the provider on each retry without needing to know about messages or the provider.
-    async def call() -> str:
-        return await provider.complete(messages)
+    use_streaming = streaming and isinstance(provider, StreamingLLMProvider)
 
-    output = await run_with_retry(node_id=node_id, policy=retry_policy, call=call, on_attempt=log_retry)
+    if use_streaming:
+        effective_callback: Callable[[str], None] = stream_callback if stream_callback is not None else lambda _: None
+
+        async def stream_call() -> str:
+            return await collect_stream(provider, messages, effective_callback)
+
+        output = await run_with_retry(node_id=node_id, policy=retry_policy, call=stream_call, on_attempt=log_retry)
+    else:
+
+        async def complete_call() -> str:
+            return await provider.complete(messages)
+
+        output = await run_with_retry(node_id=node_id, policy=retry_policy, call=complete_call, on_attempt=log_retry)
 
     # Read token count after the retry loop completes; the provider updates
     # last_token_count after every successful call, so this always reflects the

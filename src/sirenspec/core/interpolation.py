@@ -278,7 +278,9 @@ def check_circular_template_refs(workflow: Workflow) -> None:
     try:
         _topological_sort_deps(node_ids, deps)
     except ValueError as exc:
-        raise InterpolationError("", "circular_ref", "Circular template reference detected among workflow nodes") from exc
+        raise InterpolationError(
+            "", "circular_ref", "Circular template reference detected among workflow nodes"
+        ) from exc
 
 
 def _topological_sort_deps(node_ids: set[str], deps: dict[str, set[str]]) -> list[str]:

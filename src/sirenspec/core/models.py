@@ -150,6 +150,7 @@ class AgentNode(BaseModel):
     type: Literal["agent"] | None = None  # ``None`` means the field is omitted (backward compat)
     agent: str
     writes: str
+    streaming: bool = Field(default=True, description="When True, use token streaming if the provider supports it.")
     retry: RetryPolicy | None = None
     on_failure: OnFailurePolicy | None = None
 
