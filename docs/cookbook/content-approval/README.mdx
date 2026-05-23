@@ -7,7 +7,7 @@ A draft is generated, the workflow pauses to ask the operator to approve it, and
 
 ## What it demonstrates
 
-- The `human` node type (new in v0.1.x)
+- The `human` node type
 - Resolving `{{ draft.output }}` inside the prompt shown to the operator
 - A `when:` edge that only routes to `publish` if the human answered `"yes"`
 - `timeout` + `on_timeout: use_default` so an unattended workflow doesn't hang forever

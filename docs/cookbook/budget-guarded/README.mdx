@@ -7,7 +7,7 @@ A three-agent research-and-report pipeline with hard ceilings on tokens, cost, a
 
 ## What it demonstrates
 
-- The top-level `budget:` block (new in v0.1.x)
+- The top-level `budget:` block
 - `on_exceeded: skip_remaining` — the workflow finishes cleanly instead of crashing
 - Per-node `max_tokens_per_call` — each agent's response is independently bounded
 - The `budget` block embedded in the run summary, so callers can see how close they came to each ceiling
