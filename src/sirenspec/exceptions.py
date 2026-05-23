@@ -125,6 +125,25 @@ class BudgetExceededError(GuardrailError):
         self.estimated_usd = estimated_usd
 
 
+class HumanInputError(SirenSpecError):
+    """Raised when a :class:`~sirenspec.core.models.HumanNode` fails to obtain input.
+
+    Used when a human-in-the-loop node aborts because no response was provided within
+    the configured timeout and ``on_timeout`` is ``'abort'``, or when stdin is closed
+    before any input is received and no default is configured.
+
+    :param node_id: The HumanNode's identifier.
+    :param reason: Human-readable description of the failure mode.
+    :param timed_out: ``True`` when the failure is specifically a timeout expiry.
+    """
+
+    def __init__(self, node_id: str, reason: str, timed_out: bool = False) -> None:
+        super().__init__(f"Human node '{node_id}' failed: {reason}")
+        self.node_id = node_id
+        self.reason = reason
+        self.timed_out = timed_out
+
+
 class FactoryNodeError(SirenSpecError):
     """Raised when a factory node instance fails and ``on_failure`` is ``'abort'``.
 

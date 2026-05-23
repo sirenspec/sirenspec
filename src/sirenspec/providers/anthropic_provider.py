@@ -36,11 +36,13 @@ class AnthropicProvider:
         """
         return self._client
 
-    async def complete(self, messages: list[dict]) -> str:
+    async def complete(self, messages: list[dict], max_tokens: int | None = None) -> str:
         """Call the Anthropic messages API and return the response text.
 
         :param messages: List of ``{"role": ..., "content": ...}`` dicts; any system
             message is extracted and passed separately.
+        :param max_tokens: Optional ceiling forwarded as the ``max_tokens`` API param;
+            defaults to 4096 when omitted (Anthropic requires the field).
         :returns: The assistant reply text.
         """
         system_prompt = ""
@@ -52,7 +54,11 @@ class AnthropicProvider:
             else:
                 user_messages.append(msg)
 
-        kwargs: dict = {"model": self.model, "max_tokens": 4096, "messages": user_messages}
+        kwargs: dict = {
+            "model": self.model,
+            "max_tokens": max_tokens if max_tokens is not None else 4096,
+            "messages": user_messages,
+        }
         if system_prompt:
             kwargs["system"] = system_prompt
 
@@ -63,7 +69,7 @@ class AnthropicProvider:
         )
         return response.content[0].text
 
-    async def stream(self, messages: list[dict]) -> AsyncIterator[str]:
+    async def stream(self, messages: list[dict], max_tokens: int | None = None) -> AsyncIterator[str]:
         """Stream the Anthropic messages API and yield text chunks.
 
         Extracts any system message from *messages* and passes it as the
@@ -73,6 +79,8 @@ class AnthropicProvider:
 
         :param messages: List of ``{"role": ..., "content": ...}`` dicts; any system
             message is extracted and passed separately.
+        :param max_tokens: Optional ceiling forwarded as the ``max_tokens`` API param;
+            defaults to 4096 when omitted (Anthropic requires the field).
         :returns: An async iterator that yields text chunks as they arrive.
         """
         system_prompt = ""
@@ -84,7 +92,11 @@ class AnthropicProvider:
             else:
                 user_messages.append(msg)
 
-        kwargs: dict = {"model": self.model, "max_tokens": 4096, "messages": user_messages}
+        kwargs: dict = {
+            "model": self.model,
+            "max_tokens": max_tokens if max_tokens is not None else 4096,
+            "messages": user_messages,
+        }
         if system_prompt:
             kwargs["system"] = system_prompt
 

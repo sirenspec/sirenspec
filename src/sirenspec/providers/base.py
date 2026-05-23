@@ -12,8 +12,15 @@ from sirenspec.core.usage import TokenUsage
 class LLMProvider(Protocol):
     """Async LLM provider interface."""
 
-    async def complete(self, messages: list[dict]) -> str:
-        """Send *messages* to the LLM and return the response text."""
+    async def complete(self, messages: list[dict], max_tokens: int | None = None) -> str:
+        """Send *messages* to the LLM and return the response text.
+
+        :param messages: List of ``{"role": ..., "content": ...}`` dicts.
+        :param max_tokens: Optional ceiling on completion tokens for this call.
+            ``None`` means use the provider's default.  When supported, the provider
+            forwards this to the underlying API so the model truncates its own response.
+        :returns: The assistant reply text.
+        """
         ...
 
     @property
@@ -37,10 +44,12 @@ class StreamingLLMProvider(LLMProvider, Protocol):
     Callers can detect streaming support with ``isinstance(provider, StreamingLLMProvider)``.
     """
 
-    async def stream(self, messages: list[dict]) -> AsyncIterator[str]:
+    async def stream(self, messages: list[dict], max_tokens: int | None = None) -> AsyncIterator[str]:
         """Stream *messages* to the LLM and yield response text chunks.
 
         :param messages: List of ``{"role": ..., "content": ...}`` dicts.
+        :param max_tokens: Optional ceiling on completion tokens for this call.
+            ``None`` means use the provider's default.
         :returns: An async iterator that yields text chunks as they arrive.
         """
         ...
