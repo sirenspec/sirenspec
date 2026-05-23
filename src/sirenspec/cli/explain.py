@@ -11,7 +11,17 @@ import typer
 from rich.console import Console
 
 from sirenspec.core.executor import topological_sort
-from sirenspec.core.models import AgentNode, AnyNode, Edge, FactoryNode, SwrmNode, ToolNode, Workflow
+from sirenspec.core.models import (
+    AgentNode,
+    AnyNode,
+    Edge,
+    FactoryNode,
+    HumanNode,
+    SwrmNode,
+    ToolNode,
+    Workflow,
+    WorkflowNode,
+)
 from sirenspec.yaml.parser import load_workflow
 
 _err = Console(stderr=True)
@@ -57,6 +67,11 @@ def node_type_info(node: AnyNode, workflow: Workflow) -> str:
         agent_def = workflow.agents.get(node.agent)
         model_uri = agent_def.model if agent_def else "unknown"
         return f"factory agent={node.agent} ({model_uri})"
+    if isinstance(node, HumanNode):
+        timeout_label = f", timeout={node.timeout}s" if node.timeout is not None else ""
+        return f"human ({node.on_timeout}{timeout_label})"
+    if isinstance(node, WorkflowNode):
+        return f"workflow ref={node.ref}"
     return "unknown"
 
 
@@ -69,6 +84,10 @@ def node_writes_path(node: AnyNode) -> str | None:
     if isinstance(node, AgentNode):
         return node.writes
     if isinstance(node, FactoryNode):
+        return node.writes
+    if isinstance(node, HumanNode):
+        return node.writes
+    if isinstance(node, WorkflowNode):
         return node.writes
     if isinstance(node, ToolNode):
         return f"working.<node_id>.{node.output_key}"
@@ -198,13 +217,7 @@ def build_plan(workflow: Workflow, workflow_name: str) -> dict[str, Any]:
         node_plans.append(
             {
                 "id": node_id,
-                "type": "agent"
-                if isinstance(node, AgentNode)
-                else "tool"
-                if isinstance(node, ToolNode)
-                else "swrm"
-                if isinstance(node, SwrmNode)
-                else "factory",
+                "type": type(node).__name__.lower().removesuffix("node"),
                 "type_info": node_type_info(node, workflow),
                 "agent": node.agent if isinstance(node, (AgentNode, FactoryNode)) else None,
                 "model": (

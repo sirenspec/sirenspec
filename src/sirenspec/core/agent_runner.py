@@ -33,16 +33,27 @@ class AgentRunResult:
     retry_attempts: list[dict[str, Any]] = field(default_factory=list)
 
 
-async def collect_stream(provider: StreamingLLMProvider, messages: list[dict], callback: Callable[[str], None]) -> str:
+async def collect_stream(
+    provider: StreamingLLMProvider,
+    messages: list[dict],
+    callback: Callable[[str], None],
+    max_tokens: int | None = None,
+) -> str:
     """Consume a provider stream, invoke *callback* for each chunk, and return the full text.
 
     :param provider: A streaming-capable provider instance.
     :param messages: List of ``{"role": ..., "content": ...}`` dicts passed to the stream.
     :param callback: Called with each text chunk as it arrives from the provider.
+    :param max_tokens: Optional ceiling forwarded to the provider for this stream call.
     :returns: The fully assembled response text.
     """
     chunks: list[str] = []
-    async for chunk in provider.stream(messages):
+    # Only pass max_tokens when set so providers and mocks that pre-date the kwarg
+    # (e.g. user-defined LLMProvider subclasses without the parameter) keep working.
+    stream_iter = (
+        provider.stream(messages, max_tokens=max_tokens) if max_tokens is not None else provider.stream(messages)
+    )
+    async for chunk in stream_iter:
         callback(chunk)
         chunks.append(chunk)
     return "".join(chunks)
@@ -57,6 +68,7 @@ async def execute_agent_node(
     retry_policy: RetryPolicy,
     streaming: bool = True,
     stream_callback: Callable[[str], None] | None = None,
+    max_tokens: int | None = None,
 ) -> AgentRunResult:
     """Execute a single agent call: apply guardrails, call the provider with retry, check output.
 
@@ -82,6 +94,8 @@ async def execute_agent_node(
     :param streaming: Whether to use token-by-token streaming when supported.
     :param stream_callback: Optional callable invoked with each text chunk during streaming.
         Ignored when *streaming* is ``False`` or the provider does not support streaming.
+    :param max_tokens: Optional per-call ceiling on completion tokens.  Forwarded to the
+        provider as the ``max_tokens`` API parameter so the LLM truncates its own response.
     :raises GuardrailViolation: If any guardrail rejects the input or output.
     :raises RetryExhaustedError: If the provider fails on all retry attempts.
     :returns: :class:`AgentRunResult` with output, token usage, timing, and audit trail.
@@ -121,13 +135,17 @@ async def execute_agent_node(
         effective_callback: Callable[[str], None] = stream_callback if stream_callback is not None else lambda _: None
 
         async def stream_call() -> str:
-            return await collect_stream(provider, messages, effective_callback)
+            return await collect_stream(provider, messages, effective_callback, max_tokens=max_tokens)
 
         output = await run_with_retry(node_id=node_id, policy=retry_policy, call=stream_call, on_attempt=log_retry)
     else:
 
         async def complete_call() -> str:
-            return await provider.complete(messages)
+            # Only forward max_tokens when set so providers and mocks that pre-date the
+            # kwarg (e.g. user-defined LLMProvider subclasses without the parameter) keep working.
+            if max_tokens is None:
+                return await provider.complete(messages)
+            return await provider.complete(messages, max_tokens=max_tokens)
 
         output = await run_with_retry(node_id=node_id, policy=retry_policy, call=complete_call, on_attempt=log_retry)
 

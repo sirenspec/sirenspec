@@ -77,6 +77,44 @@ class WorkflowDefaults(BaseModel):
     on_failure: OnFailurePolicy | None = None
 
 
+class BudgetConfig(BaseModel):
+    """Top-level workflow budget for token, USD, and wall-clock spend.
+
+    The executor checks cumulative spend after every node and enforces the ceilings
+    declared here.  At least one of ``max_tokens``, ``max_cost_usd``, or ``max_duration_s``
+    must be set — an empty budget block is rejected at validation time.
+
+    :param max_tokens: Hard ceiling on the total token count across all nodes in a run.
+    :param max_cost_usd: Hard ceiling on the estimated USD cost across all nodes.
+        Cost estimation falls back to ``None`` for models without pricing entries
+        (e.g. Ollama/local models); the ceiling is then effectively unenforced.
+    :param max_duration_s: Wall-clock timeout in seconds for the entire workflow run.
+    :param on_exceeded: What the executor does when a ceiling is hit: ``'abort'`` raises
+        :class:`~sirenspec.exceptions.BudgetExceededError`; ``'warn'`` logs a structured
+        warning and lets execution continue; ``'skip_remaining'`` marks all remaining
+        nodes as skipped without issuing further LLM calls and finishes with a
+        successful status.
+    """
+
+    max_tokens: int | None = Field(default=None, ge=1, description="Maximum total tokens across all nodes in a run.")
+    max_cost_usd: float | None = Field(default=None, gt=0, description="Maximum estimated USD spend across all nodes.")
+    max_duration_s: float | None = Field(default=None, gt=0, description="Maximum wall-clock seconds for the full run.")
+    on_exceeded: Literal["abort", "warn", "skip_remaining"] = Field(
+        default="abort",
+        description=(
+            "Action when any ceiling is hit: 'abort' raises BudgetExceededError; "
+            "'warn' logs and continues; 'skip_remaining' finishes without new LLM calls."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def validate_at_least_one_ceiling(self) -> BudgetConfig:
+        """Reject empty budget blocks — at least one ceiling must be configured."""
+        if self.max_tokens is None and self.max_cost_usd is None and self.max_duration_s is None:
+            raise ValueError("budget block requires at least one of 'max_tokens', 'max_cost_usd', or 'max_duration_s'.")
+        return self
+
+
 class AgentDefinition(BaseModel):
     """Defines an LLM agent: model URI, system prompt, and optional guardrails."""
 
@@ -168,6 +206,15 @@ class AgentNode(BaseModel):
     streaming: bool = Field(default=True, description="When True, use token streaming if the provider supports it.")
     retry: RetryPolicy | None = None
     on_failure: OnFailurePolicy | None = None
+    max_tokens_per_call: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Optional ceiling on the number of completion tokens the provider may produce for "
+            "a single call.  When set, it is forwarded to the provider as the ``max_tokens`` "
+            "parameter so the LLM truncates its own response rather than running unbounded."
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -422,9 +469,78 @@ class WorkflowNode(BaseModel):
     )
 
 
+class HumanNode(BaseModel):
+    """A node that pauses execution to collect input from a human operator.
+
+    Human nodes consume no LLM tokens.  They render an optional prompt, block until
+    a response is received (or a timeout expires), and write the collected text to
+    the workflow context like any other node.  Downstream nodes consume the response
+    via the normal ``{{ <node_id>.output }}`` chain.
+
+    .. code-block:: yaml
+
+        nodes:
+          approve_draft:
+            type: human
+            prompt: |
+              {{ draft.output }}
+
+              Approve this draft? (yes/edit/reject)
+            writes: working.approval
+            timeout: 3600          # seconds before auto-action
+            on_timeout: use_default
+            default_output: "approved"
+
+    Execution semantics:
+
+    * The ``prompt`` field is resolved against the workflow context before being
+      shown — it can reference upstream outputs and inputs.
+    * ``timeout`` is wall-clock seconds; ``None`` means wait indefinitely.
+    * When the timeout expires, ``on_timeout`` decides the response: ``'abort'``
+      raises :class:`~sirenspec.exceptions.HumanInputError`, ``'skip'`` writes an
+      empty string and continues, ``'use_default'`` writes ``default_output``.
+    """
+
+    type: Literal["human"]
+    prompt: str | None = Field(
+        default=None,
+        description=(
+            "Optional template string shown to the operator before they respond.  Supports "
+            "all standard ``{{ expr }}`` interpolation.  When omitted, only the node id is shown."
+        ),
+    )
+    writes: str = Field(
+        ...,
+        description="Dot-notation path where the collected response is stored in the workflow context.",
+    )
+    timeout: float | None = Field(
+        default=None,
+        gt=0,
+        description="Wall-clock seconds before the on_timeout action is taken.  ``None`` waits indefinitely.",
+    )
+    on_timeout: Literal["abort", "skip", "use_default"] = Field(
+        default="abort",
+        description=(
+            "Action on timeout: 'abort' raises HumanInputError; 'skip' writes empty string and continues; "
+            "'use_default' writes ``default_output``."
+        ),
+    )
+    default_output: str | None = Field(
+        default=None,
+        description="Static fallback string written when on_timeout='use_default'.",
+    )
+
+    @model_validator(mode="after")
+    def validate_default_required_for_use_default(self) -> HumanNode:
+        """Ensure ``default_output`` is supplied when ``on_timeout='use_default'``."""
+        if self.on_timeout == "use_default" and self.default_output is None:
+            raise ValueError("HumanNode with on_timeout='use_default' requires 'default_output' to be set.")
+        return self
+
+
 # Backward-compatible alias so existing code using ``Node(agent=..., writes=...)`` keeps working.
 Node = AgentNode
-AnyNode = AgentNode | ToolNode | SwrmNode | FactoryNode | WorkflowNode
+AnyNode = AgentNode | ToolNode | SwrmNode | FactoryNode | WorkflowNode | HumanNode
 
 
 class Edge(BaseModel):
@@ -470,15 +586,14 @@ class WorkflowInput(BaseModel):
     message: str | None = None
 
 
-# Discriminator helper: if raw node dict has ``type == "tool"`` use ToolNode,
-# ``type == "swrm"`` use SwrmNode, else AgentNode.
-def parse_node(raw: Any) -> AgentNode | ToolNode | SwrmNode | FactoryNode | WorkflowNode:
+# Discriminator helper: dispatches on the raw ``type`` field with AgentNode as the fallback.
+def parse_node(raw: Any) -> AnyNode:
     """Parse a raw node dict into a typed node model.
 
     :param raw: The raw YAML mapping for a single node.
-    :returns: A typed node instance (AgentNode, ToolNode, SwrmNode, FactoryNode, or WorkflowNode).
+    :returns: A typed node instance (AgentNode, ToolNode, SwrmNode, FactoryNode, WorkflowNode, or HumanNode).
     """
-    if isinstance(raw, (AgentNode, ToolNode, SwrmNode, FactoryNode, WorkflowNode)):
+    if isinstance(raw, (AgentNode, ToolNode, SwrmNode, FactoryNode, WorkflowNode, HumanNode)):
         return raw
     if isinstance(raw, dict):
         t = raw.get("type")
@@ -490,6 +605,8 @@ def parse_node(raw: Any) -> AgentNode | ToolNode | SwrmNode | FactoryNode | Work
             return FactoryNode.model_validate(raw)
         if t == "workflow":
             return WorkflowNode.model_validate(raw)
+        if t == "human":
+            return HumanNode.model_validate(raw)
     return AgentNode.model_validate(raw)
 
 
@@ -498,12 +615,20 @@ class Workflow(BaseModel):
 
     version: str
     agents: dict[str, AgentDefinition] = Field(default_factory=dict)
-    nodes: dict[str, AgentNode | ToolNode | SwrmNode | FactoryNode | WorkflowNode]
+    nodes: dict[str, AgentNode | ToolNode | SwrmNode | FactoryNode | WorkflowNode | HumanNode]
     edges: list[Edge] = Field(default_factory=list)
     input: WorkflowInput | None = None
     state: dict[str, Any] | None = None
     guardrails: list[str | GuardrailSpec] | None = None
     defaults: WorkflowDefaults | None = None
+    budget: BudgetConfig | None = Field(
+        default=None,
+        description=(
+            "Optional cumulative budget for the run.  When set, the executor enforces "
+            "token/USD/duration ceilings after every node and the budget status is "
+            "included in the trace summary."
+        ),
+    )
     env_file: str | None = Field(
         default=None,
         description=(

@@ -9,14 +9,17 @@ from collections.abc import AsyncGenerator, Callable
 from typing import Any
 
 from sirenspec.core.agent_runner import execute_agent_node
+from sirenspec.core.budget import BudgetState, build_budget_status, enforce_budget
 from sirenspec.core.context import WorkflowContext
 from sirenspec.core.events import NodeCompleteEvent, SummaryEvent
 from sirenspec.core.factory_runner import execute_factory_node
+from sirenspec.core.human_runner import InputCoroutine, execute_human_node
 from sirenspec.core.interpolation import InterpolationContext, build_interpolation_context, resolve_template
 from sirenspec.core.models import (
     AgentNode,
     FactoryNode,
     HttpToolConfig,
+    HumanNode,
     OnFailurePolicy,
     RetryPolicy,
     SwrmNode,
@@ -30,7 +33,7 @@ from sirenspec.core.tool_runner import execute_tool_node
 from sirenspec.core.usage import TokenUsage
 from sirenspec.core.workflow_registry import WorkflowRegistry
 from sirenspec.core.workflow_runner import resolve_node_inputs, resolve_sub_workflow
-from sirenspec.exceptions import BudgetExceededError, RetryExhaustedError, ValidationError
+from sirenspec.exceptions import BudgetExceededError, HumanInputError, RetryExhaustedError, ValidationError
 from sirenspec.guardrails.base import GuardrailViolation, WorkflowGuardrail
 from sirenspec.guardrails.registry import build_guardrails
 
@@ -197,6 +200,65 @@ def check_workflow_budget(
         guardrail.check_budget(usage, estimated_usd)
 
 
+def post_node_budget_check(
+    context: WorkflowContext,
+    workflow_guardrails: list[WorkflowGuardrail],
+    budget_state: BudgetState,
+    usage: TokenUsage,
+    estimated_usd: float | None,
+) -> None:
+    """Expose running totals to the context, then run guardrail and budget checks.
+
+    Combines the three steps that every node performs after completing: writing
+    running totals to ``working._budget``, invoking workflow-level guardrails, and
+    evaluating the declared ``budget:`` block.  Both checks may raise
+    :class:`~sirenspec.exceptions.BudgetExceededError`; the budget block may also
+    silently latch ``budget_state.skip_remaining`` when configured to.
+
+    :param context: The live :class:`~sirenspec.core.context.WorkflowContext`.
+    :param workflow_guardrails: Workflow-level guardrails (e.g. ``cost_cap``).
+    :param budget_state: Mutable :class:`~sirenspec.core.budget.BudgetState` for the run.
+    :param usage: Accumulated token usage across all completed nodes.
+    :param estimated_usd: Running USD estimate, or ``None`` for local models.
+    :raises BudgetExceededError: If any guardrail or ``on_exceeded='abort'`` ceiling is hit.
+    """
+    context.write("working._budget.total_tokens", usage.total)
+    context.write("working._budget.estimated_usd", estimated_usd)
+    check_workflow_budget(workflow_guardrails, usage, estimated_usd)
+    enforce_budget(budget_state, usage, estimated_usd)
+
+
+def build_skipped_trace(node_id: str, node: Any, reason: str) -> dict[str, Any]:
+    """Build a uniform trace entry for a node that was skipped after a budget gate fired.
+
+    Used in both :func:`execute` and :func:`execute_streaming` when
+    ``on_exceeded='skip_remaining'`` has latched the budget state.
+
+    :param node_id: The skipped node's identifier.
+    :param node: The node model instance (used to derive ``type``).
+    :param reason: Human-readable description of why the node was skipped.
+    :returns: Trace dict matching the shape of other node traces.
+    """
+    return {
+        "id": node_id,
+        "type": derive_node_type(node),
+        "status": "skipped",
+        "skipped_reason": reason,
+        "duration_ms": 0,
+        "tokens": 0,
+        "error": None,
+    }
+
+
+def derive_node_type(node: Any) -> str:
+    """Return the lowercase node-type string (``'agent'``, ``'tool'``, ``'human'`` …).
+
+    :param node: A node model instance.
+    :returns: The discriminator string used in traces and streaming events.
+    """
+    return type(node).__name__.lower().removesuffix("node")
+
+
 def resolve_retry_policy(workflow: Workflow, node_id: str) -> RetryPolicy:
     """Return the effective :class:`~sirenspec.core.models.RetryPolicy` for *node_id*.
 
@@ -291,6 +353,7 @@ async def execute(
     depth: int = 0,
     initial_inputs: dict[str, Any] | None = None,
     stream_callback: Callable[[str], None] | None = None,
+    human_input_fn: InputCoroutine | None = None,
 ) -> dict[str, Any]:
     """Execute a workflow and return a structured JSON-serialisable trace.
 
@@ -323,6 +386,10 @@ async def execute(
         node streams its response. Passed through to
         :func:`~sirenspec.core.agent_runner.execute_agent_node` for each agent node that
         has ``streaming: true``. Ignored for non-streaming nodes.
+    :param human_input_fn: Optional coroutine that provides operator responses for
+        :class:`~sirenspec.core.models.HumanNode` nodes.  Defaults to reading a single line
+        from stdin via :func:`~sirenspec.core.human_runner.stdin_input`.  Tests inject mocks
+        here; production callers can wire in a webhook bridge instead.
     :returns: Execution trace dict with workflow metadata, per-node entries, and summary.
     """
     context = WorkflowContext(initial_state=workflow.state)
@@ -358,6 +425,7 @@ async def execute(
 
     global_guardrail_names = workflow.guardrails
     workflow_guardrails = extract_workflow_guardrails(global_guardrail_names)
+    budget_state = BudgetState(config=workflow.budget, start_time=time.monotonic())
 
     # Fallback nodes are not reachable via normal edges — they are activated
     # explicitly when a node's on_failure policy is 'fallback'. We track them
@@ -378,6 +446,62 @@ async def execute(
             continue
 
         node = workflow.nodes[node_id]
+
+        # Budget block has latched skip_remaining — record each pending active node
+        # as skipped and continue, so the trace clearly shows what was bypassed.
+        if budget_state.skip_remaining:
+            trace_nodes.append(build_skipped_trace(node_id, node, "budget exceeded — remaining nodes skipped"))
+            continue
+
+        # ------------------------------------------------------------------ #
+        # Human node — pauses for operator input; no provider call.           #
+        # ------------------------------------------------------------------ #
+        if isinstance(node, HumanNode):
+            human_interp_ctx = build_interpolation_context(user_input, context.working, extra_inputs=initial_inputs)
+            rendered_prompt = resolve_template(node.prompt, human_interp_ctx) if node.prompt else ""
+            human_trace: dict[str, Any] = {
+                "id": node_id,
+                "type": "human",
+                "prompt_text": rendered_prompt,
+                "response_received": None,
+                "writes": node.writes,
+                "timed_out": False,
+                "duration_ms": 0,
+                "tokens": 0,
+                "error": None,
+            }
+            try:
+                human_result = await execute_human_node(node_id, node, rendered_prompt, human_input_fn)
+            except HumanInputError as exc:
+                human_trace["error"] = str(exc)
+                human_trace["timed_out"] = exc.timed_out
+                status = "failed"
+                trace_nodes.append(human_trace)
+                break
+
+            context.write(node.writes, human_result.response)
+            context.write(f"working.{node_id}.output", human_result.response)
+            last_writes_path = node.writes
+
+            human_trace["response_received"] = human_result.response
+            human_trace["timed_out"] = human_result.timed_out
+            human_trace["duration_ms"] = round(human_result.duration_ms, 2)
+            total_duration_ms += human_result.duration_ms
+
+            try:
+                post_node_budget_check(context, workflow_guardrails, budget_state, total_usage, total_estimated_usd)
+            except BudgetExceededError as exc:
+                human_trace["error"] = str(exc)
+                status = "failed"
+                trace_nodes.append(human_trace)
+                break
+
+            for target, condition in out_edges[node_id]:
+                if condition is None or evaluate_when_condition(condition, context):
+                    active_nodes.add(target)
+
+            trace_nodes.append(human_trace)
+            continue
 
         # ------------------------------------------------------------------ #
         # Swrm node — parallel agent fan-out with optional synthesis.         #
@@ -423,12 +547,8 @@ async def execute(
             total_usage += TokenUsage(prompt_tokens=0, completion_tokens=swrm_trace["tokens"])
             total_duration_ms += swrm_trace["duration_ms"]
 
-            # Expose running totals so when: conditions in YAML can gate on accumulated spend.
-            context.write("working._budget.total_tokens", total_usage.total)
-            context.write("working._budget.estimated_usd", total_estimated_usd)
-
             try:
-                check_workflow_budget(workflow_guardrails, total_usage, total_estimated_usd)
+                post_node_budget_check(context, workflow_guardrails, budget_state, total_usage, total_estimated_usd)
             except BudgetExceededError as exc:
                 status = "failed"
                 swrm_trace["error"] = str(exc)
@@ -521,12 +641,8 @@ async def execute(
             total_usage += TokenUsage(prompt_tokens=0, completion_tokens=factory_trace["tokens"])
             total_duration_ms += factory_trace["duration_ms"]
 
-            # Expose running totals so when: conditions in YAML can gate on accumulated spend.
-            context.write("working._budget.total_tokens", total_usage.total)
-            context.write("working._budget.estimated_usd", total_estimated_usd)
-
             try:
-                check_workflow_budget(workflow_guardrails, total_usage, total_estimated_usd)
+                post_node_budget_check(context, workflow_guardrails, budget_state, total_usage, total_estimated_usd)
             except BudgetExceededError as exc:
                 status = "failed"
                 factory_trace["error"] = str(exc)
@@ -585,11 +701,8 @@ async def execute(
             total_usage += TokenUsage(prompt_tokens=0, completion_tokens=wf_trace["tokens"])
             total_duration_ms += wf_trace["duration_ms"]
 
-            context.write("working._budget.total_tokens", total_usage.total)
-            context.write("working._budget.estimated_usd", total_estimated_usd)
-
             try:
-                check_workflow_budget(workflow_guardrails, total_usage, total_estimated_usd)
+                post_node_budget_check(context, workflow_guardrails, budget_state, total_usage, total_estimated_usd)
             except BudgetExceededError as exc:
                 status = "failed"
                 wf_trace["error"] = str(exc)
@@ -660,6 +773,7 @@ async def execute(
                 retry_policy=retry_policy,
                 streaming=node.streaming,
                 stream_callback=stream_callback,
+                max_tokens=node.max_tokens_per_call,
             )
 
             context.write(node.writes, run_result.output)
@@ -695,12 +809,8 @@ async def execute(
                 total_estimated_usd = (total_estimated_usd or 0.0) + node_estimated_usd
             total_duration_ms += duration_ms
 
-            # Expose running totals so when: conditions in YAML can gate on accumulated spend.
-            context.write("working._budget.total_tokens", total_usage.total)
-            context.write("working._budget.estimated_usd", total_estimated_usd)
-
             try:
-                check_workflow_budget(workflow_guardrails, total_usage, total_estimated_usd)
+                post_node_budget_check(context, workflow_guardrails, budget_state, total_usage, total_estimated_usd)
             except BudgetExceededError as exc:
                 agent_node_trace["error"] = str(exc)
                 status = "failed"
@@ -768,22 +878,27 @@ async def execute(
 
         trace_nodes.append(agent_node_trace)
 
+    summary: dict[str, Any] = {
+        "total_tokens": total_usage.total,
+        "total_usage": {
+            "prompt_tokens": total_usage.prompt_tokens,
+            "completion_tokens": total_usage.completion_tokens,
+            "total_tokens": total_usage.total,
+            "estimated_usd": total_estimated_usd,
+        },
+        "total_duration_ms": round(total_duration_ms, 2),
+        "status": status,
+    }
+    budget_status = build_budget_status(budget_state, total_usage, total_estimated_usd)
+    if budget_status is not None:
+        summary["budget"] = budget_status
+
     return {
         "workflow": {"version": workflow.version},
         "input": {"message": user_input},
         "nodes": trace_nodes,
         "output": context.output,
-        "summary": {
-            "total_tokens": total_usage.total,
-            "total_usage": {
-                "prompt_tokens": total_usage.prompt_tokens,
-                "completion_tokens": total_usage.completion_tokens,
-                "total_tokens": total_usage.total,
-                "estimated_usd": total_estimated_usd,
-            },
-            "total_duration_ms": round(total_duration_ms, 2),
-            "status": status,
-        },
+        "summary": summary,
     }
 
 
@@ -794,6 +909,7 @@ async def execute_streaming(
     depth: int = 0,
     initial_inputs: dict[str, Any] | None = None,
     stream_callback: Callable[[str], None] | None = None,
+    human_input_fn: InputCoroutine | None = None,
 ) -> AsyncGenerator[NodeCompleteEvent | SummaryEvent]:
     """Execute a workflow and yield typed events as each node completes.
 
@@ -816,6 +932,9 @@ async def execute_streaming(
         node streams its response. Passed through to
         :func:`~sirenspec.core.agent_runner.execute_agent_node` for each agent node that
         has ``streaming: true``. Ignored for non-streaming nodes.
+    :param human_input_fn: Optional coroutine that provides operator responses for
+        :class:`~sirenspec.core.models.HumanNode` nodes.  Defaults to reading a single line
+        from stdin.  Tests inject mocks here; production callers can wire in a webhook bridge.
     :returns: An async generator of ``NodeCompleteEvent`` (one per node) followed
         by a final ``SummaryEvent``.
     """
@@ -845,6 +964,7 @@ async def execute_streaming(
 
     global_guardrail_names = workflow.guardrails
     workflow_guardrails = extract_workflow_guardrails(global_guardrail_names)
+    budget_state = BudgetState(config=workflow.budget, start_time=start_wall)
     pending_fallback_nodes: set[str] = set()
 
     for node_id in execution_order:
@@ -855,13 +975,69 @@ async def execute_streaming(
         if node_id not in active_nodes:
             yield NodeCompleteEvent(
                 node_id=node_id,
-                node_type=type(workflow.nodes[node_id]).__name__.lower().removesuffix("node"),
+                node_type=derive_node_type(workflow.nodes[node_id]),
                 status="skipped",
             )
             continue
 
-        active_node_count += 1
         node = workflow.nodes[node_id]
+
+        if budget_state.skip_remaining:
+            yield NodeCompleteEvent(
+                node_id=node_id,
+                node_type=derive_node_type(node),
+                status="skipped",
+                error="budget exceeded — remaining nodes skipped",
+            )
+            continue
+
+        active_node_count += 1
+
+        if isinstance(node, HumanNode):
+            human_interp_ctx = build_interpolation_context(user_input, context.working, extra_inputs=initial_inputs)
+            rendered_prompt = resolve_template(node.prompt, human_interp_ctx) if node.prompt else ""
+            try:
+                human_result = await execute_human_node(node_id, node, rendered_prompt, human_input_fn)
+            except HumanInputError as exc:
+                status = "failed"
+                yield NodeCompleteEvent(
+                    node_id=node_id,
+                    node_type="human",
+                    status="failed",
+                    error=str(exc),
+                )
+                break
+
+            context.write(node.writes, human_result.response)
+            context.write(f"working.{node_id}.output", human_result.response)
+            last_writes_path = node.writes
+            total_duration_ms += human_result.duration_ms
+
+            try:
+                post_node_budget_check(context, workflow_guardrails, budget_state, total_usage, total_estimated_usd)
+            except BudgetExceededError as exc:
+                status = "failed"
+                yield NodeCompleteEvent(
+                    node_id=node_id,
+                    node_type="human",
+                    status="failed",
+                    error=str(exc),
+                )
+                break
+
+            for target, condition in out_edges[node_id]:
+                if condition is None or evaluate_when_condition(condition, context):
+                    active_nodes.add(target)
+
+            yield NodeCompleteEvent(
+                node_id=node_id,
+                node_type="human",
+                output=human_result.response,
+                writes=node.writes,
+                status="success",
+                duration_ms=round(human_result.duration_ms, 2),
+            )
+            continue
 
         if isinstance(node, SwrmNode):
             node_start = time.monotonic()
@@ -899,12 +1075,8 @@ async def execute_streaming(
             total_usage += TokenUsage(prompt_tokens=0, completion_tokens=swrm_trace["tokens"])
             total_duration_ms += swrm_trace["duration_ms"]
 
-            # Expose running totals so when: conditions in YAML can gate on accumulated spend.
-            context.write("working._budget.total_tokens", total_usage.total)
-            context.write("working._budget.estimated_usd", total_estimated_usd)
-
             try:
-                check_workflow_budget(workflow_guardrails, total_usage, total_estimated_usd)
+                post_node_budget_check(context, workflow_guardrails, budget_state, total_usage, total_estimated_usd)
             except BudgetExceededError as exc:
                 status = "failed"
                 yield NodeCompleteEvent(
@@ -998,12 +1170,8 @@ async def execute_streaming(
             total_usage += TokenUsage(prompt_tokens=0, completion_tokens=factory_trace["tokens"])
             total_duration_ms += factory_trace["duration_ms"]
 
-            # Expose running totals so when: conditions in YAML can gate on accumulated spend.
-            context.write("working._budget.total_tokens", total_usage.total)
-            context.write("working._budget.estimated_usd", total_estimated_usd)
-
             try:
-                check_workflow_budget(workflow_guardrails, total_usage, total_estimated_usd)
+                post_node_budget_check(context, workflow_guardrails, budget_state, total_usage, total_estimated_usd)
             except BudgetExceededError as exc:
                 status = "failed"
                 yield NodeCompleteEvent(
@@ -1068,11 +1236,8 @@ async def execute_streaming(
             total_usage += TokenUsage(prompt_tokens=0, completion_tokens=wf_trace["tokens"])
             total_duration_ms += wf_trace["duration_ms"]
 
-            context.write("working._budget.total_tokens", total_usage.total)
-            context.write("working._budget.estimated_usd", total_estimated_usd)
-
             try:
-                check_workflow_budget(workflow_guardrails, total_usage, total_estimated_usd)
+                post_node_budget_check(context, workflow_guardrails, budget_state, total_usage, total_estimated_usd)
             except BudgetExceededError as exc:
                 status = "failed"
                 yield NodeCompleteEvent(
@@ -1127,6 +1292,7 @@ async def execute_streaming(
                 retry_policy=retry_policy,
                 streaming=node.streaming,
                 stream_callback=stream_callback,
+                max_tokens=node.max_tokens_per_call,
             )
 
             context.write(node.writes, run_result.output)
@@ -1148,12 +1314,8 @@ async def execute_streaming(
                 total_estimated_usd = (total_estimated_usd or 0.0) + node_estimated_usd
             total_duration_ms += duration_ms
 
-            # Expose running totals so when: conditions in YAML can gate on accumulated spend.
-            context.write("working._budget.total_tokens", total_usage.total)
-            context.write("working._budget.estimated_usd", total_estimated_usd)
-
             try:
-                check_workflow_budget(workflow_guardrails, total_usage, total_estimated_usd)
+                post_node_budget_check(context, workflow_guardrails, budget_state, total_usage, total_estimated_usd)
             except BudgetExceededError as exc:
                 status = "failed"
                 yield NodeCompleteEvent(
@@ -1258,4 +1420,5 @@ async def execute_streaming(
         estimated_usd=total_estimated_usd,
         status=status,
         duration_ms=round((time.monotonic() - start_wall) * 1000, 2),
+        budget=build_budget_status(budget_state, total_usage, total_estimated_usd),
     )

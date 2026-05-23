@@ -51,6 +51,9 @@ class SummaryEvent:
     :param estimated_usd: Estimated total USD cost, or ``None`` if pricing is unavailable.
     :param status: Overall workflow status: ``"success"`` or ``"failed"``.
     :param duration_ms: Wall-clock execution time in milliseconds.
+    :param budget: Optional budget status block — declared limits, observed totals, and
+        whether any ceiling was exceeded.  ``None`` when no ``budget:`` block was set
+        on the workflow.
     """
 
     kind: Literal["summary"] = field(default="summary")
@@ -59,3 +62,4 @@ class SummaryEvent:
     estimated_usd: float | None = field(default=None)
     status: Literal["success", "failed"] = field(default="success")
     duration_ms: float = field(default=0.0)
+    budget: dict[str, Any] | None = field(default=None)
