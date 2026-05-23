@@ -1,0 +1,47 @@
+version: "0.1"
+# env_file: .env
+
+agents:
+  drafter:
+    model: "openai:gpt-4o-mini"
+    system: |
+      You are a marketing copywriter.  Draft a short, punchy social media post
+      about the topic the user provides.  Return only the post text — no preamble.
+
+  publisher:
+    model: "anthropic:claude-haiku-4-5-20251001"
+    system: |
+      You are the publishing assistant.  Format the approved draft into a final
+      post with a one-line caption and 3 hashtags.
+
+nodes:
+  draft:
+    agent: drafter
+    writes: working.draft
+
+  approve:
+    type: human
+    prompt: |
+      Draft to review:
+      ---
+      {{ draft.output }}
+      ---
+      Reply 'yes' to publish, 'no' to reject, or any text to edit (free-form).
+    writes: working.approval
+    timeout: 600          # 10 minutes
+    on_timeout: use_default
+    default_output: "no"
+
+  publish:
+    agent: publisher
+    writes: output.post
+
+edges:
+  - from: draft
+    to: approve
+  - from: approve
+    to: publish
+    when: 'working.approval == "yes"'
+
+input:
+  message: "A weekend launch announcement for our new YAML-first agent SDK."

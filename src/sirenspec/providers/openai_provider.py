@@ -36,16 +36,17 @@ class OpenAIProvider:
         """
         return self._client
 
-    async def complete(self, messages: list[dict]) -> str:
+    async def complete(self, messages: list[dict], max_tokens: int | None = None) -> str:
         """Call the OpenAI chat completions API and return the response text.
 
         :param messages: List of ``{"role": ..., "content": ...}`` dicts.
+        :param max_tokens: Optional ceiling forwarded as the ``max_tokens`` API param.
         :returns: The assistant reply text.
         """
-        response = await self.client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-        )
+        kwargs: dict = {"model": self.model, "messages": messages}
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+        response = await self.client.chat.completions.create(**kwargs)
         if response.usage:
             self._last_token_usage = TokenUsage(
                 prompt_tokens=response.usage.prompt_tokens,
@@ -56,7 +57,7 @@ class OpenAIProvider:
         content = response.choices[0].message.content
         return content or ""
 
-    async def stream(self, messages: list[dict]) -> AsyncIterator[str]:
+    async def stream(self, messages: list[dict], max_tokens: int | None = None) -> AsyncIterator[str]:
         """Stream the OpenAI chat completions API and yield text chunks.
 
         Accumulates total character length as a token-count approximation
@@ -64,14 +65,18 @@ class OpenAIProvider:
         If the final chunk includes a ``usage`` field, that value is used instead.
 
         :param messages: List of ``{"role": ..., "content": ...}`` dicts.
+        :param max_tokens: Optional ceiling forwarded as the ``max_tokens`` API param.
         :returns: An async iterator that yields text chunks as they arrive.
         """
-        response = await self.client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            stream=True,
-            stream_options={"include_usage": True},
-        )
+        kwargs: dict = {
+            "model": self.model,
+            "messages": messages,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+        response = await self.client.chat.completions.create(**kwargs)
         char_count = 0
         usage_tokens: int | None = None
         async for chunk in response:

@@ -24,8 +24,82 @@
         "writes": {
           "type": "string",
           "description": "Dot-notation context path where the agent's output is stored (e.g. 'output.reply', 'working.intent')."
+        },
+        "max_tokens_per_call": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Optional ceiling forwarded to the provider as the max_tokens API parameter so the LLM truncates its own response."
         }
       }
+    },
+    "HumanNode": {
+      "type": "object",
+      "description": "A human-in-the-loop node that pauses execution to collect input from a human operator.",
+      "required": ["type", "writes"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["human"],
+          "description": "Discriminator that marks this as a human node."
+        },
+        "prompt": {
+          "type": "string",
+          "description": "Optional template string shown to the operator. Supports {{ expr }} interpolation against the workflow context."
+        },
+        "writes": {
+          "type": "string",
+          "description": "Dot-notation context path where the collected response is stored."
+        },
+        "timeout": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Wall-clock seconds before the on_timeout action is taken. Omitted means wait indefinitely."
+        },
+        "on_timeout": {
+          "type": "string",
+          "enum": ["abort", "skip", "use_default"],
+          "default": "abort",
+          "description": "Action when the timeout fires: 'abort' raises HumanInputError; 'skip' writes empty string and continues; 'use_default' writes default_output."
+        },
+        "default_output": {
+          "type": "string",
+          "description": "Static fallback string written when on_timeout='use_default'. Required in that mode."
+        }
+      }
+    },
+    "BudgetConfig": {
+      "type": "object",
+      "description": "Workflow-level cumulative budget for token, USD, and wall-clock spend. At least one ceiling must be set.",
+      "additionalProperties": false,
+      "properties": {
+        "max_tokens": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum total tokens across all nodes in a run."
+        },
+        "max_cost_usd": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Maximum estimated USD spend across all nodes."
+        },
+        "max_duration_s": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Maximum wall-clock seconds for the full run."
+        },
+        "on_exceeded": {
+          "type": "string",
+          "enum": ["abort", "warn", "skip_remaining"],
+          "default": "abort",
+          "description": "Action when any ceiling is hit: 'abort' raises BudgetExceededError; 'warn' logs and continues; 'skip_remaining' finishes without new LLM calls."
+        }
+      },
+      "anyOf": [
+        { "required": ["max_tokens"] },
+        { "required": ["max_cost_usd"] },
+        { "required": ["max_duration_s"] }
+      ]
     },
     "SwrmAgent": {
       "type": "object",
@@ -275,6 +349,7 @@
           { "$ref": "#/definitions/SwrmNode" },
           { "$ref": "#/definitions/FactoryNode" },
           { "$ref": "#/definitions/WorkflowNode" },
+          { "$ref": "#/definitions/HumanNode" },
           {
             "type": "object",
             "description": "Tool node: invokes an HTTP endpoint or a Python callable.",
@@ -409,6 +484,10 @@
         "type": "string",
         "enum": ["injection", "length"]
       }
+    },
+    "budget": {
+      "$ref": "#/definitions/BudgetConfig",
+      "description": "Optional cumulative budget for the run. The executor enforces token/USD/duration ceilings after every node and includes the status in the trace summary."
     }
   }
 }

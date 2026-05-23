@@ -1,0 +1,49 @@
+version: "0.1"
+# env_file: .env
+
+budget:
+  max_tokens: 4000           # total across all nodes
+  max_cost_usd: 0.05         # estimated cost ceiling for the whole run
+  max_duration_s: 120        # wall-clock cap for the whole run
+  on_exceeded: skip_remaining
+
+agents:
+  researcher:
+    model: "openai:gpt-4o-mini"
+    system: |
+      You are a research assistant.  Summarise the topic the user provides in three crisp bullets.
+
+  analyst:
+    model: "anthropic:claude-haiku-4-5-20251001"
+    system: |
+      You are an analyst.  Given a research summary, produce a short list of risks and opportunities.
+
+  reporter:
+    model: "anthropic:claude-haiku-4-5-20251001"
+    system: |
+      You are a reporter.  Combine the research and the analysis into a one-paragraph executive brief.
+
+nodes:
+  research:
+    agent: researcher
+    writes: working.research
+    max_tokens_per_call: 500
+
+  analyse:
+    agent: analyst
+    writes: working.analysis
+    max_tokens_per_call: 500
+
+  report:
+    agent: reporter
+    writes: output.brief
+    max_tokens_per_call: 800
+
+edges:
+  - from: research
+    to: analyse
+  - from: analyse
+    to: report
+
+input:
+  message: "The state of YAML-first agent orchestration in 2026."

@@ -87,6 +87,18 @@
             ]
           },
           {
+            "group": "Human in the Loop",
+            "pages": [
+              "cookbook/content-approval/README"
+            ]
+          },
+          {
+            "group": "Budget & Cost Control",
+            "pages": [
+              "cookbook/budget-guarded/README"
+            ]
+          },
+          {
             "group": "Stress Tests",
             "pages": [
               "cookbook/telephone-game/README",

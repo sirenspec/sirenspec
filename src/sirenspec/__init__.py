@@ -4,12 +4,13 @@ __version__ = "0.1.0"
 
 from sirenspec.core.events import NodeCompleteEvent, SummaryEvent
 from sirenspec.core.executor import execute, execute_streaming
-from sirenspec.core.models import GuardrailSpec, Workflow
+from sirenspec.core.models import BudgetConfig, GuardrailSpec, HumanNode, Workflow
 from sirenspec.core.usage import TokenUsage
 from sirenspec.core.workflow_registry import WorkflowRegistry
 from sirenspec.exceptions import (
     BudgetExceededError,
     GuardrailError,
+    HumanInputError,
     ProviderError,
     RetryExhaustedError,
     SirenSpecError,
@@ -31,6 +32,8 @@ __all__ = [
     # Core models
     "Workflow",
     "GuardrailSpec",
+    "HumanNode",
+    "BudgetConfig",
     "WorkflowRegistry",
     # Streaming events
     "NodeCompleteEvent",
@@ -48,6 +51,7 @@ __all__ = [
     "GuardrailError",
     "GuardrailViolation",
     "BudgetExceededError",
+    "HumanInputError",
     "ValidationError",
     "SwrmAgentError",
     "ToolError",
