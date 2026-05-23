@@ -81,13 +81,7 @@ def node_writes_path(node: AnyNode) -> str | None:
     :param node: The typed node object.
     :returns: A dot-notation path string or None.
     """
-    if isinstance(node, AgentNode):
-        return node.writes
-    if isinstance(node, FactoryNode):
-        return node.writes
-    if isinstance(node, HumanNode):
-        return node.writes
-    if isinstance(node, WorkflowNode):
+    if isinstance(node, (AgentNode, FactoryNode, HumanNode, WorkflowNode)):
         return node.writes
     if isinstance(node, ToolNode):
         return f"working.<node_id>.{node.output_key}"
