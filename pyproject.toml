@@ -1,6 +1,6 @@
 [project]
 name = "sirenspec"
-version = "0.1.0"
+version = "0.1.1"
 description = "YAML-first agent orchestration SDK for multi-agent workflows"
 readme = "README.md"
 requires-python = ">=3.11"
