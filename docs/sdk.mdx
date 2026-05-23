@@ -24,6 +24,8 @@ from sirenspec import (
     execute_streaming,
     Workflow,
     WorkflowRegistry,
+    BudgetConfig,
+    HumanNode,
     NodeCompleteEvent,
     SummaryEvent,
     TokenUsage,
@@ -35,6 +37,8 @@ from sirenspec import (
     ProviderError,
     GuardrailError,
     GuardrailViolation,
+    BudgetExceededError,
+    HumanInputError,
     ValidationError,
     RetryExhaustedError,
     SwrmAgentError,
@@ -49,6 +53,8 @@ from sirenspec import (
 | `execute_streaming` | async generator function | Execute a workflow and yield typed events as each node completes. |
 | `Workflow` | class | Pydantic model representing a workflow. |
 | `WorkflowRegistry` | class | Registry mapping names to `Workflow` instances for nested workflow resolution. |
+| `BudgetConfig` | class | Pydantic model for the workflow-level `budget:` block (`max_tokens`, `max_cost_usd`, `max_duration_s`, `on_exceeded`). |
+| `HumanNode` | class | Pydantic model for `type: human` nodes. |
 | `NodeCompleteEvent` | dataclass | Event emitted once per node during streaming execution. |
 | `SummaryEvent` | dataclass | Event emitted once at the end of streaming execution. |
 | `TokenUsage` | dataclass | Prompt and completion token counts with a `.total` property. |
@@ -253,7 +259,9 @@ SirenSpecError
 │   └── RetryExhaustedError   # All retry attempts exhausted
 ├── GuardrailError            # Guardrail layer raised an error
 │   ├── GuardrailViolation    # A guardrail policy was violated (content blocked)
-│   └── BudgetExceededError   # Workflow-level cost cap was exceeded
+│   ├── BudgetExceededError   # Workflow-level budget ceiling was exceeded
+│   └── PIIDetectedError      # PII guardrail with action="block" found PII
+├── HumanInputError           # Human node aborted (e.g. timeout with on_timeout="abort")
 ├── ValidationError           # Workflow schema is invalid
 ├── SwrmAgentError            # One or more swrm agents failed
 └── ToolError                 # Tool node execution failed
@@ -266,6 +274,7 @@ from sirenspec import (
     execute,
     SirenSpecError,
     BudgetExceededError,
+    HumanInputError,
     GuardrailViolation,
     RetryExhaustedError,
 )
@@ -283,7 +292,9 @@ async def main() -> None:
     try:
         trace = await execute(workflow, user_input="Hello")
     except BudgetExceededError as exc:
-        print(f"Workflow exceeded cost cap: {exc}")
+        print(f"Workflow exceeded budget: {exc}")
+    except HumanInputError as exc:
+        print(f"Human node aborted: {exc}")
     except GuardrailViolation as exc:
         print(f"Guardrail blocked execution: {exc}")
     except RetryExhaustedError as exc:

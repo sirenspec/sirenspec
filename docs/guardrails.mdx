@@ -55,6 +55,49 @@ Limits the length of LLM output. In the default `"truncate"` mode, responses lon
 The `length` guardrail only checks output — input is passed through unchanged.
 </Note>
 
+### `pii`
+
+Detects personally identifiable information in both input and output text and either redacts it, blocks the call, or passes it through with a flag. Supported entities are `email`, `phone`, `ssn`, and `credit_card`. Credit-card matches are filtered through the Luhn checksum to suppress false positives.
+
+**Configuration:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `entities` | list of strings | all four entities | Subset of `["email", "phone", "ssn", "credit_card"]` to detect. |
+| `action` | string | `"redact"` | `"redact"` replaces each match with `replacement`; `"block"` raises `PIIDetectedError`; `"flag"` leaves the text unchanged. |
+| `replacement` | string | `"[REDACTED]"` | Replacement string used when `action: "redact"`. |
+
+**Behavior:**
+
+- **Input:** Inspected before the prompt is sent to the LLM.
+- **Output:** Inspected after the response is received, before downstream nodes see it.
+- **On `action: "block"`:** Raises `PIIDetectedError` (a `GuardrailError` subclass) listing the entity types that matched.
+
+**Example — redact emails and phones in both directions:**
+
+```yaml
+guardrails:
+  - name: pii
+    config:
+      entities: ["email", "phone"]
+      action: redact
+      replacement: "[REDACTED]"
+```
+
+**Example — block any credit-card leakage from a finance agent:**
+
+```yaml
+agents:
+  finance:
+    model: "openai:gpt-4o-mini"
+    system: "Answer finance questions without ever quoting card numbers."
+    guardrails:
+      - name: pii
+        config:
+          entities: ["credit_card"]
+          action: block
+```
+
 ### `schema`
 
 Validates LLM output against a JSON Schema Draft 7 definition. The guardrail parses the output text as JSON and checks it against the provided schema. Input text is passed through unchanged.

@@ -5,7 +5,7 @@ Thanks for your interest in contributing. This document covers how to get set up
 ## Getting started
 
 ```bash
-git clone https://github.com/TJLSmith0831/sirenspec.git
+git clone https://github.com/sirenspec/sirenspec.git
 cd sirenspec
 uv sync --extra dev
 source .venv/bin/activate
@@ -61,4 +61,4 @@ Key conventions:
 
 ## Questions?
 
-Open a [GitHub Discussion](https://github.com/TJLSmith0831/sirenspec/discussions) or file an issue.
+Open a [GitHub Discussion](https://github.com/sirenspec/sirenspec/discussions) or file an issue.

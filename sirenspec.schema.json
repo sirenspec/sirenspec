@@ -312,7 +312,8 @@
   "properties": {
     "version": {
       "type": "string",
-      "description": "Workflow schema version (e.g. '0.1')."
+      "const": "0.1",
+      "description": "Workflow schema version. Currently only \"0.1\" is supported."
     },
     "agents": {
       "type": "object",
