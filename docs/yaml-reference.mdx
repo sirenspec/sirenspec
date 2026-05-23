@@ -47,7 +47,7 @@ agents:
 |-------|----------|------|-------------|
 | `model` | Yes | string | Provider URI — `provider:model` format. |
 | `system` | Yes | string | System prompt sent to the model. |
-| `guardrails` | No | list of strings | Agent-level guardrail override. Replaces the workflow-level list. |
+| `guardrails` | No | list of strings or `{name, config}` objects | Agent-level guardrail override. Replaces the workflow-level list. Configurable guardrails (`schema`, `cost_cap`, `pii`) use the `{name, config}` form — see [Guardrails](/guardrails). |
 
 See [Agents](/assistant) for full agent documentation and [Providers](/providers) for valid model URIs.
 
@@ -161,6 +161,7 @@ nodes:
 |-------|----------|------|-------------|
 | `agent` | Yes | string | Agent ID from the `agents` map. |
 | `writes` | Yes | string | Dot-notation context path where the agent's response is stored. |
+| `streaming` | No | boolean | When `true` (default), use token streaming if the provider supports it. Set `false` to opt this node out — `--no-stream` on the CLI is the global override. Guardrails always apply to the fully assembled response, not per-chunk. |
 | `retry` | No | object | Per-node retry policy. Overrides `defaults.retry`. See [Retry Policies](/retry-policies). |
 | `on_failure` | No | object | Failure action when retries are exhausted. Overrides `defaults.on_failure`. See [Retry Policies](/retry-policies). |
 | `max_tokens_per_call` | No | integer | Optional ceiling on completion tokens for a single call. Forwarded to the provider so the LLM truncates its own response. |
@@ -432,6 +433,7 @@ guardrails:
 |-----------|-------------|----------------|
 | `injection` | Detects prompt-injection patterns. Applied by default. | None |
 | `length` | Truncates output to 4000 characters. | Optional: `max_chars`, `mode` |
+| `pii` | Detects and redacts (or blocks on) email, phone, SSN, and credit-card data. | Optional: `entities`, `action`, `replacement` |
 | `schema` | Validates JSON output against a JSON Schema Draft 7 dict. | Required: `schema` |
 | `cost_cap` | Enforces token and/or USD budget ceilings. | Required: at least one of `max_usd` or `max_tokens`; optional: `action` |
 

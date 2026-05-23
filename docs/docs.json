@@ -16,7 +16,7 @@
     "links": [
       {
         "label": "GitHub",
-        "href": "https://github.com/TJLSmith0831/sirenspec"
+        "href": "https://github.com/sirenspec/sirenspec"
       }
     ]
   },
@@ -114,7 +114,7 @@
   },
   "footer": {
     "socials": {
-      "github": "https://github.com/TJLSmith0831/sirenspec"
+      "github": "https://github.com/sirenspec/sirenspec"
     }
   }
 }

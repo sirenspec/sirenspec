@@ -15,6 +15,66 @@ pip install sirenspec
 
 After installation, the `sirenspec` command is available on your PATH.
 
+You can also check the installed version:
+
+```bash
+sirenspec --version
+```
+
+---
+
+## `sirenspec init`
+
+Scaffold a new workflow interactively. Prompts for a template and provider, then writes a `workflow.yaml` and `.env.example` in the target directory. The generated workflow passes `sirenspec validate` immediately.
+
+```bash
+sirenspec init [OPTIONS]
+```
+
+**Options:**
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--output PATH` | `-o` | Directory for the generated files. Defaults to the current working directory. |
+
+**Exit codes:**
+
+| Code | Meaning |
+|------|---------|
+| `0` | Files were created successfully. |
+| `1` | The generated workflow failed validation (rare — indicates a template bug). |
+
+**Example session:**
+
+```
+$ sirenspec init
+
+Welcome to SirenSpec! Let's scaffold a new workflow.
+
+Choose a template:
+  1. simple-agent          — Single agent that answers a question
+  2. sequential-pipeline   — Two agents in sequence
+  ...
+
+Template [1]: 1
+
+Choose a provider:
+  1. openai
+  2. anthropic
+
+Provider [1]: 1
+
+Enable guardrails? (injection + length) [Y/n]: Y
+
+✓ workflow.yaml created
+✓ .env.example created
+
+Next steps:
+  Copy .env.example → .env and add your API key
+  sirenspec validate workflow.yaml
+  sirenspec run workflow.yaml
+```
+
 ---
 
 ## `sirenspec run`
@@ -40,6 +100,7 @@ sirenspec run <workflow-file> [OPTIONS]
 | `--output TEXT` | | Output format. Use `"json"` for raw JSON trace (equivalent to `--trace`). |
 | `--trace-file TEXT` | | Write full JSON trace to this file path (in addition to streaming output). |
 | `--quiet` | | Suppress node panels; print only the summary (useful for non-TTY environments). |
+| `--no-stream` | | Disable per-token streaming inside node panels. Panels and summary still render. |
 
 **Exit codes:**
 
