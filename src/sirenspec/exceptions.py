@@ -98,6 +98,52 @@ class InterpolationError(SirenSpecError):
         self.reason = reason
 
 
+class PIIDetectedError(GuardrailError):
+    """Raised when PII is detected and the guardrail action is ``'block'``.
+
+    :param entity_types: List of entity type names that were detected (e.g. ``['email', 'ssn']``).
+        Matched values are intentionally omitted from the message to avoid leaking PII.
+    """
+
+    def __init__(self, entity_types: list[str]) -> None:
+        super().__init__(f"PII detected: {entity_types}")
+        self.entity_types = entity_types
+
+
+class BudgetExceededError(GuardrailError):
+    """Raised when a workflow run exceeds its configured token or USD budget.
+
+    :param reason: Human-readable description of which ceiling was hit.
+    :param tokens_used: Total tokens consumed at the point of the violation.
+    :param estimated_usd: Accumulated USD estimate at the point of the violation, or ``None``
+        if cost could not be estimated (e.g. local/Ollama models).
+    """
+
+    def __init__(self, reason: str, tokens_used: int, estimated_usd: float | None) -> None:
+        super().__init__(reason)
+        self.tokens_used = tokens_used
+        self.estimated_usd = estimated_usd
+
+
+class HumanInputError(SirenSpecError):
+    """Raised when a :class:`~sirenspec.core.models.HumanNode` fails to obtain input.
+
+    Used when a human-in-the-loop node aborts because no response was provided within
+    the configured timeout and ``on_timeout`` is ``'abort'``, or when stdin is closed
+    before any input is received and no default is configured.
+
+    :param node_id: The HumanNode's identifier.
+    :param reason: Human-readable description of the failure mode.
+    :param timed_out: ``True`` when the failure is specifically a timeout expiry.
+    """
+
+    def __init__(self, node_id: str, reason: str, timed_out: bool = False) -> None:
+        super().__init__(f"Human node '{node_id}' failed: {reason}")
+        self.node_id = node_id
+        self.reason = reason
+        self.timed_out = timed_out
+
+
 class FactoryNodeError(SirenSpecError):
     """Raised when a factory node instance fails and ``on_failure`` is ``'abort'``.
 

@@ -5,10 +5,29 @@ description: Install SirenSpec and run your first workflow in under five minutes
 
 ## Installation
 
+The fastest way to install SirenSpec is the one-line install script:
+
+```bash
+curl -fsSL https://sirenspec.dev/install.sh | sh
+```
+
+This detects your environment and uses the best available installer (uv → pipx → pip). Python 3.11 or later is required.
+
 <Tabs>
-  <Tab title="uv (recommended)">
+  <Tab title="curl (recommended)">
     ```bash
-    uv add sirenspec
+    curl -fsSL https://sirenspec.dev/install.sh | sh
+    ```
+    Detects your environment and picks the best available installer (uv → pipx → pip).
+  </Tab>
+  <Tab title="uv">
+    ```bash
+    uv tool install sirenspec
+    ```
+  </Tab>
+  <Tab title="pipx">
+    ```bash
+    pipx install sirenspec
     ```
   </Tab>
   <Tab title="pip">
@@ -17,8 +36,6 @@ description: Install SirenSpec and run your first workflow in under five minutes
     ```
   </Tab>
 </Tabs>
-
-Python 3.13 or later is required.
 
 ## Set Your API Key
 
@@ -30,9 +47,67 @@ export OPENAI_API_KEY=sk-...
 export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-## Create a Workflow
+## Initialize Your Project
 
-Create a file named `hello.yaml`:
+Run `sirenspec init` to scaffold a workflow interactively. It asks you to pick a template and a provider, then writes a `workflow.yaml` and a `.env.example` ready to run:
+
+```bash
+sirenspec init
+```
+
+```
+Welcome to SirenSpec! Let's scaffold a new workflow.
+
+Choose a template:
+  1. simple-agent          — Single agent that answers a question
+  2. sequential-pipeline   — Two agents in sequence
+  ...
+
+Template [1]: 1
+
+Choose a provider:
+  1. openai
+  2. anthropic
+
+Provider [1]: 1
+
+Enable guardrails? (injection + length) [Y/n]: Y
+
+✓ workflow.yaml created
+✓ .env.example created
+
+Next steps:
+  Copy .env.example → .env and add your API key
+  sirenspec validate workflow.yaml
+  sirenspec run workflow.yaml
+```
+
+## Run It
+
+```bash
+sirenspec run workflow.yaml
+```
+
+By default, SirenSpec displays a streaming view of node execution:
+
+```
+╭─ answer ──────────────────────────────╮
+│ Paris is the capital of France.       │
+╰────────────────────────────────────────╯
+  ↓ output.reply
+
+Run complete  │  1 node  │  24 tokens  │  cost unavailable (pricing not configured)
+```
+
+To see the full JSON execution trace, use the `--trace` flag:
+
+```bash
+sirenspec run workflow.yaml --trace
+```
+
+## Start from Scratch
+
+Prefer writing YAML yourself? Create a file named `hello.yaml`:
 
 ```yaml hello.yaml
 version: "0.1"
@@ -51,38 +126,10 @@ input:
   message: "What is the capital of France?"
 ```
 
-## Run It
+Then run it:
 
 ```bash
 sirenspec run hello.yaml
-```
-
-You'll see a JSON execution trace:
-
-```json
-{
-  "workflow": { "version": "0.1" },
-  "input": { "message": "What is the capital of France?" },
-  "nodes": [
-    {
-      "id": "answer",
-      "agent": "assistant",
-      "prompt_sent": "What is the capital of France?",
-      "response_received": "Paris is the capital of France.",
-      "writes": "output.reply",
-      "guardrails_passed": ["InjectionGuardrail.check_input", "InjectionGuardrail.check_output"],
-      "tokens": 24,
-      "duration_ms": 312.5,
-      "error": null
-    }
-  ],
-  "output": { "reply": "Paris is the capital of France." },
-  "summary": {
-    "total_tokens": 24,
-    "total_duration_ms": 312.5,
-    "status": "success"
-  }
-}
 ```
 
 ## Override the Input at Runtime
@@ -104,14 +151,17 @@ sirenspec validate hello.yaml
 
 ## Try a Multi-Agent Pipeline
 
-SirenSpec ships with runnable examples. Clone the repo and try:
+The Cookbook includes ready-to-run workflows. Clone the repo and try:
 
 ```bash
+git clone https://github.com/sirenspec/sirenspec.git
+cd sirenspec
+
 # Sequential pipeline: classify → reply
-sirenspec run examples/sequential-pipeline.yaml --input "I need help with my order"
+sirenspec run docs/cookbook/sequential-pipeline/workflow.yaml --input "I need help with my order"
 
 # Conditional branching: triage → handle_refund or handle_general
-sirenspec run examples/conditional-pipeline.yaml --input "I want a refund"
+sirenspec run docs/cookbook/conditional-pipeline/workflow.yaml --input "I want a refund"
 ```
 
 ## Next Steps

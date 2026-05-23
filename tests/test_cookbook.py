@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from sirenspec.core.executor import execute
+from sirenspec.core.usage import TokenUsage
 from sirenspec.yaml.parser import load_workflow
 
 COOKBOOK = Path(__file__).parent.parent / "docs" / "cookbook"
@@ -22,7 +23,7 @@ COOKBOOK = Path(__file__).parent.parent / "docs" / "cookbook"
 def _provider(response: str = "mock response", tokens: int = 10) -> MagicMock:
     mock = MagicMock()
     mock.complete = AsyncMock(return_value=response)
-    mock.last_token_count = tokens
+    mock.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=tokens)
     return mock
 
 
@@ -30,14 +31,16 @@ def _sequential_provider(*responses: str, tokens: int = 10) -> MagicMock:
     """Return a mock provider whose calls cycle through *responses* in order."""
     idx = [0]
 
-    async def _complete(messages: list[dict[str, Any]]) -> str:
+    # **kwargs lets the executor pass ``max_tokens=...`` without breaking the mock —
+    # this matches the production providers, which accept ``max_tokens`` as an optional kwarg.
+    async def _complete(messages: list[dict[str, Any]], **_kwargs: Any) -> str:
         val = responses[idx[0] % len(responses)]
         idx[0] += 1
         return val
 
     mock = MagicMock()
     mock.complete = _complete
-    mock.last_token_count = tokens
+    mock.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=tokens)
     return mock
 
 
@@ -235,7 +238,7 @@ class TestThousandMonkeys:
 
         provider = MagicMock()
         provider.complete = _complete
-        provider.last_token_count = 5
+        provider.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=5)
 
         with patch("sirenspec.core.agent_runner.resolve_provider", return_value=provider):
             trace = await execute(wf, wf.input.message if wf.input else "Write a three-line poem.")
@@ -255,7 +258,7 @@ class TestThousandMonkeys:
         wf = load_workflow(COOKBOOK / "1000-monkeys" / "workflow.yaml")
         provider = MagicMock()
         provider.complete = AsyncMock(side_effect=RuntimeError("no api key"))
-        provider.last_token_count = 0
+        provider.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=0)
 
         with patch("sirenspec.core.agent_runner.resolve_provider", return_value=provider):
             trace = await execute(wf, wf.input.message if wf.input else "Write a poem.")
@@ -292,7 +295,7 @@ class TestMarketAnalysis:
 
         provider = MagicMock()
         provider.complete = _complete
-        provider.last_token_count = 8
+        provider.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=8)
 
         with patch("sirenspec.core.agent_runner.resolve_provider", return_value=provider):
             trace = await execute(wf, wf.input.message if wf.input else "Q3 earnings exceeded expectations.")
@@ -322,7 +325,7 @@ class TestMarketAnalysis:
 
         provider = MagicMock()
         provider.complete = _complete
-        provider.last_token_count = 5
+        provider.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=5)
 
         with patch("sirenspec.core.agent_runner.resolve_provider", return_value=provider):
             await execute(wf, "some report")
@@ -331,6 +334,114 @@ class TestMarketAnalysis:
         assert "SENTIMENT_OUTPUT" in captured[0]
         assert "RISK_OUTPUT" in captured[0]
         assert "OPPORTUNITY_OUTPUT" in captured[0]
+
+
+# ---------------------------------------------------------------------------
+# content-approval (HumanNode in the middle of a pipeline)
+# ---------------------------------------------------------------------------
+
+
+class TestContentApproval:
+    @pytest.mark.asyncio
+    async def test_approval_routes_to_publish(self) -> None:
+        wf = load_workflow(COOKBOOK / "content-approval" / "workflow.yaml")
+        provider = _sequential_provider("draft text", "final post text")
+
+        async def yes(_prompt: str) -> str:
+            return "yes"
+
+        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=provider):
+            trace = await execute(wf, wf.input.message if wf.input else "topic", human_input_fn=yes)
+
+        assert trace["summary"]["status"] == "success"
+        node_ids = [n["id"] for n in trace["nodes"]]
+        assert node_ids == ["draft", "approve", "publish"]
+        assert trace["output"]["post"] == "final post text"
+
+    @pytest.mark.asyncio
+    async def test_rejection_skips_publish(self) -> None:
+        wf = load_workflow(COOKBOOK / "content-approval" / "workflow.yaml")
+        provider = _sequential_provider("draft text", "should not be called")
+
+        async def no(_prompt: str) -> str:
+            return "no"
+
+        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=provider):
+            trace = await execute(wf, wf.input.message if wf.input else "topic", human_input_fn=no)
+
+        assert trace["summary"]["status"] == "success"
+        node_ids = [n["id"] for n in trace["nodes"]]
+        assert "publish" not in node_ids
+
+    @pytest.mark.asyncio
+    async def test_prompt_template_resolved_with_draft(self) -> None:
+        wf = load_workflow(COOKBOOK / "content-approval" / "workflow.yaml")
+        provider = _sequential_provider("a marketing draft", "final post text")
+        captured: list[str] = []
+
+        async def capture(prompt: str) -> str:
+            captured.append(prompt)
+            return "yes"
+
+        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=provider):
+            await execute(wf, "topic", human_input_fn=capture)
+
+        assert captured, "human prompt was never rendered"
+        assert "a marketing draft" in captured[0]
+
+
+# ---------------------------------------------------------------------------
+# budget-guarded (workflow budget + per-node max_tokens_per_call)
+# ---------------------------------------------------------------------------
+
+
+class TestBudgetGuarded:
+    @pytest.mark.asyncio
+    async def test_under_budget_runs_all_three_nodes(self) -> None:
+        wf = load_workflow(COOKBOOK / "budget-guarded" / "workflow.yaml")
+        provider = _sequential_provider("research bullets", "risk list", "exec brief", tokens=20)
+        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=provider):
+            trace = await execute(wf, wf.input.message if wf.input else "topic")
+
+        assert trace["summary"]["status"] == "success"
+        node_ids = [n["id"] for n in trace["nodes"]]
+        assert node_ids == ["research", "analyse", "report"]
+        assert trace["output"]["brief"] == "exec brief"
+
+    @pytest.mark.asyncio
+    async def test_budget_block_in_summary(self) -> None:
+        wf = load_workflow(COOKBOOK / "budget-guarded" / "workflow.yaml")
+        provider = _sequential_provider("a", "b", "c", tokens=20)
+        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=provider):
+            trace = await execute(wf, "topic")
+
+        budget = trace["summary"]["budget"]
+        assert budget is not None
+        assert budget["max_tokens"] == 4000
+        assert budget["max_cost_usd"] == 0.05
+        assert budget["max_duration_s"] == 120
+        assert budget["on_exceeded"] == "skip_remaining"
+
+    @pytest.mark.asyncio
+    async def test_max_tokens_per_call_forwarded(self) -> None:
+        """Each agent node declares a different ``max_tokens_per_call`` — verify the value
+        reaches the provider on each call."""
+
+        wf = load_workflow(COOKBOOK / "budget-guarded" / "workflow.yaml")
+        seen_max_tokens: list[int | None] = []
+
+        async def fake_complete(messages: list[dict[str, Any]], max_tokens: int | None = None) -> str:
+            seen_max_tokens.append(max_tokens)
+            return "ok"
+
+        provider = MagicMock()
+        provider.complete = fake_complete
+        provider.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=10)
+
+        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=provider):
+            await execute(wf, "topic")
+
+        assert seen_max_tokens == [500, 500, 800]
 
 
 # ---------------------------------------------------------------------------

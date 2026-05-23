@@ -15,6 +15,8 @@ edges: []              # optional
 input: {}              # optional
 state: {}              # optional
 guardrails: []         # optional
+budget: {}             # optional
+defaults: {}           # optional
 ```
 
 ---
@@ -45,7 +47,7 @@ agents:
 |-------|----------|------|-------------|
 | `model` | Yes | string | Provider URI — `provider:model` format. |
 | `system` | Yes | string | System prompt sent to the model. |
-| `guardrails` | No | list of strings | Agent-level guardrail override. Replaces the workflow-level list. |
+| `guardrails` | No | list of strings or `{name, config}` objects | Agent-level guardrail override. Replaces the workflow-level list. Configurable guardrails (`schema`, `cost_cap`, `pii`) use the `{name, config}` form — see [Guardrails](/guardrails). |
 
 See [Agents](/assistant) for full agent documentation and [Providers](/providers) for valid model URIs.
 
@@ -53,7 +55,7 @@ See [Agents](/assistant) for full agent documentation and [Providers](/providers
 
 ## `nodes`
 
-**Required.** A mapping of node IDs to node definitions. Two node types are supported:
+**Required.** A mapping of node IDs to node definitions. Six node types are supported:
 
 **Agent node** (default) — binds an LLM agent to an output path:
 
@@ -77,16 +79,200 @@ nodes:
     output_key: data
 ```
 
+**Swrm node** — runs multiple agents in parallel with optional synthesis:
+
+```yaml
+nodes:
+  analyze:
+    type: swrm
+    agents:
+      - id: sentiment
+        provider: openai
+        model: gpt-4o-mini
+        prompt: "Analyze sentiment..."
+```
+
+**Factory node** — spawns instances (single agents or full swrms) for each item in a list:
+
+```yaml
+nodes:
+  process_items:
+    type: factory
+    agent: worker
+    for_each: "{{ inputs.items }}"
+    inputs:
+      item: "{{ item }}"
+    writes: output.results
+```
+
+Or with inline swrm (one swrm per item):
+
+```yaml
+nodes:
+  grade_papers:
+    type: factory
+    swrm:
+      agents:
+        - id: editor
+          provider: openai
+          model: gpt-4o-mini
+          prompt: "Review: {{ item }}"
+        - id: grader
+          provider: anthropic
+          model: claude-haiku-4-5-20251001
+          prompt: "Grade: {{ item }}"
+      synthesis:
+        provider: anthropic
+        prompt: "Final grade for paper {{ index }}: ..."
+    for_each: "{{ inputs.papers }}"
+    writes: output.grades
+```
+
+**Workflow node** — executes a sub-workflow inline:
+
+```yaml
+nodes:
+  run_child:
+    type: workflow
+    ref: ./child.yaml
+    inputs:
+      topic: "{{ extract.output }}"
+```
+
+**Human node** — pauses execution to collect input from a human operator:
+
+```yaml
+nodes:
+  approve_draft:
+    type: human
+    prompt: |
+      {{ draft.output }}
+
+      Approve this draft? (yes/edit/reject)
+    writes: working.approval
+    timeout: 3600
+    on_timeout: use_default
+    default_output: "no"
+```
+
 ### Agent node fields
 
 | Field | Required | Type | Description |
 |-------|----------|------|-------------|
 | `agent` | Yes | string | Agent ID from the `agents` map. |
 | `writes` | Yes | string | Dot-notation context path where the agent's response is stored. |
+| `streaming` | No | boolean | When `true` (default), use token streaming if the provider supports it. Set `false` to opt this node out — `--no-stream` on the CLI is the global override. Guardrails always apply to the fully assembled response, not per-chunk. |
 | `retry` | No | object | Per-node retry policy. Overrides `defaults.retry`. See [Retry Policies](/retry-policies). |
 | `on_failure` | No | object | Failure action when retries are exhausted. Overrides `defaults.on_failure`. See [Retry Policies](/retry-policies). |
+| `max_tokens_per_call` | No | integer | Optional ceiling on completion tokens for a single call. Forwarded to the provider so the LLM truncates its own response. |
 
-See [Tool Nodes](/tool-nodes) for the full tool node field reference and adapter documentation.
+### Human node fields
+
+A `human` node pauses execution to collect a response from a human operator. The node consumes no LLM tokens. The rendered prompt is shown via the configured input source (stdin by default), and the response is written to the workflow context just like an agent's output. Downstream `when:` conditions can gate on the response.
+
+| Field | Required | Type | Description |
+|-------|----------|------|-------------|
+| `type` | Yes | `"human"` | Discriminator that marks this as a human node. |
+| `writes` | Yes | string | Dot-notation context path where the response is stored. |
+| `prompt` | No | string | Template string shown to the operator. Supports `{{ expr }}` interpolation. |
+| `timeout` | No | number | Wall-clock seconds before `on_timeout` fires. Omitted means wait indefinitely. |
+| `on_timeout` | No | `"abort"` \| `"skip"` \| `"use_default"` | Action when the timeout fires. Default `"abort"` raises `HumanInputError`. `"skip"` writes the empty string. `"use_default"` writes `default_output`. |
+| `default_output` | Required when `on_timeout` is `"use_default"` | string | Fallback response used on timeout. |
+
+### Factory node fields
+
+A factory node supports three mutually exclusive execution modes:
+
+**Mode 1: Agent + for_each** — one agent call per item in a runtime JSON list.
+
+```yaml
+nodes:
+  execute:
+    type: factory
+    agent: worker_agent
+    for_each: "{{ plan.output }}"
+    inputs:
+      task: "{{ item }}"
+    concurrency: 4
+    writes: working.execute.outputs
+```
+
+**Mode 2: Agent + swarm_size** — N identical agent calls on the same input.
+
+```yaml
+nodes:
+  execute:
+    type: factory
+    agent: worker_agent
+    swarm_size: 5
+    inputs:
+      position: "{{ index }} of {{ total }}"
+    concurrency: 5
+    writes: working.execute.outputs
+```
+
+**Mode 3: Swrm + for_each** — one full swrm (parallel specialist agents with optional synthesis) per item in a runtime JSON list.
+
+```yaml
+nodes:
+  grade_papers:
+    type: factory
+    swrm:
+      agents:
+        - id: editor
+          provider: openai
+          model: gpt-4o-mini
+          prompt: "Review: {{ item }}"
+        - id: grader
+          provider: anthropic
+          model: claude-haiku-4-5-20251001
+          prompt: "Grade: {{ item }}"
+      synthesis:
+        provider: anthropic
+        prompt: "Final grade for paper {{ index }}: ..."
+    for_each: "{{ inputs.papers }}"
+    concurrency: 3
+    writes: working.grades
+```
+
+| Field | Required | Type | Description |
+|-------|----------|------|-------------|
+| `agent` | One of `agent` or `swrm` | string | Named agent from the workflow's top-level agents map. Mutually exclusive with `swrm`. |
+| `swrm` | One of `agent` or `swrm` | object | Inline swrm spec (with `agents`, optional `synthesis`, optional `concurrency`). Executed per item. Mutually exclusive with `agent`. |
+| `for_each` | One of `for_each` or `swarm_size` | string | Template expression that resolves to a JSON list at runtime. |
+| `swarm_size` | One of `for_each` or `swarm_size` | int or string | Static count or template expression for parallel agent instances. Only valid with `agent` mode. |
+| `inputs` | No | object | Template strings for each input. Supports `{{ item }}`, `{{ index }}`, and `{{ total }}`. |
+| `concurrency` | No | integer | Max parallel worker instances. Default: `1`. |
+| `timeout_per_instance` | No | integer | Per-instance timeout in seconds. Default: `60`. |
+| `on_failure` | No | `"abort"` \| `"continue"` | Failure policy: `abort` (raise) or `continue` (skip). Default: `abort`. |
+| `writes` | Yes | string | Dot-notation context path where the outputs list is stored. |
+
+#### Loop Variables
+
+Inside `inputs:` templates, `agent` prompts, and swrm agent/synthesis prompts (when using `swrm` mode), three special variables are available:
+
+| Variable | Availability | Type | Description |
+|----------|--------------|------|-------------|
+| `{{ item }}` | `for_each` mode only | any | Current list element. |
+| `{{ index }}` | All modes | int | Zero-based position in the list. |
+| `{{ total }}` | All modes | int | Total number of items in the list. |
+
+#### Swrm Within Factory
+
+The `swrm` field in factory nodes accepts:
+
+| Field | Required | Type | Description |
+|-------|----------|------|-------------|
+| `agents` | Yes | list of agents | One or more agents to run in parallel for each factory item. |
+| `synthesis` | No | synthesis object | Optional synthesis step run after all agents complete per item. |
+| `concurrency` | No | integer | Max agents to run concurrently per item. Default: all agents. |
+
+Agent prompts and synthesis prompts support all standard interpolation namespaces plus the three loop variables (`{{ item }}`, `{{ index }}`, `{{ total }}`).
+
+See the following pages for detailed field reference and examples:
+- [Tool Nodes](/tool-nodes) — HTTP and Python adapters
+- [Swrm](/swrm) — Parallel agents and synthesis
+- [Workflow Nodes](/workflow-nodes) — Sub-workflow composition
 
 ### Context paths
 
@@ -138,6 +324,7 @@ The `when` field enables conditional branching. The expression is evaluated afte
 |------|------|-------------|
 | `working` | object | The current `working` context (dot-access). |
 | `output` | object | The current `output` context (dot-access). |
+| `_budget` | object | Budget state from `cost_cap` guardrail (if active). Fields: `total_tokens` (int), `estimated_usd` (float or None). |
 | `true` / `false` / `null` | literals | YAML boolean/null literals. |
 
 No Python built-ins or imports are available — the namespace is intentionally restricted.
@@ -148,6 +335,14 @@ edges:
   - from: triage
     to: handle_refund
     when: working.triage.intent == "refund"
+```
+
+```yaml
+# Skip expensive node if cost_cap guardrail has exhausted budget
+edges:
+  - from: initial
+    to: expensive_processing
+    when: _budget.estimated_usd < 2.0
 ```
 
 If a `when` expression raises an error (missing key, syntax error, type mismatch), it is treated as `false` and the edge is not traversed. Edges without `when` are always traversed.
@@ -208,7 +403,9 @@ See [Retry Policies](/retry-policies) for the full field reference.
 
 ## `guardrails`
 
-**Optional.** A list of guardrail names applied globally to all agents. Defaults to `["injection"]` if omitted.
+**Optional.** A list of guardrail names (or guardrail specs with configuration) applied globally to all agents. Defaults to `["injection"]` if omitted.
+
+### Simple guardrails (no configuration)
 
 ```yaml
 guardrails:
@@ -216,14 +413,92 @@ guardrails:
   - length
 ```
 
-| Value | Description |
-|-------|-------------|
-| `injection` | Detects prompt-injection patterns. Applied by default. |
-| `length` | Truncates output to 4000 characters. |
+### Guardrails with configuration
+
+Some guardrails require configuration. Use the `name` and `config` fields:
+
+```yaml
+guardrails:
+  - name: schema
+    config:
+      schema:
+        type: "object"
+        properties:
+          intent:
+            type: "string"
+        required: ["intent"]
+```
+
+| Guardrail | Description | Configuration |
+|-----------|-------------|----------------|
+| `injection` | Detects prompt-injection patterns. Applied by default. | None |
+| `length` | Truncates output to 4000 characters. | Optional: `max_chars`, `mode` |
+| `pii` | Detects and redacts (or blocks on) email, phone, SSN, and credit-card data. | Optional: `entities`, `action`, `replacement` |
+| `schema` | Validates JSON output against a JSON Schema Draft 7 dict. | Required: `schema` |
+| `cost_cap` | Enforces token and/or USD budget ceilings. | Required: at least one of `max_usd` or `max_tokens`; optional: `action` |
 
 An empty list (`[]`) disables all guardrails for the entire workflow. Individual agents can override this with their own `guardrails` field.
 
 See [Guardrails](/guardrails) for full details.
+
+---
+
+## `budget`
+
+**Optional.** Workflow-level cumulative budget for token, USD, and wall-clock spend. The executor checks the running totals after every node and enforces the ceilings declared here. At least one of `max_tokens`, `max_cost_usd`, or `max_duration_s` must be set — an empty `budget:` block is rejected at validation time.
+
+```yaml
+budget:
+  max_tokens: 50000        # total tokens across all nodes
+  max_cost_usd: 5.00       # estimated USD ceiling for the whole run
+  max_duration_s: 300      # wall-clock cap for the whole run
+  on_exceeded: abort       # abort | warn | skip_remaining
+```
+
+| Field | Required | Type | Description |
+|-------|----------|------|-------------|
+| `max_tokens` | One of the three | integer | Maximum total tokens across all nodes in a run. |
+| `max_cost_usd` | One of the three | number | Maximum estimated USD spend across all nodes. Falls back to None for models without pricing entries (e.g. Ollama). |
+| `max_duration_s` | One of the three | number | Maximum wall-clock seconds for the full run. |
+| `on_exceeded` | No | `"abort"` \| `"warn"` \| `"skip_remaining"` | Action when any ceiling is hit. Default `"abort"` raises `BudgetExceededError`. `"warn"` logs and continues. `"skip_remaining"` finishes without new LLM calls. |
+
+### Budget status in the trace
+
+When a `budget:` block is configured, the trace `summary` includes a `budget` block:
+
+```json
+{
+  "summary": {
+    "total_tokens": 1832,
+    "budget": {
+      "max_tokens": 50000,
+      "max_cost_usd": 5.0,
+      "max_duration_s": 300,
+      "on_exceeded": "abort",
+      "tokens_used": 1832,
+      "estimated_usd": 0.0021,
+      "duration_s": 3.514,
+      "exceeded": false,
+      "violations": [],
+      "skipped_remaining": false
+    }
+  }
+}
+```
+
+### Per-node `max_tokens_per_call`
+
+Agent nodes also support a per-call ceiling:
+
+```yaml
+nodes:
+  research:
+    agent: researcher
+    writes: working.research
+    max_tokens_per_call: 500
+```
+
+`max_tokens_per_call` is forwarded to the provider as the `max_tokens` API parameter so the LLM truncates its own response. Combined with the workflow `budget:` block, this gives you two layers of protection: each individual call is bounded and the cumulative spend is bounded.
 
 ---
 

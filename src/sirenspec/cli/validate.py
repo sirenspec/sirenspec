@@ -8,6 +8,7 @@ from typing import Annotated
 import typer
 from rich.console import Console
 
+from sirenspec.guardrails.registry import build_guardrails
 from sirenspec.yaml.parser import load_workflow
 
 _err = Console(stderr=True)
@@ -24,6 +25,12 @@ def validate_command(
         raise typer.Exit(1) from exc
     except ValueError as exc:
         _err.print(f"[red]✗ Validation failed:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    try:
+        build_guardrails(workflow.guardrails)
+    except ValueError as exc:
+        _err.print(f"[red]✗ Guardrail config error:[/red] {exc}")
         raise typer.Exit(1) from exc
 
     n_agents = len(workflow.agents)

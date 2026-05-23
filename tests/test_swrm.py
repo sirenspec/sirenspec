@@ -10,6 +10,7 @@ from sirenspec.core.executor import execute
 from sirenspec.core.interpolation import InterpolationContext, build_interpolation_context, resolve_template
 from sirenspec.core.models import AgentDefinition, Edge, Node, SwrmAgent, SwrmNode, SwrmSynthesis, Workflow
 from sirenspec.core.swrm_runner import execute_swrm
+from sirenspec.core.usage import TokenUsage
 from sirenspec.exceptions import InterpolationError, SwrmAgentError
 
 # ---------------------------------------------------------------------------
@@ -20,7 +21,7 @@ from sirenspec.exceptions import InterpolationError, SwrmAgentError
 def _make_provider_mock(response_text: str = "mock response", tokens: int = 10) -> MagicMock:
     mock = MagicMock()
     mock.complete = AsyncMock(return_value=response_text)
-    mock.last_token_count = tokens
+    mock.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=tokens)
     return mock
 
 
@@ -147,7 +148,7 @@ class TestSwrmAllAgentsSucceed:
 
         mock_provider = MagicMock()
         mock_provider.complete = mock_complete
-        mock_provider.last_token_count = 5
+        mock_provider.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=5)
 
         with patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider):
             node = SwrmNode(
@@ -180,7 +181,7 @@ class TestSwrmAllAgentsSucceed:
 
         mock_provider = MagicMock()
         mock_provider.complete = mock_complete
-        mock_provider.last_token_count = 3
+        mock_provider.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=3)
 
         with patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider):
             node = SwrmNode(
@@ -242,7 +243,7 @@ class TestSwrmAllAgentsSucceed:
 
         mock_provider = MagicMock()
         mock_provider.complete = capture_complete
-        mock_provider.last_token_count = 1
+        mock_provider.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=1)
 
         # Sequence: first two calls are agents, third is synthesis.
         call_num = [0]
@@ -299,7 +300,7 @@ class TestSwrmAgentFailureAbort:
 
         mock_provider = MagicMock()
         mock_provider.complete = failing_complete
-        mock_provider.last_token_count = 0
+        mock_provider.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=0)
 
         with patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider):
             node = SwrmNode(
@@ -322,7 +323,7 @@ class TestSwrmAgentFailureAbort:
         """When the swrm node aborts, the workflow trace reflects failure status."""
         mock_provider = MagicMock()
         mock_provider.complete = AsyncMock(side_effect=RuntimeError("boom"))
-        mock_provider.last_token_count = 0
+        mock_provider.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=0)
 
         wf = Workflow(
             version="0.1",
@@ -363,7 +364,7 @@ class TestSwrmAgentFailureContinue:
 
         mock_provider = MagicMock()
         mock_provider.complete = partial_fail
-        mock_provider.last_token_count = 5
+        mock_provider.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=5)
 
         with patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider):
             node = SwrmNode(
@@ -389,7 +390,7 @@ class TestSwrmAgentFailureContinue:
         """With continue, the failed agent's output is '' in the list output."""
         mock_provider = MagicMock()
         mock_provider.complete = AsyncMock(side_effect=RuntimeError("fail"))
-        mock_provider.last_token_count = 0
+        mock_provider.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=0)
 
         with patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider):
             node = SwrmNode(
@@ -444,11 +445,11 @@ class TestSwrmInWorkflow:
 
         mock_swrm_provider = MagicMock()
         mock_swrm_provider.complete = mock_complete
-        mock_swrm_provider.last_token_count = 5
+        mock_swrm_provider.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=5)
 
         mock_agent_provider = MagicMock()
         mock_agent_provider.complete = mock_complete
-        mock_agent_provider.last_token_count = 8
+        mock_agent_provider.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=8)
 
         wf = Workflow(
             version="0.1",
@@ -491,7 +492,7 @@ class TestSwrmInWorkflow:
 
         mock_provider = MagicMock()
         mock_provider.complete = concurrency_probe
-        mock_provider.last_token_count = 1
+        mock_provider.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=1)
 
         with patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider):
             node = SwrmNode(

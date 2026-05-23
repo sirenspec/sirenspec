@@ -37,7 +37,7 @@ class TestBuildGuardrails:
 
     def test_unknown_guardrail_raises(self) -> None:
         with pytest.raises(ValueError, match="Unknown guardrail"):
-            build_guardrails(["pii"])
+            build_guardrails(["bogus"])
 
     def test_unknown_in_list_raises(self) -> None:
         with pytest.raises(ValueError, match="Unknown guardrail"):

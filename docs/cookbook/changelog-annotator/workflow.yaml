@@ -1,0 +1,52 @@
+version: "0.1"
+
+agents:
+  classifier:
+    model: "openai:gpt-4o-mini"
+    system: |
+      You will receive a git commit message.
+      Classify it into exactly one category: bug_fix, feature, chore, or docs.
+      Write a single, user-facing sentence summarising what changed.
+      Reply in this exact format and nothing else:
+      <category>: <summary sentence>
+
+  release_writer:
+    model: "anthropic:claude-haiku-4-5-20251001"
+    system: |
+      You are a technical writer producing release notes from a list of classified commit summaries.
+      Each line is formatted as: <category>: <summary>
+
+      Group entries under these markdown headings (omit any group with no entries):
+      ## Features
+      ## Bug Fixes
+      ## Chores
+      ## Docs
+
+      Write clean, user-facing bullet points. Keep each bullet concise.
+
+      Commit summaries:
+      {{ classify_commits.output }}
+
+nodes:
+  classify_commits:
+    type: factory
+    agent: classifier
+    for_each: "{{ inputs.message }}"
+    inputs:
+      commit: "{{ item }}"
+    writes: working.classifications
+    concurrency: 3
+
+  write_notes:
+    agent: release_writer
+    writes: output.release_notes
+
+edges:
+  - from: classify_commits
+    to: write_notes
+
+guardrails:
+  - injection
+
+input:
+  message: '["fix: resolve null pointer on empty cart checkout", "feat: add Stripe payment gateway integration", "chore: bump pytest to 8.2", "docs: update quickstart with Python 3.13 note", "feat: export workflow trace as JSON"]'

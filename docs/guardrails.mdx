@@ -55,6 +55,157 @@ Limits the length of LLM output. In the default `"truncate"` mode, responses lon
 The `length` guardrail only checks output — input is passed through unchanged.
 </Note>
 
+### `pii`
+
+Detects personally identifiable information in both input and output text and either redacts it, blocks the call, or passes it through with a flag. Supported entities are `email`, `phone`, `ssn`, and `credit_card`. Credit-card matches are filtered through the Luhn checksum to suppress false positives.
+
+**Configuration:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `entities` | list of strings | all four entities | Subset of `["email", "phone", "ssn", "credit_card"]` to detect. |
+| `action` | string | `"redact"` | `"redact"` replaces each match with `replacement`; `"block"` raises `PIIDetectedError`; `"flag"` leaves the text unchanged. |
+| `replacement` | string | `"[REDACTED]"` | Replacement string used when `action: "redact"`. |
+
+**Behavior:**
+
+- **Input:** Inspected before the prompt is sent to the LLM.
+- **Output:** Inspected after the response is received, before downstream nodes see it.
+- **On `action: "block"`:** Raises `PIIDetectedError` (a `GuardrailError` subclass) listing the entity types that matched.
+
+**Example — redact emails and phones in both directions:**
+
+```yaml
+guardrails:
+  - name: pii
+    config:
+      entities: ["email", "phone"]
+      action: redact
+      replacement: "[REDACTED]"
+```
+
+**Example — block any credit-card leakage from a finance agent:**
+
+```yaml
+agents:
+  finance:
+    model: "openai:gpt-4o-mini"
+    system: "Answer finance questions without ever quoting card numbers."
+    guardrails:
+      - name: pii
+        config:
+          entities: ["credit_card"]
+          action: block
+```
+
+### `schema`
+
+Validates LLM output against a JSON Schema Draft 7 definition. The guardrail parses the output text as JSON and checks it against the provided schema. Input text is passed through unchanged.
+
+Use this guardrail when you need the LLM to produce structured JSON output that conforms to a specific schema — for example, extracting data into a fixed set of fields.
+
+**Configuration:**
+
+The `schema` guardrail requires a `name` and a `config` dict with a `schema` key:
+
+```yaml
+guardrails:
+  - name: schema
+    config:
+      schema:
+        type: "object"
+        properties:
+          name:
+            type: "string"
+          age:
+            type: "integer"
+            minimum: 0
+        required: ["name", "age"]
+```
+
+**Behavior:**
+
+- **Input:** Passed through unchanged.
+- **Output:** Parsed as JSON and validated against the schema.
+- **On failure:** Raises a `GuardrailViolation` with a message indicating the path and constraint that failed (e.g., `Schema violation at "$.age": 25 is greater than the maximum of 20`).
+
+**Example:**
+
+```yaml
+agents:
+  extractor:
+    model: "openai:gpt-4o-mini"
+    system: "Extract the person's name and age as JSON: {\"name\": \"...\", \"age\": ...}"
+    guardrails:
+      - name: schema
+        config:
+          schema:
+            type: "object"
+            properties:
+              name:
+                type: "string"
+              age:
+                type: "integer"
+                minimum: 0
+                maximum: 150
+            required: ["name", "age"]
+```
+
+### `cost_cap`
+
+Enforces token and/or USD budget ceilings on a workflow. After each node executes, the guardrail checks cumulative token usage and estimated cost. On exceedance, it either aborts the workflow or logs a warning.
+
+At least one of `max_usd` or `max_tokens` must be specified.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `max_usd` | float | None | Maximum estimated USD spend for the entire run. |
+| `max_tokens` | int | None | Maximum token ceiling independent of cost. |
+| `action` | string | `"abort"` | `"abort"` raises `BudgetExceededError` and stops execution; `"warn"` logs and continues. |
+
+**Behavior:**
+
+- **Input/Output:** Both are pass-throughs; the guardrail only examines budget state.
+- **Budget checking:** Runs after each node completes. Available to `when:` conditions as `_budget.total_tokens` and `_budget.estimated_usd`.
+- **On `action: "abort"`:** Raises `BudgetExceededError` with details of the violation; the workflow transitions to `"failed"` status.
+- **On `action: "warn"`:** Logs a structured warning and allows execution to continue.
+
+**Example:**
+
+```yaml
+guardrails:
+  - name: cost_cap
+    config:
+      max_usd: 5.0
+      max_tokens: 10000
+      action: abort
+```
+
+Use in a conditional edge to skip expensive nodes once a budget threshold is reached:
+
+```yaml
+edges:
+  - from: classify
+    to: expensive_analysis
+    when: _budget.estimated_usd < 3.0  # only run if we have budget left
+
+  - from: expensive_analysis
+    to: end
+    when: true
+
+  - from: classify
+    to: cheap_fallback
+    when: _budget.estimated_usd >= 3.0  # skip expensive path when budget low
+
+  - from: cheap_fallback
+    to: end
+    when: true
+```
+
+<Note>
+The `cost_cap` guardrail works best when pricing information is available for your LLM models. If no pricing is found, `estimated_usd` will be `None` and only the `max_tokens` ceiling will be enforced.
+</Note>
+
 ---
 
 ## Configuration

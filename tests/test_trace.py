@@ -9,12 +9,13 @@ import pytest
 
 from sirenspec.core.executor import execute
 from sirenspec.core.models import Workflow
+from sirenspec.core.usage import TokenUsage
 
 
 def _make_mock_provider(response: str = "resp", tokens: int = 5) -> MagicMock:
     m = MagicMock()
     m.complete = AsyncMock(return_value=response)
-    m.last_token_count = tokens
+    m.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=tokens)
     return m
 
 

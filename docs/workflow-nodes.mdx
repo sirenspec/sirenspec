@@ -1,0 +1,379 @@
+---
+title: Workflow Nodes
+description: Compose nested workflows by executing sub-workflows as first-class nodes.
+---
+
+## Overview
+
+Workflow nodes let you execute another SirenSpec workflow inline as part of a parent workflow — enabling sub-workflow composition, code reuse, and modular workflow design. Any node with `type: workflow` is a workflow node.
+
+```yaml
+nodes:
+  run_b:
+    type: workflow
+    ref: ./workflows/b.yaml
+    inputs:
+      topic: "{{ extract.output }}"
+```
+
+The sub-workflow runs **blocking** (not in parallel) inside the parent workflow. Its output dict is written into the parent context so downstream nodes can reference it.
+
+---
+
+## When to Use Workflow Nodes
+
+**Use workflow nodes when:**
+- You want to compose modular, reusable workflow templates
+- A sub-workflow is shared across multiple parent workflows
+- You need to organize complex workflows into logical stages (e.g., extraction → analysis → synthesis)
+- You want to keep workflow files small and maintainable
+
+**Do NOT use workflow nodes when:**
+- You want to run tasks in parallel (use `swrm` or `factory` instead)
+- You are passing the entire workflow context to a sub-workflow (inputs isolate the sub-workflow's context by design)
+
+---
+
+## Node Fields
+
+| Field | Required | Type | Default | Description |
+|-------|----------|------|---------|-------------|
+| `type` | Yes | `"workflow"` | — | Node type discriminator. Must be `"workflow"`. |
+| `ref` | Yes | string | — | File path or registry name for the sub-workflow. |
+| `inputs` | No | dict[string, string] | `{}` | Template strings bound to the sub-workflow's input context. |
+| `writes` | No | string | `"output.<node_id>"` | Dot-notation path where sub-workflow output is written. |
+| `max_depth` | No | integer | `10` | Maximum nesting depth before a ValidationError is raised. |
+
+---
+
+## `ref` — Sub-Workflow Reference
+
+The `ref` field accepts two forms:
+
+### File Path
+
+Relative or absolute paths to YAML workflow files, resolved at execution time:
+
+```yaml
+nodes:
+  run_child:
+    type: workflow
+    ref: ./workflows/b.yaml
+
+  run_sibling:
+    type: workflow
+    ref: /absolute/path/to/workflow.yaml
+```
+
+### Named Registry Entry
+
+If a `WorkflowRegistry` is passed to `execute()`, `ref` can be a string name:
+
+```yaml
+nodes:
+  run_registered:
+    type: workflow
+    ref: child_workflow_name
+```
+
+The registry is passed programmatically:
+
+```python
+from sirenspec import load_workflow, execute, WorkflowRegistry
+
+registry = WorkflowRegistry()
+registry.register("child_workflow_name", child_workflow)
+
+workflow = load_workflow("parent.yaml")
+trace = await execute(workflow, "hello", registry=registry)
+```
+
+---
+
+## `inputs` — Context Isolation
+
+The sub-workflow's context is initialized with **only** the keys declared in `inputs`. It does **not** inherit the parent's full working context.
+
+This ensures clean separation of concerns: the sub-workflow only sees what the parent explicitly passes.
+
+```yaml
+nodes:
+  run_child:
+    type: workflow
+    ref: ./workflows/child.yaml
+    inputs:
+      topic: "{{ extract.output }}"
+      max_length: "500"
+```
+
+**Before the sub-workflow starts,** template expressions in `inputs` are resolved against the parent's context:
+- `{{ extract.output }}` — reads from the parent's `working` or `output`
+- `{{ env.API_KEY }}` — reads environment variables
+- `{{ inputs.message }}` — reads the parent's initial input
+
+After resolution, the sub-workflow receives a clean context dict containing only the values in `inputs`.
+
+Inside the sub-workflow, these become available under `{{ inputs.* }}`:
+
+```yaml
+# Inside child.yaml
+nodes:
+  analyze:
+    agent: analyst
+    writes: output.summary
+    # Can reference {{ inputs.topic }} passed from parent
+```
+
+---
+
+## `writes` — Output Path
+
+By default, sub-workflow output is written to `output.<node_id>`. You can customize this path:
+
+```yaml
+nodes:
+  run_child:
+    type: workflow
+    ref: ./child.yaml
+    writes: output.analysis  # custom path
+```
+
+**Without `writes`**, output is written to `output.run_child`:
+
+```yaml
+edges:
+  - from: run_child
+    to: next_step
+    when: output.run_child != null
+```
+
+**With `writes: output.analysis`**, output is written to `output.analysis`:
+
+```yaml
+edges:
+  - from: run_child
+    to: next_step
+    when: output.analysis != null
+```
+
+The sub-workflow's **output dict** (keyed by sub-node ID) is stored at the specified path, so you can reference individual sub-nodes:
+
+```yaml
+# Parent workflow
+nodes:
+  summarize:
+    agent: summarizer
+    writes: output.final
+    # In system prompt, reference sub-node outputs:
+    # {{ output.run_child.extract }} — first sub-node's output
+    # {{ output.run_child.analyze }} — second sub-node's output
+```
+
+---
+
+## `max_depth` — Nesting Limit
+
+Workflow nodes can nest arbitrarily deep, but to prevent infinite recursion cycles, each node has a nesting depth limit (default: 10).
+
+```yaml
+nodes:
+  run_child:
+    type: workflow
+    ref: ./child.yaml
+    max_depth: 5  # raise ValidationError if nesting exceeds 5 levels
+```
+
+If a sub-workflow node is executed at depth >= `max_depth`, execution raises `ValidationError`:
+
+```
+Max workflow nesting depth 5 exceeded for node 'run_child'
+```
+
+---
+
+## Output Shape
+
+After a workflow node executes, its sub-workflow's output dict is written to the parent context:
+
+| Context path | Value |
+|---|---|
+| `output.<node_id>` (or custom `writes` path) | The sub-workflow's output dict (keys are sub-node IDs). |
+| `working.<node_id>.sub_workflow_trace` | The sub-workflow's full execution trace. |
+
+### Accessing Sub-Node Outputs
+
+Reference individual sub-node outputs via the output dict:
+
+```yaml
+nodes:
+  downstream:
+    agent: processor
+    writes: output.result
+    # Downstream node can access sub-workflow outputs:
+    # {{ output.run_child.extract }} — output of sub-node named "extract"
+    # {{ output.run_child.analyze }} — output of sub-node named "analyze"
+```
+
+---
+
+## Complete Example
+
+**Parent workflow** (`parent.yaml`):
+
+```yaml
+version: "0.1"
+
+agents:
+  triage:
+    model: "openai:gpt-4o-mini"
+    system: |
+      Classify the user input as either a refund request or a general inquiry.
+      Reply with only "refund" or "general".
+
+  reporter:
+    model: "openai:gpt-4o-mini"
+    system: |
+      Based on the analysis results, produce a concise summary.
+
+nodes:
+  classify:
+    agent: triage
+    writes: working.intent
+
+  run_analysis:
+    type: workflow
+    ref: ./analysis.yaml
+    inputs:
+      message: "{{ inputs.message }}"
+      intent: "{{ working.intent }}"
+    writes: output.analysis
+
+  report:
+    agent: reporter
+    writes: output.final
+    # Can reference sub-workflow outputs:
+    # {{ output.analysis.sentiment }} — sentiment sub-node's output
+    # {{ output.analysis.risk }} — risk sub-node's output
+
+edges:
+  - from: classify
+    to: run_analysis
+  - from: run_analysis
+    to: report
+```
+
+**Sub-workflow** (`analysis.yaml`):
+
+```yaml
+version: "0.1"
+
+agents:
+  sentiment_agent:
+    model: "openai:gpt-4o-mini"
+    system: "Analyze sentiment in: {{ inputs.message }}"
+
+  risk_agent:
+    model: "anthropic:claude-haiku-4-5-20251001"
+    system: "Identify risks in: {{ inputs.message }}"
+
+nodes:
+  sentiment:
+    agent: sentiment_agent
+    writes: output.sentiment
+
+  risk:
+    agent: risk_agent
+    writes: output.risk
+
+edges:
+  - from: sentiment
+    to: risk
+```
+
+**Run it:**
+
+```bash
+sirenspec run parent.yaml --input "I'd like to request a refund."
+```
+
+The parent's output will include:
+
+```json
+{
+  "analysis": {
+    "sentiment": "The user is unhappy and frustrated...",
+    "risk": "High risk of customer churn if not handled well..."
+  },
+  "final": "Summary based on analysis..."
+}
+```
+
+---
+
+## Error Handling
+
+### `ValidationError: Max workflow nesting depth exceeded`
+
+Raised when a workflow node is executed at a depth >= its `max_depth`. Increase `max_depth` or simplify your workflow nesting:
+
+```yaml
+nodes:
+  run_child:
+    type: workflow
+    ref: ./child.yaml
+    max_depth: 15  # increase if needed
+```
+
+### `FileNotFoundError`
+
+Raised when `ref` points to a non-existent file:
+
+```
+FileNotFoundError: ./workflows/child.yaml not found
+```
+
+Check the file path relative to the parent workflow file location.
+
+### `KeyError`
+
+Raised when `ref` is a named string and the registry does not contain that workflow:
+
+```
+KeyError: Workflow 'missing_name' not found in WorkflowRegistry
+```
+
+Register the workflow before execution:
+
+```python
+registry.register("missing_name", workflow)
+```
+
+---
+
+## Template Interpolation
+
+In `inputs` values, you can use all standard SirenSpec template syntax:
+
+| Placeholder | Description |
+|---|---|
+| `{{ inputs.message }}` | The parent's initial input message. |
+| `{{ working.* }}` | Any value written to the parent's `working` context. |
+| `{{ output.* }}` | Any value written to the parent's `output` context. |
+| `{{ env.VAR_NAME }}` | Environment variables. |
+
+```yaml
+nodes:
+  run_child:
+    type: workflow
+    ref: ./child.yaml
+    inputs:
+      report: "{{ working.extracted_report }}"
+      threshold: "{{ env.THRESHOLD }}"
+      user_msg: "{{ inputs.message }}"
+```
+
+---
+
+## JSON Schema
+
+The `sirenspec.schema.json` artifact validates workflow nodes inline with other node types. IDEs that support JSON Schema (VS Code, JetBrains) will autocomplete `type: workflow`, `ref`, and all fields automatically.

@@ -1,0 +1,105 @@
+version: "0.1"
+# env_file: .env
+
+# Grading Factory — spawns one swrm per paper, each swrm runs an editor,
+# AI detector, and grader in parallel, then synthesises a per-paper grade
+# report. A final agent assembles all reports into a gradebook.
+#
+# Demonstrates: swrm factory (FactoryNode.swrm), {{ item }}/{{ index }}/{{ total }}
+# in agent prompts, per-item synthesis, factory output collection.
+#
+# Run:
+#   sirenspec run docs/cookbook/grading-factory/workflow.yaml
+
+agents:
+  gradebook_compiler:
+    model: "anthropic:claude-haiku-4-5-20251001"
+    system: |
+      You are an academic administrator compiling a final gradebook.
+      Below are the individual grade reports for each paper submitted.
+      Produce a clean gradebook in markdown with one row per paper:
+
+      | # | Grade | Key Feedback |
+      |---|-------|--------------|
+
+      Reports:
+      {{ grade_papers.output }}
+
+nodes:
+  grade_papers:
+    type: factory
+    for_each: "{{ inputs.message }}"
+    concurrency: 3
+    on_failure: continue
+    writes: working.grade_reports
+    swrm:
+      concurrency: 3
+      agents:
+        - id: editor
+          provider: anthropic
+          model: claude-haiku-4-5-20251001
+          prompt: |
+            You are a writing editor. Review the following student paper (paper {{ index }} of {{ total }})
+            and provide brief feedback on clarity, structure, and grammar. Be concise — 2-3 sentences.
+
+            Paper:
+            {{ item }}
+
+        - id: ai_detector
+          provider: openai
+          model: gpt-4o-mini
+          prompt: |
+            You are an academic integrity reviewer. Assess whether the following student paper
+            (paper {{ index }} of {{ total }}) shows signs of AI generation.
+            Reply with one of: LIKELY_HUMAN, UNCERTAIN, LIKELY_AI — followed by a one-sentence reason.
+
+            Paper:
+            {{ item }}
+
+        - id: grader
+          provider: anthropic
+          model: claude-haiku-4-5-20251001
+          prompt: |
+            You are a professor grading a student paper. Score paper {{ index }} of {{ total }}
+            on a scale of A, B, C, D, or F. Return the letter grade on the first line,
+            then a one-sentence justification.
+
+            Paper:
+            {{ item }}
+
+      synthesis:
+        provider: anthropic
+        model: claude-haiku-4-5-20251001
+        prompt: |
+          Produce a concise grade report for paper {{ index }} of {{ total }}.
+
+          Editorial feedback:
+          {{ grade_papers.agents.editor.output }}
+
+          Integrity assessment:
+          {{ grade_papers.agents.ai_detector.output }}
+
+          Grade:
+          {{ grade_papers.agents.grader.output }}
+
+          Format:
+          Grade: <letter>
+          Integrity: <LIKELY_HUMAN | UNCERTAIN | LIKELY_AI>
+          Feedback: <one sentence combining editorial and grade rationale>
+
+  compile_gradebook:
+    agent: gradebook_compiler
+    writes: output.gradebook
+
+edges:
+  - from: grade_papers
+    to: compile_gradebook
+
+input:
+  message: |
+    ["The mitochondria is the powerhouse of the cell. It produces ATP through oxidative phosphorylation, converting nutrients into usable energy. Without it, eukaryotic life as we know it could not exist.",
+     "Climate change is a big problem. Lots of scientists agree. We should do something about it before it gets worse. Many countries have started to take action but more needs to be done.",
+     "Shakespeare wrote many plays and poems. His work has influenced literature for centuries. Romeo and Juliet is about two young lovers whose families are enemies. It ends tragically when both die."]
+
+guardrails:
+  - injection

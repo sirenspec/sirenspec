@@ -73,12 +73,25 @@ class TestValidateCommand:
 
 
 class TestRunCommand:
-    def test_run_prints_json_trace(self, tmp_path: Path) -> None:
+    def test_run_trace_flag_prints_json(self, tmp_path: Path) -> None:
+        """--trace flag falls back to execute() and emits JSON on stdout."""
         f = _write_workflow(tmp_path, MINIMAL_YAML)
 
         with patch("sirenspec.cli.run.asyncio") as mock_asyncio:
             mock_asyncio.run.return_value = _MOCK_TRACE
-            result = runner.invoke(app, ["run", str(f)])
+            result = runner.invoke(app, ["run", str(f), "--trace"])
+
+        assert result.exit_code == 0
+        parsed = json.loads(result.output)
+        assert parsed["summary"]["status"] == "success"
+
+    def test_run_output_json_flag_prints_json(self, tmp_path: Path) -> None:
+        """--output json flag falls back to execute() and emits JSON on stdout."""
+        f = _write_workflow(tmp_path, MINIMAL_YAML)
+
+        with patch("sirenspec.cli.run.asyncio") as mock_asyncio:
+            mock_asyncio.run.return_value = _MOCK_TRACE
+            result = runner.invoke(app, ["run", str(f), "--output", "json"])
 
         assert result.exit_code == 0
         parsed = json.loads(result.output)
@@ -114,7 +127,7 @@ nodes:
 
         with patch("sirenspec.cli.run.asyncio") as mock_asyncio:
             mock_asyncio.run.side_effect = capture_asyncio_run
-            runner.invoke(app, ["run", str(f), "--input", "Override"])
+            runner.invoke(app, ["run", str(f), "--trace", "--input", "Override"])
 
         # The coroutine was created with "Override" as user_input — just verify asyncio.run was called
         assert mock_asyncio.run.called
@@ -124,7 +137,7 @@ nodes:
 
         with patch("sirenspec.cli.run.asyncio") as mock_asyncio:
             mock_asyncio.run.return_value = _MOCK_TRACE
-            result = runner.invoke(app, ["run", str(f)])
+            result = runner.invoke(app, ["run", str(f), "--trace"])
 
         assert result.exit_code == 0
         assert mock_asyncio.run.called
@@ -136,6 +149,6 @@ nodes:
 
         with patch("sirenspec.cli.run.asyncio") as mock_asyncio:
             mock_asyncio.run.return_value = failed_trace
-            result = runner.invoke(app, ["run", str(f)], catch_exceptions=False)
+            result = runner.invoke(app, ["run", str(f), "--trace"], catch_exceptions=False)
 
         assert result.exit_code != 0

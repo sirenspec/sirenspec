@@ -67,11 +67,17 @@ system: "Mode: {{ env.DEBUG_MODE | default('production') }}"
 
 ### `node_id.output` — Canonical node output
 
-Every node (agent, swrm, factory) writes its primary output to `working.{node_id}.output`
+Every node (agent, swrm, factory, workflow) writes its primary output to `working.{node_id}.output`
 automatically.  Reference it in downstream nodes:
 
 ```yaml
 prompt: "Summarize: {{ classifier.output }}"
+```
+
+For workflow nodes, the output is the sub-workflow's output dict. Access sub-node outputs via:
+
+```yaml
+prompt: "Sub-workflow sentiment: {{ run_child.output.sentiment }}"
 ```
 
 ---
@@ -126,6 +132,24 @@ Zero-based position of the current item in the list:
 inputs:
   task: "{{ item }}"
   position: "{{ index }}"
+```
+
+---
+
+### `total` — Total item count (factory nodes)
+
+The total number of items in the current factory loop. Available in `agent` prompts, swrm agent prompts, synthesis prompts, and factory `inputs:` templates:
+
+```yaml
+inputs:
+  position: "{{ index }} of {{ total }}"
+
+swrm:
+  agents:
+    - id: grader
+      prompt: "Grade paper {{ index }} of {{ total }}: {{ item }}"
+  synthesis:
+    prompt: "Final report for item {{ index }}/{{ total }}"
 ```
 
 ---
@@ -221,7 +245,7 @@ nodes:
     for_each: "{{ plan.output }}"
     inputs:
       task: "{{ item }}"
-      position: "{{ index }}"
+      position: "{{ index }} of {{ total }}"
     concurrency: 4
     writes: working.execute.outputs
 

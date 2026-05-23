@@ -24,8 +24,8 @@ import asyncio
 from typing import Any
 
 from sirenspec.core.agent_runner import execute_agent_node
-from sirenspec.core.interpolation import build_interpolation_context, resolve_template
-from sirenspec.core.models import RetryPolicy, SwrmAgent, SwrmNode, SwrmSynthesis
+from sirenspec.core.interpolation import InterpolationContext, build_interpolation_context, resolve_template
+from sirenspec.core.models import FactorySwrm, RetryPolicy, SwrmAgent, SwrmNode, SwrmSynthesis
 from sirenspec.exceptions import InterpolationError, SwrmAgentError
 
 
@@ -68,7 +68,7 @@ async def run_single_agent(
             # whether to abort or continue.
             retry_policy=RetryPolicy(max_attempts=1),
         )
-        return result.output, result.tokens, result.duration_ms
+        return result.output, result.token_usage.total, result.duration_ms
     except SwrmAgentError:
         # Already wrapped — don't double-wrap.
         raise
@@ -105,7 +105,147 @@ async def run_synthesis(
         guardrail_names=guardrail_names,
         retry_policy=RetryPolicy(max_attempts=1),
     )
-    return result.output, result.tokens, result.duration_ms
+    return result.output, result.token_usage.total, result.duration_ms
+
+
+async def execute_swrm_for_item(
+    swrm_spec: FactorySwrm,
+    interp_ctx: InterpolationContext,
+    node_id: str,
+    working: dict[str, Any],
+    global_guardrail_names: list[str] | None,
+) -> tuple[dict[str, Any], Exception | None]:
+    """Execute a :class:`~sirenspec.core.models.FactorySwrm` for a single factory item.
+
+    Mirrors :func:`execute_swrm` but accepts a pre-built :class:`InterpolationContext`
+    so that ``{{ item }}``, ``{{ index }}``, and ``{{ total }}`` are already resolved
+    in agent prompts and the synthesis prompt.
+
+    :param swrm_spec: The inline swrm configuration from a :class:`FactoryNode`.
+    :param interp_ctx: Per-item interpolation context (carries item/index/total).
+    :param node_id: The factory node's workflow ID (used as the synthesis context key).
+    :param working: Current working context dict for synthesis context construction.
+    :param global_guardrail_names: Workflow-level guardrail names.
+    :returns: Tuple of (swrm trace dict, first error or None). Does not raise — the
+        factory runner decides whether to abort or continue based on the error value.
+    """
+    agents = swrm_spec.agents
+    concurrency = swrm_spec.concurrency if swrm_spec.concurrency is not None else len(agents)
+    semaphore = asyncio.Semaphore(concurrency)
+
+    agent_results: dict[str, str] = {}
+
+    async def run_with_semaphore(agent: SwrmAgent) -> tuple[dict[str, Any], SwrmAgentError | None]:
+        try:
+            rendered_prompt = resolve_template(agent.prompt, interp_ctx)
+            rendered_prompt_redacted = resolve_template(agent.prompt, interp_ctx, redact_env=True)
+        except InterpolationError as exc:
+            agent_trace: dict[str, Any] = {
+                "id": agent.id,
+                "prompt_sent": agent.prompt,
+                "response_received": None,
+                "tokens": 0,
+                "duration_ms": 0.0,
+                "error": str(exc),
+            }
+            return agent_trace, SwrmAgentError(agent.id, exc)
+
+        agent_trace = {
+            "id": agent.id,
+            "prompt_sent": rendered_prompt_redacted,
+            "response_received": None,
+            "tokens": 0,
+            "duration_ms": 0.0,
+            "error": None,
+        }
+        async with semaphore:
+            try:
+                text, tok, dur = await run_single_agent(agent, rendered_prompt, global_guardrail_names)
+                agent_trace.update({"response_received": text, "tokens": tok, "duration_ms": round(dur, 2)})
+                return agent_trace, None
+            except SwrmAgentError as exc:
+                agent_trace["error"] = str(exc)
+                return agent_trace, exc
+            except Exception as exc:
+                wrapped = SwrmAgentError(agent.id, exc)
+                agent_trace["error"] = str(wrapped)
+                return agent_trace, wrapped
+
+    tasks = [run_with_semaphore(agent) for agent in agents]
+    gathered: list[tuple[dict[str, Any], SwrmAgentError | None]] = await asyncio.gather(*tasks)
+
+    agent_traces: list[dict[str, Any]] = []
+    total_tokens = 0
+    total_duration_ms = 0.0
+    first_error: Exception | None = None
+
+    for agent_trace, exc in gathered:
+        agent_traces.append(agent_trace)
+        if exc is not None:
+            if first_error is None:
+                first_error = exc
+        else:
+            agent_id = agent_trace["id"]
+            agent_results[agent_id] = agent_trace["response_received"] or ""
+            total_tokens += agent_trace["tokens"]
+            total_duration_ms += agent_trace["duration_ms"]
+
+    synthesis_trace: dict[str, Any] | None = None
+    final_output: Any
+
+    if swrm_spec.synthesis is not None and first_error is None:
+        synth_working = {
+            **working,
+            node_id: {"agents": {aid: {"output": out} for aid, out in agent_results.items()}},
+        }
+        synth_ctx = InterpolationContext(
+            inputs=interp_ctx.inputs,
+            nodes=synth_working,
+            env=interp_ctx.env,
+            item=interp_ctx.item,
+            index=interp_ctx.index,
+            total=interp_ctx.total,
+        )
+        synthesis_trace = {
+            "prompt_sent": None,
+            "response_received": None,
+            "tokens": 0,
+            "duration_ms": 0.0,
+            "error": None,
+        }
+        try:
+            rendered_synthesis_prompt = resolve_template(swrm_spec.synthesis.prompt, synth_ctx)
+            rendered_synthesis_redacted = resolve_template(swrm_spec.synthesis.prompt, synth_ctx, redact_env=True)
+            synthesis_trace["prompt_sent"] = rendered_synthesis_redacted
+            synth_text, synth_tok, synth_dur = await run_synthesis(
+                swrm_spec.synthesis, rendered_synthesis_prompt, global_guardrail_names
+            )
+            synthesis_trace.update(
+                {
+                    "response_received": synth_text,
+                    "tokens": synth_tok,
+                    "duration_ms": round(synth_dur, 2),
+                }
+            )
+            total_tokens += synth_tok
+            total_duration_ms += synth_dur
+            final_output = synth_text
+        except Exception as exc:
+            synthesis_trace["error"] = str(exc)
+            if first_error is None:
+                first_error = exc
+            final_output = [agent_results.get(agent.id, "") for agent in agents]
+    else:
+        final_output = [agent_results.get(agent.id, "") for agent in agents]
+
+    return {
+        "agents": agent_traces,
+        "synthesis": synthesis_trace,
+        "output": final_output,
+        "tokens": total_tokens,
+        "duration_ms": round(total_duration_ms, 2),
+        "error": str(first_error) if first_error is not None else None,
+    }, first_error
 
 
 async def execute_swrm(

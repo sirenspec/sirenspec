@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import random
 from collections.abc import Callable, Coroutine
-from typing import Any
+from typing import Any, TypeVar
 
 from sirenspec.core.models import RetryPolicy
 from sirenspec.exceptions import RetryExhaustedError
@@ -72,17 +72,16 @@ def error_matches_policy(exc: Exception, policy: RetryPolicy) -> bool:
     return False
 
 
-async def run_with_retry[T](
+_T = TypeVar("_T")
+
+
+async def run_with_retry(
     node_id: str,
     policy: RetryPolicy,
-    call: Callable[[], Coroutine[Any, Any, T]],
+    call: Callable[[], Coroutine[Any, Any, _T]],
     on_attempt: Callable[[int, float, str], None] | None = None,
-) -> T:
+) -> _T:
     """Execute *call* with retries according to *policy*.
-
-    The ``[T]`` type parameter (PEP 695, Python 3.12+) makes this function generic:
-    callers can pass any async callable and get back its exact return type.
-    This replaces the older ``TypeVar("T")`` style and requires no extra imports.
 
     :param node_id: Identifier of the node being executed (used in error messages and logs).
     :param policy: The :class:`~sirenspec.core.models.RetryPolicy` governing retry behaviour.

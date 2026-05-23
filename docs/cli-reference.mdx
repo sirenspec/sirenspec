@@ -15,11 +15,71 @@ pip install sirenspec
 
 After installation, the `sirenspec` command is available on your PATH.
 
+You can also check the installed version:
+
+```bash
+sirenspec --version
+```
+
+---
+
+## `sirenspec init`
+
+Scaffold a new workflow interactively. Prompts for a template and provider, then writes a `workflow.yaml` and `.env.example` in the target directory. The generated workflow passes `sirenspec validate` immediately.
+
+```bash
+sirenspec init [OPTIONS]
+```
+
+**Options:**
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--output PATH` | `-o` | Directory for the generated files. Defaults to the current working directory. |
+
+**Exit codes:**
+
+| Code | Meaning |
+|------|---------|
+| `0` | Files were created successfully. |
+| `1` | The generated workflow failed validation (rare — indicates a template bug). |
+
+**Example session:**
+
+```
+$ sirenspec init
+
+Welcome to SirenSpec! Let's scaffold a new workflow.
+
+Choose a template:
+  1. simple-agent          — Single agent that answers a question
+  2. sequential-pipeline   — Two agents in sequence
+  ...
+
+Template [1]: 1
+
+Choose a provider:
+  1. openai
+  2. anthropic
+
+Provider [1]: 1
+
+Enable guardrails? (injection + length) [Y/n]: Y
+
+✓ workflow.yaml created
+✓ .env.example created
+
+Next steps:
+  Copy .env.example → .env and add your API key
+  sirenspec validate workflow.yaml
+  sirenspec run workflow.yaml
+```
+
 ---
 
 ## `sirenspec run`
 
-Execute a workflow and print the JSON execution trace to stdout.
+Execute a workflow and display the results. By default, node execution is rendered with Rich formatting to the terminal (streaming per-node view). Use `--trace` or `--output json` to output the full JSON execution trace instead.
 
 ```bash
 sirenspec run <workflow-file> [OPTIONS]
@@ -36,6 +96,11 @@ sirenspec run <workflow-file> [OPTIONS]
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--input TEXT` | `-i` | User input message. Overrides `input.message` in the YAML. |
+| `--trace` | | Print full JSON trace to stdout (disables per-node panels). |
+| `--output TEXT` | | Output format. Use `"json"` for raw JSON trace (equivalent to `--trace`). |
+| `--trace-file TEXT` | | Write full JSON trace to this file path (in addition to streaming output). |
+| `--quiet` | | Suppress node panels; print only the summary (useful for non-TTY environments). |
+| `--no-stream` | | Disable per-token streaming inside node panels. Panels and summary still render. |
 
 **Exit codes:**
 
@@ -47,20 +112,61 @@ sirenspec run <workflow-file> [OPTIONS]
 **Examples:**
 
 ```bash
-# Run with input defined in the YAML file
-sirenspec run workflow.yaml
-
-# Override the input from the command line
+# Run with streaming output (default)
 sirenspec run workflow.yaml --input "What is the capital of France?"
-sirenspec run workflow.yaml -i "What is the capital of France?"
 
-# Pipe the JSON output to jq
-sirenspec run workflow.yaml --input "Hello" | jq '.output'
+# Print full JSON trace
+sirenspec run workflow.yaml --input "Hello" --trace | jq '.output'
+sirenspec run workflow.yaml --input "Hello" --output json | jq '.output'
+
+# Suppress node panels but keep summary
+sirenspec run workflow.yaml --input "Hello" --quiet
+
+# Write trace to a file and see streaming output
+sirenspec run workflow.yaml --input "Hello" --trace-file trace.json
 ```
 
-**Output format:**
+**Streaming Output Format:**
 
-The JSON trace is written to stdout. Errors and validation messages go to stderr.
+When run in a TTY without `--trace` or `--output json`, the CLI renders each completed node as a Rich panel:
+
+```
+╭─ answer ─────────────────────────────╮
+│ Paris is the capital of France.      │
+╰───────────────────────────────────────╯
+  ↓ output.reply
+
+Run complete  │  1 node  │  24 tokens  │  cost unavailable (pricing not configured)
+```
+
+For **swarm nodes** (`type: swrm`), the output shows a dedicated parallel execution block:
+
+```
+─── Swarm: analyze [3 agents] ─────────────────────────
+╭─── sentiment ─────────────────────────────────────╮
+│ The market sentiment is cautiously optimistic...   │
+╰───────────────────────────────────────────────────╯
+╭─── risk ─────────────────────────────────────────╮
+│ 1. Rising interest rates                          │
+│ 2. Geopolitical uncertainty                       │
+│ 3. Earnings weakness...                           │
+╰───────────────────────────────────────────────────╯
+╭─── opportunity ───────────────────────────────────╮
+│ - Beaten-down tech sector                         │
+│ - Infrastructure momentum...                      │
+╰───────────────────────────────────────────────────╯
+─── Swarm complete: 3/3 succeeded  (2.8s total) ───
+╭─── analyze ───────────────────────────────────────╮
+│ Based on the three perspectives, this stock...    │
+╰───────────────────────────────────────────────────╯
+  ↓ output.analyze
+```
+
+When synthesis is configured, its output is shown in a final panel after the swarm footer. If any agent fails, the footer shows the failure count (e.g., `2/3 succeeded, 1 failed`). Failed agents display their error message in a red-bordered panel.
+
+**JSON Trace Format:**
+
+When `--trace`, `--output json`, or `--trace-file` is used, the full execution trace is written as JSON:
 
 ```json
 {
@@ -69,17 +175,22 @@ The JSON trace is written to stdout. Errors and validation messages go to stderr
   "nodes": [
     {
       "id": "answer",
-      "agent": "assistant",
-      "prompt_sent": "What is the capital of France?",
-      "response_received": "Paris is the capital of France.",
+      "type": "agent",
+      "output": "Paris is the capital of France.",
       "writes": "output.reply",
+      "status": "success",
+      "error": null,
+      "tokens": 24,
+      "usage": {
+        "prompt_tokens": 18,
+        "completion_tokens": 6,
+        "estimated_usd": null
+      },
       "guardrails_passed": [
         "InjectionGuardrail.check_input",
         "InjectionGuardrail.check_output"
       ],
-      "tokens": 24,
-      "duration_ms": 312.5,
-      "error": null
+      "duration_ms": 312.5
     }
   ],
   "output": {
@@ -87,6 +198,12 @@ The JSON trace is written to stdout. Errors and validation messages go to stderr
   },
   "summary": {
     "total_tokens": 24,
+    "total_usage": {
+      "prompt_tokens": 18,
+      "completion_tokens": 6,
+      "total_tokens": 24,
+      "estimated_usd": null
+    },
     "total_duration_ms": 312.5,
     "status": "success"
   }
@@ -101,18 +218,187 @@ The JSON trace is written to stdout. Errors and validation messages go to stderr
 | `input.message` | The user input that was used. |
 | `nodes` | Ordered list of executed nodes. |
 | `nodes[].id` | Node identifier. |
-| `nodes[].agent` | Agent that executed this node. |
-| `nodes[].prompt_sent` | Input passed to the LLM (after input guardrails). |
-| `nodes[].response_received` | LLM output (after output guardrails). |
+| `nodes[].type` | Node type: `"agent"`, `"tool"`, `"swrm"`, `"factory"`, or `"workflow"`. |
+| `nodes[].output` | The node's output value (string, dict, list, or null). |
 | `nodes[].writes` | Context path where the output was written. |
-| `nodes[].guardrails_passed` | List of guardrail check methods that succeeded. |
-| `nodes[].tokens` | Total tokens used by this node. |
-| `nodes[].duration_ms` | Wall-clock time for this node in milliseconds. |
+| `nodes[].status` | `"success"`, `"skipped"`, or `"failed"`. |
 | `nodes[].error` | Error message if the node failed, otherwise `null`. |
+| `nodes[].tokens` | Total tokens used by this node. |
+| `nodes[].usage` | Detailed token usage with `prompt_tokens`, `completion_tokens`, `total_tokens`, and `estimated_usd`. |
+| `nodes[].guardrails_passed` | List of guardrail check methods that succeeded. |
+| `nodes[].duration_ms` | Wall-clock time for this node in milliseconds. |
 | `output` | Final output context (all `output.*` paths). |
 | `summary.total_tokens` | Sum of tokens across all nodes. |
+| `summary.total_usage` | Aggregated token usage with detailed breakdown. |
 | `summary.total_duration_ms` | Sum of durations across all nodes. |
 | `summary.status` | `"success"` or `"failed"`. |
+
+---
+
+## `sirenspec explain`
+
+Print a human-readable execution plan for a workflow without making any LLM calls.
+
+```bash
+sirenspec explain <workflow-file> [OPTIONS]
+```
+
+**Arguments:**
+
+| Argument | Description |
+|----------|-------------|
+| `workflow-file` | Path to the workflow YAML file. |
+
+**Options:**
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--format TEXT` | `-f` | Output format: `"text"` (default) for human-readable or `"json"` for machine-readable. |
+
+**Exit codes:**
+
+| Code | Meaning |
+|------|---------|
+| `0` | Plan generated successfully. |
+| `1` | File not found, validation error, or structural errors in the workflow graph. |
+
+**Examples:**
+
+```bash
+# Print text-based execution plan
+sirenspec explain workflow.yaml
+
+# Output as JSON for programmatic use
+sirenspec explain workflow.yaml --format json
+sirenspec explain workflow.yaml -f json
+```
+
+**Text Output Format:**
+
+The text format shows the execution order, node types, guardrails, and edges in a human-readable table:
+
+```
+Workflow: router  │  3 nodes  │  2 agents
+  
+1. triage            agent=router (openai:gpt-4o-mini)  guardrails=[injection, length]
+   writes → working.triage.result
+   ↳ [working.triage.intent == "refund"]        → handle_refund
+   ↳ [working.triage.intent == "general"]       → handle_general
+
+2. handle_refund     agent=processor (anthropic:claude-3-5-sonnet-20241022)
+   writes → output.refund_response
+   ↳ [default]                                  → end
+
+3. handle_general    agent=processor (anthropic:claude-3-5-sonnet-20241022)
+   writes → output.general_response
+   ↳ [default]                                  → end
+
+Guardrails (workflow-level): injection, length
+```
+
+**JSON Output Format:**
+
+The JSON format is useful for integration into CI/CD systems or analysis tools:
+
+```json
+{
+  "workflow_name": "router",
+  "node_count": 3,
+  "agent_count": 2,
+  "execution_order": ["triage", "handle_refund", "handle_general", "end"],
+  "nodes": [
+    {
+      "id": "triage",
+      "type": "agent",
+      "type_info": "agent=router (openai:gpt-4o-mini)",
+      "agent": "router",
+      "model": "openai:gpt-4o-mini",
+      "writes": "working.triage.result",
+      "guardrails": ["injection", "length"],
+      "outgoing_edges": [
+        {
+          "to": "handle_refund",
+          "when": "working.triage.intent == \"refund\""
+        },
+        {
+          "to": "handle_general",
+          "when": "working.triage.intent == \"general\""
+        }
+      ]
+    }
+  ],
+  "workflow_guardrails": ["injection", "length"],
+  "warnings": [],
+  "errors": []
+}
+```
+
+---
+
+## `sirenspec test`
+
+Discover and run YAML test fixtures. Each fixture file (`*.test.yaml`) contains a workflow definition plus a set of assertions that are validated during execution.
+
+```bash
+sirenspec test <test-path> [OPTIONS]
+```
+
+**Arguments:**
+
+| Argument | Description |
+|----------|-------------|
+| `test-path` | Path to a single test fixture file or a directory of `*.test.yaml` files. |
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--mock` | Replay LLM responses from a cassette file (no live API calls). Requires `--cassette`. |
+| `--record` | Run live and record LLM responses into a cassette file. Requires `--cassette`. Mutually exclusive with `--mock`. |
+| `--cassette PATH` | Path to the cassette file for `--mock` or `--record`. Required when either is used. |
+
+**Exit codes:**
+
+| Code | Meaning |
+|------|---------|
+| `0` | All fixtures passed assertions. |
+| `1` | One or more fixtures failed assertions or encountered execution errors. |
+| `2` | Configuration error (e.g., missing `--cassette` when using `--mock`). |
+
+**Examples:**
+
+```bash
+# Run a single test fixture with live LLM calls
+sirenspec test tests/answer.test.yaml
+
+# Run all fixtures in a directory with live calls
+sirenspec test tests/
+
+# Replay recorded LLM responses from a cassette
+sirenspec test tests/ --mock --cassette cassettes/responses.yaml
+
+# Record live LLM responses into a cassette
+sirenspec test tests/ --record --cassette cassettes/responses.yaml
+```
+
+**Output format:**
+
+For each fixture, a per-fixture result is printed:
+
+```
+PASS tests/answer.test.yaml
+  ✓ assertion[0]: output matches expected
+  ✓ assertion[1]: tokens < 100
+
+FAIL tests/edge_case.test.yaml
+  ✗ assertion[0]: status is success
+```
+
+After all fixtures, a summary line is printed:
+
+```
+3/3 fixtures passed
+```
 
 ---
 

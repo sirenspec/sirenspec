@@ -18,6 +18,7 @@ from sirenspec.core.models import (
     WorkflowDefaults,
 )
 from sirenspec.core.retry import compute_delay, run_with_retry
+from sirenspec.core.usage import TokenUsage
 from sirenspec.exceptions import ProviderError, RetryExhaustedError
 
 # ---------------------------------------------------------------------------
@@ -28,7 +29,7 @@ from sirenspec.exceptions import ProviderError, RetryExhaustedError
 def _make_provider_mock(response_text: str = "mock response", tokens: int = 10) -> MagicMock:
     mock = MagicMock()
     mock.complete = AsyncMock(return_value=response_text)
-    mock.last_token_count = tokens
+    mock.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=tokens)
     return mock
 
 
@@ -215,7 +216,7 @@ class TestExecutorRetryIntegration:
 
         mock_provider = MagicMock()
         mock_provider.complete = _complete
-        mock_provider.last_token_count = 5
+        mock_provider.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=5)
 
         wf = _minimal_workflow(retry=RetryPolicy(max_attempts=2, backoff="constant", base_delay=0.0, on=["429"]))
 
@@ -240,7 +241,7 @@ class TestExecutorRetryIntegration:
 
         mock_provider = MagicMock()
         mock_provider.complete = _complete
-        mock_provider.last_token_count = 5
+        mock_provider.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=5)
 
         wf = _minimal_workflow(
             retry=RetryPolicy(max_attempts=3, backoff="constant", base_delay=0.0, on=["500"]),
@@ -260,7 +261,7 @@ class TestExecutorRetryIntegration:
         """When retries are exhausted and action='abort', status should be 'failed'."""
         mock_provider = MagicMock()
         mock_provider.complete = AsyncMock(side_effect=ProviderError("boom", status_code=500))
-        mock_provider.last_token_count = 0
+        mock_provider.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=0)
 
         wf = _minimal_workflow(
             retry=RetryPolicy(max_attempts=2, backoff="constant", base_delay=0.0, on=["500"]),
@@ -305,7 +306,7 @@ class TestExecutorRetryIntegration:
 
         mock_provider = MagicMock()
         mock_provider.complete = _complete
-        mock_provider.last_token_count = 5
+        mock_provider.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=5)
 
         with patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider):
             trace = await execute(wf, "hello")
@@ -320,7 +321,7 @@ class TestExecutorRetryIntegration:
         """When action='use_default', default_output is written to the context."""
         mock_provider = MagicMock()
         mock_provider.complete = AsyncMock(side_effect=ProviderError("error", status_code=500))
-        mock_provider.last_token_count = 0
+        mock_provider.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=0)
 
         wf = _minimal_workflow(
             retry=RetryPolicy(max_attempts=1, on=["500"]),
@@ -365,7 +366,7 @@ class TestExecutorRetryIntegration:
 
         mock_provider = MagicMock()
         mock_provider.complete = _complete
-        mock_provider.last_token_count = 5
+        mock_provider.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=5)
 
         with patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider):
             trace = await execute(wf, "hello")
@@ -389,7 +390,7 @@ class TestExecutorRetryIntegration:
 
         mock_provider = MagicMock()
         mock_provider.complete = _complete
-        mock_provider.last_token_count = 5
+        mock_provider.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=5)
 
         # No node-level retry, but workflow defaults provide one.
         wf = _minimal_workflow(
@@ -415,7 +416,7 @@ class TestExecutorRetryIntegration:
 
         mock_provider = MagicMock()
         mock_provider.complete = _complete
-        mock_provider.last_token_count = 0
+        mock_provider.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=0)
 
         # Workflow default would retry on 429 up to 3 times,
         # but node-level policy only retries on 500 with max_attempts=1.

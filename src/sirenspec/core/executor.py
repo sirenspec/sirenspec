@@ -2,28 +2,42 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from collections import defaultdict, deque
+from collections.abc import AsyncGenerator, Callable
 from typing import Any
 
 from sirenspec.core.agent_runner import execute_agent_node
+from sirenspec.core.budget import BudgetState, build_budget_status, enforce_budget
 from sirenspec.core.context import WorkflowContext
+from sirenspec.core.events import NodeCompleteEvent, SummaryEvent
 from sirenspec.core.factory_runner import execute_factory_node
+from sirenspec.core.human_runner import InputCoroutine, execute_human_node
 from sirenspec.core.interpolation import InterpolationContext, build_interpolation_context, resolve_template
 from sirenspec.core.models import (
     AgentNode,
     FactoryNode,
     HttpToolConfig,
+    HumanNode,
     OnFailurePolicy,
     RetryPolicy,
     SwrmNode,
     ToolNode,
     Workflow,
+    WorkflowNode,
 )
+from sirenspec.core.pricing import estimate_usd
 from sirenspec.core.swrm_runner import execute_swrm
 from sirenspec.core.tool_runner import execute_tool_node
-from sirenspec.exceptions import FactoryNodeError, InterpolationError, RetryExhaustedError, SwrmAgentError, ToolError
-from sirenspec.guardrails.base import GuardrailViolation
+from sirenspec.core.usage import TokenUsage
+from sirenspec.core.workflow_registry import WorkflowRegistry
+from sirenspec.core.workflow_runner import resolve_node_inputs, resolve_sub_workflow
+from sirenspec.exceptions import BudgetExceededError, HumanInputError, RetryExhaustedError, ValidationError
+from sirenspec.guardrails.base import GuardrailViolation, WorkflowGuardrail
+from sirenspec.guardrails.registry import build_guardrails
+
+logger = logging.getLogger(__name__)
 
 
 def interpolate_tool_config(node: ToolNode, ctx: InterpolationContext) -> ToolNode:
@@ -40,9 +54,7 @@ def interpolate_tool_config(node: ToolNode, ctx: InterpolationContext) -> ToolNo
         return node
     cfg = node.config
     interpolated_url = resolve_template(cfg.url, ctx)
-    interpolated_headers = (
-        {k: resolve_template(v, ctx) for k, v in cfg.headers.items()} if cfg.headers else None
-    )
+    interpolated_headers = {k: resolve_template(v, ctx) for k, v in cfg.headers.items()} if cfg.headers else None
     interpolated_body = resolve_template(cfg.body, ctx) if cfg.body is not None else None
     new_config = HttpToolConfig(
         url=interpolated_url,
@@ -123,7 +135,9 @@ def evaluate_when_condition(condition: str, context: WorkflowContext) -> bool:
         }
         result = eval(condition, {"__builtins__": {}}, namespace)  # noqa: S307
         return bool(result)
-    except Exception:
+    # Narrow to expression-level errors only — KeyboardInterrupt and SystemExit must propagate.
+    except (SyntaxError, TypeError, NameError, AttributeError, KeyError) as exc:
+        logger.debug("when: condition %r evaluated with error: %s", condition, exc)
         return False
 
 
@@ -158,6 +172,91 @@ def topological_sort(node_ids: list[str], edges: list[tuple[str, str]]) -> list[
         raise ValueError("Workflow graph contains a cycle")
 
     return order
+
+
+def extract_workflow_guardrails(names: list | None) -> list[WorkflowGuardrail]:
+    """Return only the :class:`~sirenspec.guardrails.base.WorkflowGuardrail` instances from *names*.
+
+    :param names: Raw guardrail name list from the workflow definition (may be ``None``).
+    :returns: List of guardrails that implement the WorkflowGuardrail protocol.
+    """
+    all_guardrails = build_guardrails(names)
+    return [g for g in all_guardrails if isinstance(g, WorkflowGuardrail)]
+
+
+def check_workflow_budget(
+    workflow_guardrails: list[WorkflowGuardrail],
+    usage: TokenUsage,
+    estimated_usd: float | None,
+) -> None:
+    """Run all workflow-level guardrails against the current accumulated spend.
+
+    :param workflow_guardrails: Guardrail instances that implement ``check_budget``.
+    :param usage: Accumulated token usage across all completed nodes.
+    :param estimated_usd: Running USD estimate, or ``None`` for local models.
+    :raises BudgetExceededError: If any workflow guardrail raises it.
+    """
+    for guardrail in workflow_guardrails:
+        guardrail.check_budget(usage, estimated_usd)
+
+
+def post_node_budget_check(
+    context: WorkflowContext,
+    workflow_guardrails: list[WorkflowGuardrail],
+    budget_state: BudgetState,
+    usage: TokenUsage,
+    estimated_usd: float | None,
+) -> None:
+    """Expose running totals to the context, then run guardrail and budget checks.
+
+    Combines the three steps that every node performs after completing: writing
+    running totals to ``working._budget``, invoking workflow-level guardrails, and
+    evaluating the declared ``budget:`` block.  Both checks may raise
+    :class:`~sirenspec.exceptions.BudgetExceededError`; the budget block may also
+    silently latch ``budget_state.skip_remaining`` when configured to.
+
+    :param context: The live :class:`~sirenspec.core.context.WorkflowContext`.
+    :param workflow_guardrails: Workflow-level guardrails (e.g. ``cost_cap``).
+    :param budget_state: Mutable :class:`~sirenspec.core.budget.BudgetState` for the run.
+    :param usage: Accumulated token usage across all completed nodes.
+    :param estimated_usd: Running USD estimate, or ``None`` for local models.
+    :raises BudgetExceededError: If any guardrail or ``on_exceeded='abort'`` ceiling is hit.
+    """
+    context.write("working._budget.total_tokens", usage.total)
+    context.write("working._budget.estimated_usd", estimated_usd)
+    check_workflow_budget(workflow_guardrails, usage, estimated_usd)
+    enforce_budget(budget_state, usage, estimated_usd)
+
+
+def build_skipped_trace(node_id: str, node: Any, reason: str) -> dict[str, Any]:
+    """Build a uniform trace entry for a node that was skipped after a budget gate fired.
+
+    Used in both :func:`execute` and :func:`execute_streaming` when
+    ``on_exceeded='skip_remaining'`` has latched the budget state.
+
+    :param node_id: The skipped node's identifier.
+    :param node: The node model instance (used to derive ``type``).
+    :param reason: Human-readable description of why the node was skipped.
+    :returns: Trace dict matching the shape of other node traces.
+    """
+    return {
+        "id": node_id,
+        "type": derive_node_type(node),
+        "status": "skipped",
+        "skipped_reason": reason,
+        "duration_ms": 0,
+        "tokens": 0,
+        "error": None,
+    }
+
+
+def derive_node_type(node: Any) -> str:
+    """Return the lowercase node-type string (``'agent'``, ``'tool'``, ``'human'`` …).
+
+    :param node: A node model instance.
+    :returns: The discriminator string used in traces and streaming events.
+    """
+    return type(node).__name__.lower().removesuffix("node")
 
 
 def resolve_retry_policy(workflow: Workflow, node_id: str) -> RetryPolicy:
@@ -196,7 +295,66 @@ def resolve_on_failure_policy(workflow: Workflow, node_id: str) -> OnFailurePoli
     return OnFailurePolicy()
 
 
-async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
+async def execute_workflow_node(
+    node_id: str,
+    node: WorkflowNode,
+    user_input: str,
+    working: dict[str, Any],
+    registry: WorkflowRegistry | None,
+    depth: int,
+) -> dict[str, Any]:
+    """Execute a sub-workflow node and return a structured trace dict.
+
+    The sub-workflow runs inline and blocking.  Its output dict (keyed by sub-node ID)
+    is returned as ``output`` in the trace so the executor can write it into the parent
+    context.
+
+    :param node_id: The parent node's identifier (used in error messages and the trace).
+    :param node: The :class:`~sirenspec.core.models.WorkflowNode` definition.
+    :param user_input: The parent workflow's user input string (passed through to the sub-workflow).
+    :param working: The parent workflow's current ``working`` dict, used to resolve ``inputs``.
+    :param registry: Optional registry for named workflow refs.
+    :param depth: Current nesting depth (0 = top-level parent).
+    :raises ValidationError: If the nesting depth exceeds ``node.max_depth``.
+    :returns: Trace dict with keys ``id``, ``type``, ``ref``, ``inputs``, ``output``,
+        ``tokens``, ``duration_ms``, ``sub_trace``, and ``error``.
+    """
+    if depth >= node.max_depth:
+        raise ValidationError(f"Max workflow nesting depth {node.max_depth} exceeded at node '{node_id}'")
+
+    sub_workflow = resolve_sub_workflow(node.ref, registry)
+    resolved_inputs = resolve_node_inputs(node, user_input, working)
+
+    sub_trace = await execute(
+        sub_workflow,
+        user_input,
+        registry=registry,
+        depth=depth + 1,
+        initial_inputs=resolved_inputs,
+    )
+
+    return {
+        "id": node_id,
+        "type": "workflow",
+        "ref": node.ref,
+        "inputs": resolved_inputs,
+        "output": sub_trace["output"],
+        "tokens": sub_trace["summary"]["total_tokens"],
+        "duration_ms": sub_trace["summary"]["total_duration_ms"],
+        "sub_trace": sub_trace,
+        "error": None,
+    }
+
+
+async def execute(
+    workflow: Workflow,
+    user_input: str,
+    registry: WorkflowRegistry | None = None,
+    depth: int = 0,
+    initial_inputs: dict[str, Any] | None = None,
+    stream_callback: Callable[[str], None] | None = None,
+    human_input_fn: InputCoroutine | None = None,
+) -> dict[str, Any]:
     """Execute a workflow and return a structured JSON-serialisable trace.
 
     **Execution model**
@@ -214,10 +372,24 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
        branch of a conditional fork is executed.
     5. Agent nodes delegate to :func:`~sirenspec.core.agent_runner.execute_agent_node`;
        tool nodes to :func:`~sirenspec.core.tool_runner.execute_tool_node`;
-       swrm nodes to :func:`~sirenspec.core.swrm_runner.execute_swrm`.
+       swrm nodes to :func:`~sirenspec.core.swrm_runner.execute_swrm`;
+       workflow nodes to :func:`~sirenspec.core.workflow_runner.execute_workflow_node`.
 
     :param workflow: Validated :class:`~sirenspec.core.models.Workflow` instance.
     :param user_input: The initial user message.
+    :param registry: Optional :class:`~sirenspec.core.workflow_registry.WorkflowRegistry`
+        used to resolve named sub-workflow refs.
+    :param depth: Current nesting depth; incremented for each sub-workflow call.
+    :param initial_inputs: Extra key/value pairs injected into the ``inputs`` template
+        namespace. Used by workflow nodes to pass bound inputs into sub-workflows.
+    :param stream_callback: Optional callable invoked with each text chunk when an agent
+        node streams its response. Passed through to
+        :func:`~sirenspec.core.agent_runner.execute_agent_node` for each agent node that
+        has ``streaming: true``. Ignored for non-streaming nodes.
+    :param human_input_fn: Optional coroutine that provides operator responses for
+        :class:`~sirenspec.core.models.HumanNode` nodes.  Defaults to reading a single line
+        from stdin via :func:`~sirenspec.core.human_runner.stdin_input`.  Tests inject mocks
+        here; production callers can wire in a webhook bridge instead.
     :returns: Execution trace dict with workflow metadata, per-node entries, and summary.
     """
     context = WorkflowContext(initial_state=workflow.state)
@@ -246,11 +418,14 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
     last_writes_path: str | None = None
 
     trace_nodes: list[dict[str, Any]] = []
-    total_tokens = 0
+    total_usage = TokenUsage(prompt_tokens=0, completion_tokens=0)
+    total_estimated_usd: float | None = None
     total_duration_ms = 0.0
     status = "success"
 
     global_guardrail_names = workflow.guardrails
+    workflow_guardrails = extract_workflow_guardrails(global_guardrail_names)
+    budget_state = BudgetState(config=workflow.budget, start_time=time.monotonic())
 
     # Fallback nodes are not reachable via normal edges — they are activated
     # explicitly when a node's on_failure policy is 'fallback'. We track them
@@ -272,6 +447,62 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
 
         node = workflow.nodes[node_id]
 
+        # Budget block has latched skip_remaining — record each pending active node
+        # as skipped and continue, so the trace clearly shows what was bypassed.
+        if budget_state.skip_remaining:
+            trace_nodes.append(build_skipped_trace(node_id, node, "budget exceeded — remaining nodes skipped"))
+            continue
+
+        # ------------------------------------------------------------------ #
+        # Human node — pauses for operator input; no provider call.           #
+        # ------------------------------------------------------------------ #
+        if isinstance(node, HumanNode):
+            human_interp_ctx = build_interpolation_context(user_input, context.working, extra_inputs=initial_inputs)
+            rendered_prompt = resolve_template(node.prompt, human_interp_ctx) if node.prompt else ""
+            human_trace: dict[str, Any] = {
+                "id": node_id,
+                "type": "human",
+                "prompt_text": rendered_prompt,
+                "response_received": None,
+                "writes": node.writes,
+                "timed_out": False,
+                "duration_ms": 0,
+                "tokens": 0,
+                "error": None,
+            }
+            try:
+                human_result = await execute_human_node(node_id, node, rendered_prompt, human_input_fn)
+            except HumanInputError as exc:
+                human_trace["error"] = str(exc)
+                human_trace["timed_out"] = exc.timed_out
+                status = "failed"
+                trace_nodes.append(human_trace)
+                break
+
+            context.write(node.writes, human_result.response)
+            context.write(f"working.{node_id}.output", human_result.response)
+            last_writes_path = node.writes
+
+            human_trace["response_received"] = human_result.response
+            human_trace["timed_out"] = human_result.timed_out
+            human_trace["duration_ms"] = round(human_result.duration_ms, 2)
+            total_duration_ms += human_result.duration_ms
+
+            try:
+                post_node_budget_check(context, workflow_guardrails, budget_state, total_usage, total_estimated_usd)
+            except BudgetExceededError as exc:
+                human_trace["error"] = str(exc)
+                status = "failed"
+                trace_nodes.append(human_trace)
+                break
+
+            for target, condition in out_edges[node_id]:
+                if condition is None or evaluate_when_condition(condition, context):
+                    active_nodes.add(target)
+
+            trace_nodes.append(human_trace)
+            continue
+
         # ------------------------------------------------------------------ #
         # Swrm node — parallel agent fan-out with optional synthesis.         #
         # ------------------------------------------------------------------ #
@@ -286,7 +517,7 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
                     output=context.output,
                     global_guardrail_names=global_guardrail_names,
                 )
-            except (SwrmAgentError, Exception) as exc:
+            except Exception as exc:
                 duration_ms = (time.monotonic() - start_time) * 1000
                 error_trace: dict[str, Any] = {
                     "id": node_id,
@@ -313,8 +544,16 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
             context.write(f"working.{node_id}.output", swrm_trace["output"])
             last_writes_path = f"output.{node_id}"
 
-            total_tokens += swrm_trace["tokens"]
+            total_usage += TokenUsage(prompt_tokens=0, completion_tokens=swrm_trace["tokens"])
             total_duration_ms += swrm_trace["duration_ms"]
+
+            try:
+                post_node_budget_check(context, workflow_guardrails, budget_state, total_usage, total_estimated_usd)
+            except BudgetExceededError as exc:
+                status = "failed"
+                swrm_trace["error"] = str(exc)
+                trace_nodes.append(swrm_trace)
+                break
 
             for target, condition in out_edges[node_id]:
                 if condition is None or evaluate_when_condition(condition, context):
@@ -338,7 +577,7 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
             }
             start_time = time.monotonic()
             try:
-                tool_interp_ctx = build_interpolation_context(user_input, context.working)
+                tool_interp_ctx = build_interpolation_context(user_input, context.working, extra_inputs=initial_inputs)
                 interpolated_node = interpolate_tool_config(node, tool_interp_ctx)
                 run_result = await execute_tool_node(node_id, interpolated_node)
                 context.write(f"working.{node_id}.{node.output_key}", run_result.result)
@@ -349,15 +588,6 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
                 for target, condition in out_edges[node_id]:
                     if condition is None or evaluate_when_condition(condition, context):
                         active_nodes.add(target)
-
-            except ToolError as exc:
-                duration_ms = (time.monotonic() - start_time) * 1000
-                tool_node_trace["error"] = str(exc)
-                tool_node_trace["duration_ms"] = round(duration_ms, 2)
-                total_duration_ms += duration_ms
-                status = "failed"
-                trace_nodes.append(tool_node_trace)
-                break
 
             except Exception as exc:
                 duration_ms = (time.monotonic() - start_time) * 1000
@@ -386,7 +616,7 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
                     output=context.output,
                     guardrail_names=global_guardrail_names,
                 )
-            except (FactoryNodeError, InterpolationError, Exception) as exc:
+            except Exception as exc:
                 duration_ms = (time.monotonic() - start_time) * 1000
                 error_trace: dict[str, Any] = {
                     "id": node_id,
@@ -408,14 +638,82 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
             context.write(f"working.{node_id}.output", "\n".join(s for s in outputs_list if s))
             last_writes_path = node.writes
 
-            total_tokens += factory_trace["tokens"]
+            total_usage += TokenUsage(prompt_tokens=0, completion_tokens=factory_trace["tokens"])
             total_duration_ms += factory_trace["duration_ms"]
+
+            try:
+                post_node_budget_check(context, workflow_guardrails, budget_state, total_usage, total_estimated_usd)
+            except BudgetExceededError as exc:
+                status = "failed"
+                factory_trace["error"] = str(exc)
+                trace_nodes.append(factory_trace)
+                break
 
             for target, condition in out_edges[node_id]:
                 if condition is None or evaluate_when_condition(condition, context):
                     active_nodes.add(target)
 
             trace_nodes.append(factory_trace)
+            continue
+
+        # ------------------------------------------------------------------ #
+        # Workflow node — inline sub-workflow execution with depth guard.     #
+        # ------------------------------------------------------------------ #
+        if isinstance(node, WorkflowNode):
+            start_time = time.monotonic()
+            try:
+                wf_trace = await execute_workflow_node(
+                    node_id=node_id,
+                    node=node,
+                    user_input=user_input,
+                    working=context.working,
+                    registry=registry,
+                    depth=depth,
+                )
+            except Exception as exc:
+                duration_ms = (time.monotonic() - start_time) * 1000
+                error_trace: dict[str, Any] = {
+                    "id": node_id,
+                    "type": "workflow",
+                    "ref": node.ref,
+                    "output": None,
+                    "tokens": 0,
+                    "duration_ms": round(duration_ms, 2),
+                    "error": str(exc),
+                }
+                total_duration_ms += duration_ms
+                status = "failed"
+                trace_nodes.append(error_trace)
+                break
+
+            # Propagate sub-workflow output into the parent context under two paths:
+            # ``output.<node_id>`` for template access and ``working.<node_id>.output``
+            # for chaining.  An explicit ``writes`` field overrides the default path.
+            # Budget is re-checked after each sub-workflow so cumulative token spend
+            # across nested calls is still enforced.
+            sub_output = wf_trace["output"]
+            context.write(f"output.{node_id}", sub_output)
+            context.write(f"working.{node_id}.output", sub_output)
+            if node.writes:
+                context.write(node.writes, sub_output)
+            last_writes_path = f"output.{node_id}"
+
+            total_usage += TokenUsage(prompt_tokens=0, completion_tokens=wf_trace["tokens"])
+            total_duration_ms += wf_trace["duration_ms"]
+
+            try:
+                post_node_budget_check(context, workflow_guardrails, budget_state, total_usage, total_estimated_usd)
+            except BudgetExceededError as exc:
+                status = "failed"
+                wf_trace["error"] = str(exc)
+                trace_nodes.append(wf_trace)
+                break
+
+            for target, condition in out_edges[node_id]:
+                if condition is None or evaluate_when_condition(condition, context):
+                    active_nodes.add(target)
+
+            trace_nodes.append(wf_trace)
             continue
 
         # ------------------------------------------------------------------ #
@@ -445,7 +743,7 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
 
         # Resolve the system prompt with the current context so {{ inputs.* }} and
         # {{ node_id.output }} expressions in system prompts are evaluated at runtime.
-        interp_ctx = build_interpolation_context(user_input, context.working)
+        interp_ctx = build_interpolation_context(user_input, context.working, extra_inputs=initial_inputs)
         resolved_system = resolve_template(agent_def.system, interp_ctx)
         redacted_system = resolve_template(agent_def.system, interp_ctx, redact_env=True)
 
@@ -458,6 +756,7 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
             "writes": node.writes,
             "guardrails_passed": [],
             "tokens": 0,
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "estimated_usd": None},
             "duration_ms": 0,
             "error": None,
             "retry_attempts": [],
@@ -472,6 +771,9 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
                 user_input=node_input,
                 guardrail_names=guardrail_names,
                 retry_policy=retry_policy,
+                streaming=node.streaming,
+                stream_callback=stream_callback,
+                max_tokens=node.max_tokens_per_call,
             )
 
             context.write(node.writes, run_result.output)
@@ -483,17 +785,37 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
                     active_nodes.add(target)
 
             duration_ms = (time.monotonic() - start_time) * 1000
+            node_estimated_usd = estimate_usd(
+                run_result.token_usage.prompt_tokens,
+                run_result.token_usage.completion_tokens,
+                agent_def.model,
+            )
             agent_node_trace.update(
                 {
                     "response_received": run_result.output,
-                    "tokens": run_result.tokens,
+                    "tokens": run_result.token_usage.total,
+                    "usage": {
+                        "prompt_tokens": run_result.token_usage.prompt_tokens,
+                        "completion_tokens": run_result.token_usage.completion_tokens,
+                        "estimated_usd": node_estimated_usd,
+                    },
                     "duration_ms": round(duration_ms, 2),
                     "guardrails_passed": run_result.guardrails_passed,
                     "retry_attempts": run_result.retry_attempts,
                 }
             )
-            total_tokens += run_result.tokens
+            total_usage += run_result.token_usage
+            if node_estimated_usd is not None:
+                total_estimated_usd = (total_estimated_usd or 0.0) + node_estimated_usd
             total_duration_ms += duration_ms
+
+            try:
+                post_node_budget_check(context, workflow_guardrails, budget_state, total_usage, total_estimated_usd)
+            except BudgetExceededError as exc:
+                agent_node_trace["error"] = str(exc)
+                status = "failed"
+                trace_nodes.append(agent_node_trace)
+                break
 
         except GuardrailViolation as exc:
             duration_ms = (time.monotonic() - start_time) * 1000
@@ -556,14 +878,547 @@ async def execute(workflow: Workflow, user_input: str) -> dict[str, Any]:
 
         trace_nodes.append(agent_node_trace)
 
+    summary: dict[str, Any] = {
+        "total_tokens": total_usage.total,
+        "total_usage": {
+            "prompt_tokens": total_usage.prompt_tokens,
+            "completion_tokens": total_usage.completion_tokens,
+            "total_tokens": total_usage.total,
+            "estimated_usd": total_estimated_usd,
+        },
+        "total_duration_ms": round(total_duration_ms, 2),
+        "status": status,
+    }
+    budget_status = build_budget_status(budget_state, total_usage, total_estimated_usd)
+    if budget_status is not None:
+        summary["budget"] = budget_status
+
     return {
         "workflow": {"version": workflow.version},
         "input": {"message": user_input},
         "nodes": trace_nodes,
         "output": context.output,
-        "summary": {
-            "total_tokens": total_tokens,
-            "total_duration_ms": round(total_duration_ms, 2),
-            "status": status,
-        },
+        "summary": summary,
     }
+
+
+async def execute_streaming(
+    workflow: Workflow,
+    user_input: str,
+    registry: WorkflowRegistry | None = None,
+    depth: int = 0,
+    initial_inputs: dict[str, Any] | None = None,
+    stream_callback: Callable[[str], None] | None = None,
+    human_input_fn: InputCoroutine | None = None,
+) -> AsyncGenerator[NodeCompleteEvent | SummaryEvent]:
+    """Execute a workflow and yield typed events as each node completes.
+
+    This is the streaming counterpart to :func:`execute`.  It walks the same
+    node/edge graph with identical semantics — topological ordering, conditional
+    branching, retry and on-failure policies — but instead of collecting all
+    results and returning them at once, it yields a :class:`~sirenspec.core.events.NodeCompleteEvent`
+    immediately after each node finishes.  Nodes that are never activated yield a
+    ``NodeCompleteEvent`` with ``status="skipped"``.  At the very end a single
+    :class:`~sirenspec.core.events.SummaryEvent` is yielded.
+
+    :param workflow: Validated :class:`~sirenspec.core.models.Workflow` instance.
+    :param user_input: The initial user message.
+    :param registry: Optional :class:`~sirenspec.core.workflow_registry.WorkflowRegistry`
+        used to resolve named sub-workflow refs.
+    :param depth: Current nesting depth; incremented for each sub-workflow call.
+    :param initial_inputs: Extra key/value pairs injected into the ``inputs`` template
+        namespace. Used by workflow nodes to pass bound inputs into sub-workflows.
+    :param stream_callback: Optional callable invoked with each text chunk when an agent
+        node streams its response. Passed through to
+        :func:`~sirenspec.core.agent_runner.execute_agent_node` for each agent node that
+        has ``streaming: true``. Ignored for non-streaming nodes.
+    :param human_input_fn: Optional coroutine that provides operator responses for
+        :class:`~sirenspec.core.models.HumanNode` nodes.  Defaults to reading a single line
+        from stdin.  Tests inject mocks here; production callers can wire in a webhook bridge.
+    :returns: An async generator of ``NodeCompleteEvent`` (one per node) followed
+        by a final ``SummaryEvent``.
+    """
+    # Events are yielded and immediately discarded — no full trace is accumulated here.
+    # Callers that need the complete structured trace (e.g. for JSON export) should use execute().
+    start_wall = time.monotonic()
+    context = WorkflowContext(initial_state=workflow.state)
+    node_ids = list(workflow.nodes.keys())
+
+    out_edges: dict[str, list[tuple[str, str | None]]] = {n: [] for n in node_ids}
+    in_degree: dict[str, int] = dict.fromkeys(node_ids, 0)
+    for edge in workflow.edges:
+        out_edges[edge.from_node].append((edge.to_node, edge.when))
+        in_degree[edge.to_node] += 1
+
+    edge_pairs = [(e.from_node, e.to_node) for e in workflow.edges]
+    execution_order = topological_sort(node_ids, edge_pairs)
+
+    active_nodes: set[str] = {n for n in node_ids if in_degree[n] == 0}
+    last_writes_path: str | None = None
+
+    total_usage = TokenUsage(prompt_tokens=0, completion_tokens=0)
+    total_estimated_usd: float | None = None
+    total_duration_ms = 0.0
+    status = "success"
+    active_node_count = 0
+
+    global_guardrail_names = workflow.guardrails
+    workflow_guardrails = extract_workflow_guardrails(global_guardrail_names)
+    budget_state = BudgetState(config=workflow.budget, start_time=start_wall)
+    pending_fallback_nodes: set[str] = set()
+
+    for node_id in execution_order:
+        if node_id in pending_fallback_nodes:
+            active_nodes.add(node_id)
+            pending_fallback_nodes.discard(node_id)
+
+        if node_id not in active_nodes:
+            yield NodeCompleteEvent(
+                node_id=node_id,
+                node_type=derive_node_type(workflow.nodes[node_id]),
+                status="skipped",
+            )
+            continue
+
+        node = workflow.nodes[node_id]
+
+        if budget_state.skip_remaining:
+            yield NodeCompleteEvent(
+                node_id=node_id,
+                node_type=derive_node_type(node),
+                status="skipped",
+                error="budget exceeded — remaining nodes skipped",
+            )
+            continue
+
+        active_node_count += 1
+
+        if isinstance(node, HumanNode):
+            human_interp_ctx = build_interpolation_context(user_input, context.working, extra_inputs=initial_inputs)
+            rendered_prompt = resolve_template(node.prompt, human_interp_ctx) if node.prompt else ""
+            try:
+                human_result = await execute_human_node(node_id, node, rendered_prompt, human_input_fn)
+            except HumanInputError as exc:
+                status = "failed"
+                yield NodeCompleteEvent(
+                    node_id=node_id,
+                    node_type="human",
+                    status="failed",
+                    error=str(exc),
+                )
+                break
+
+            context.write(node.writes, human_result.response)
+            context.write(f"working.{node_id}.output", human_result.response)
+            last_writes_path = node.writes
+            total_duration_ms += human_result.duration_ms
+
+            try:
+                post_node_budget_check(context, workflow_guardrails, budget_state, total_usage, total_estimated_usd)
+            except BudgetExceededError as exc:
+                status = "failed"
+                yield NodeCompleteEvent(
+                    node_id=node_id,
+                    node_type="human",
+                    status="failed",
+                    error=str(exc),
+                )
+                break
+
+            for target, condition in out_edges[node_id]:
+                if condition is None or evaluate_when_condition(condition, context):
+                    active_nodes.add(target)
+
+            yield NodeCompleteEvent(
+                node_id=node_id,
+                node_type="human",
+                output=human_result.response,
+                writes=node.writes,
+                status="success",
+                duration_ms=round(human_result.duration_ms, 2),
+            )
+            continue
+
+        if isinstance(node, SwrmNode):
+            node_start = time.monotonic()
+            try:
+                swrm_trace = await execute_swrm(
+                    node_id=node_id,
+                    node=node,
+                    user_input=user_input,
+                    working=context.working,
+                    output=context.output,
+                    global_guardrail_names=global_guardrail_names,
+                )
+            except Exception as exc:
+                duration_ms = (time.monotonic() - node_start) * 1000
+                total_duration_ms += duration_ms
+                status = "failed"
+                yield NodeCompleteEvent(
+                    node_id=node_id,
+                    node_type="swrm",
+                    status="failed",
+                    error=str(exc),
+                )
+                break
+
+            for agent_trace in swrm_trace["agents"]:
+                if agent_trace["response_received"] is not None:
+                    context.write(
+                        f"working.{node_id}.agents.{agent_trace['id']}.output",
+                        agent_trace["response_received"],
+                    )
+            context.write(f"output.{node_id}", swrm_trace["output"])
+            context.write(f"working.{node_id}.output", swrm_trace["output"])
+            last_writes_path = f"output.{node_id}"
+
+            total_usage += TokenUsage(prompt_tokens=0, completion_tokens=swrm_trace["tokens"])
+            total_duration_ms += swrm_trace["duration_ms"]
+
+            try:
+                post_node_budget_check(context, workflow_guardrails, budget_state, total_usage, total_estimated_usd)
+            except BudgetExceededError as exc:
+                status = "failed"
+                yield NodeCompleteEvent(
+                    node_id=node_id,
+                    node_type="swrm",
+                    status="failed",
+                    error=str(exc),
+                )
+                break
+
+            for target, condition in out_edges[node_id]:
+                if condition is None or evaluate_when_condition(condition, context):
+                    active_nodes.add(target)
+
+            yield NodeCompleteEvent(
+                node_id=node_id,
+                node_type="swrm",
+                output=swrm_trace["output"],
+                writes=f"output.{node_id}",
+                status="success",
+                tokens=swrm_trace["tokens"],
+                agents=swrm_trace["agents"],
+                duration_ms=swrm_trace["duration_ms"],
+            )
+            continue
+
+        if isinstance(node, ToolNode):
+            node_start = time.monotonic()
+            try:
+                tool_interp_ctx = build_interpolation_context(user_input, context.working, extra_inputs=initial_inputs)
+                interpolated_node = interpolate_tool_config(node, tool_interp_ctx)
+                run_result = await execute_tool_node(node_id, interpolated_node)
+                context.write(f"working.{node_id}.{node.output_key}", run_result.result)
+                total_duration_ms += run_result.duration_ms
+
+                for target, condition in out_edges[node_id]:
+                    if condition is None or evaluate_when_condition(condition, context):
+                        active_nodes.add(target)
+
+                yield NodeCompleteEvent(
+                    node_id=node_id,
+                    node_type="tool",
+                    output=run_result.result,
+                    writes=f"working.{node_id}.{node.output_key}",
+                    status="success",
+                )
+
+            except Exception as exc:
+                duration_ms = (time.monotonic() - node_start) * 1000
+                total_duration_ms += duration_ms
+                status = "failed"
+                yield NodeCompleteEvent(
+                    node_id=node_id,
+                    node_type="tool",
+                    status="failed",
+                    error=str(exc),
+                )
+                break
+            continue
+
+        if isinstance(node, FactoryNode):
+            node_start = time.monotonic()
+            try:
+                factory_trace = await execute_factory_node(
+                    node_id=node_id,
+                    node=node,
+                    workflow=workflow,
+                    user_input=user_input,
+                    working=context.working,
+                    output=context.output,
+                    guardrail_names=global_guardrail_names,
+                )
+            except Exception as exc:
+                duration_ms = (time.monotonic() - node_start) * 1000
+                total_duration_ms += duration_ms
+                status = "failed"
+                yield NodeCompleteEvent(
+                    node_id=node_id,
+                    node_type="factory",
+                    status="failed",
+                    error=str(exc),
+                )
+                break
+
+            outputs_list = factory_trace["outputs"]
+            context.write(node.writes, outputs_list)
+            context.write(f"working.{node_id}.outputs", outputs_list)
+            context.write(f"working.{node_id}.output", "\n".join(s for s in outputs_list if s))
+            last_writes_path = node.writes
+
+            total_usage += TokenUsage(prompt_tokens=0, completion_tokens=factory_trace["tokens"])
+            total_duration_ms += factory_trace["duration_ms"]
+
+            try:
+                post_node_budget_check(context, workflow_guardrails, budget_state, total_usage, total_estimated_usd)
+            except BudgetExceededError as exc:
+                status = "failed"
+                yield NodeCompleteEvent(
+                    node_id=node_id,
+                    node_type="factory",
+                    status="failed",
+                    error=str(exc),
+                )
+                break
+
+            for target, condition in out_edges[node_id]:
+                if condition is None or evaluate_when_condition(condition, context):
+                    active_nodes.add(target)
+
+            yield NodeCompleteEvent(
+                node_id=node_id,
+                node_type="factory",
+                output=outputs_list,
+                writes=node.writes,
+                status="success",
+                tokens=factory_trace["tokens"],
+                instances=factory_trace["instances"],
+                duration_ms=factory_trace["duration_ms"],
+            )
+            continue
+
+        # ------------------------------------------------------------------ #
+        # Workflow node — inline sub-workflow execution with depth guard.     #
+        # Runs the sub-workflow blocking, writes its output into the parent   #
+        # context, then emits a NodeCompleteEvent for the streaming consumer. #
+        # ------------------------------------------------------------------ #
+        if isinstance(node, WorkflowNode):
+            node_start = time.monotonic()
+            try:
+                wf_trace = await execute_workflow_node(
+                    node_id=node_id,
+                    node=node,
+                    user_input=user_input,
+                    working=context.working,
+                    registry=registry,
+                    depth=depth,
+                )
+            except Exception as exc:
+                duration_ms = (time.monotonic() - node_start) * 1000
+                total_duration_ms += duration_ms
+                status = "failed"
+                yield NodeCompleteEvent(
+                    node_id=node_id,
+                    node_type="workflow",
+                    status="failed",
+                    error=str(exc),
+                )
+                break
+
+            sub_output = wf_trace["output"]
+            context.write(f"output.{node_id}", sub_output)
+            context.write(f"working.{node_id}.output", sub_output)
+            if node.writes:
+                context.write(node.writes, sub_output)
+            last_writes_path = f"output.{node_id}"
+
+            total_usage += TokenUsage(prompt_tokens=0, completion_tokens=wf_trace["tokens"])
+            total_duration_ms += wf_trace["duration_ms"]
+
+            try:
+                post_node_budget_check(context, workflow_guardrails, budget_state, total_usage, total_estimated_usd)
+            except BudgetExceededError as exc:
+                status = "failed"
+                yield NodeCompleteEvent(
+                    node_id=node_id,
+                    node_type="workflow",
+                    status="failed",
+                    error=str(exc),
+                )
+                break
+
+            for target, condition in out_edges[node_id]:
+                if condition is None or evaluate_when_condition(condition, context):
+                    active_nodes.add(target)
+
+            yield NodeCompleteEvent(
+                node_id=node_id,
+                node_type="workflow",
+                output=sub_output,
+                writes=node.writes or f"output.{node_id}",
+                status="success",
+                tokens=wf_trace["tokens"],
+            )
+            continue
+
+        if not isinstance(node, AgentNode):
+            raise TypeError(f"Unhandled node type: {type(node).__name__}")
+        agent_def = workflow.agents[node.agent]
+
+        if last_writes_path is None:
+            node_input = user_input
+        else:
+            try:
+                node_input = str(context.resolve(last_writes_path))
+            except KeyError:
+                node_input = user_input
+
+        guardrail_names = agent_def.guardrails if agent_def.guardrails is not None else global_guardrail_names
+        retry_policy = resolve_retry_policy(workflow, node_id)
+        on_failure_policy = resolve_on_failure_policy(workflow, node_id)
+
+        interp_ctx = build_interpolation_context(user_input, context.working, extra_inputs=initial_inputs)
+        resolved_system = resolve_template(agent_def.system, interp_ctx)
+
+        node_start = time.monotonic()
+        try:
+            run_result = await execute_agent_node(
+                node_id=node_id,
+                model_uri=agent_def.model,
+                system_prompt=resolved_system,
+                user_input=node_input,
+                guardrail_names=guardrail_names,
+                retry_policy=retry_policy,
+                streaming=node.streaming,
+                stream_callback=stream_callback,
+                max_tokens=node.max_tokens_per_call,
+            )
+
+            context.write(node.writes, run_result.output)
+            context.write(f"working.{node_id}.output", run_result.output)
+            last_writes_path = node.writes
+
+            for target, condition in out_edges[node_id]:
+                if condition is None or evaluate_when_condition(condition, context):
+                    active_nodes.add(target)
+
+            duration_ms = (time.monotonic() - node_start) * 1000
+            total_usage = total_usage + run_result.token_usage
+            node_estimated_usd = estimate_usd(
+                run_result.token_usage.prompt_tokens,
+                run_result.token_usage.completion_tokens,
+                agent_def.model,
+            )
+            if node_estimated_usd is not None:
+                total_estimated_usd = (total_estimated_usd or 0.0) + node_estimated_usd
+            total_duration_ms += duration_ms
+
+            try:
+                post_node_budget_check(context, workflow_guardrails, budget_state, total_usage, total_estimated_usd)
+            except BudgetExceededError as exc:
+                status = "failed"
+                yield NodeCompleteEvent(
+                    node_id=node_id,
+                    node_type="agent",
+                    status="failed",
+                    error=str(exc),
+                )
+                break
+
+            yield NodeCompleteEvent(
+                node_id=node_id,
+                node_type="agent",
+                output=run_result.output,
+                writes=node.writes,
+                status="success",
+                tokens=run_result.token_usage.total,
+            )
+
+        except GuardrailViolation as exc:
+            duration_ms = (time.monotonic() - node_start) * 1000
+            total_duration_ms += duration_ms
+            status = "failed"
+            yield NodeCompleteEvent(
+                node_id=node_id,
+                node_type="agent",
+                status="failed",
+                error=f"GuardrailViolation: {exc.reason}",
+            )
+            break
+
+        except RetryExhaustedError as exc:
+            duration_ms = (time.monotonic() - node_start) * 1000
+            total_duration_ms += duration_ms
+            action = on_failure_policy.action
+
+            if action == "abort":
+                status = "failed"
+                yield NodeCompleteEvent(
+                    node_id=node_id,
+                    node_type="agent",
+                    status="failed",
+                    error=str(exc),
+                )
+                break
+
+            elif action == "fallback":
+                yield NodeCompleteEvent(
+                    node_id=node_id,
+                    node_type="agent",
+                    status="failed",
+                    error=str(exc),
+                    writes=node.writes,
+                )
+                if on_failure_policy.fallback_node:
+                    pending_fallback_nodes.add(on_failure_policy.fallback_node)
+                continue
+
+            elif action == "skip":
+                yield NodeCompleteEvent(
+                    node_id=node_id,
+                    node_type="agent",
+                    status="skipped",
+                    error=str(exc),
+                )
+                for target, condition in out_edges[node_id]:
+                    if condition is None or evaluate_when_condition(condition, context):
+                        active_nodes.add(target)
+                continue
+
+            elif action == "use_default":
+                default_val = on_failure_policy.default_output or ""
+                context.write(node.writes, default_val)
+                last_writes_path = node.writes
+                for target, condition in out_edges[node_id]:
+                    if condition is None or evaluate_when_condition(condition, context):
+                        active_nodes.add(target)
+                yield NodeCompleteEvent(
+                    node_id=node_id,
+                    node_type="agent",
+                    output=default_val,
+                    writes=node.writes,
+                    status="success",
+                )
+                continue
+
+        except Exception as exc:
+            duration_ms = (time.monotonic() - node_start) * 1000
+            total_duration_ms += duration_ms
+            status = "failed"
+            yield NodeCompleteEvent(
+                node_id=node_id,
+                node_type="agent",
+                status="failed",
+                error=str(exc),
+            )
+            break
+
+    yield SummaryEvent(
+        total_nodes=active_node_count,
+        total_tokens=total_usage.total,
+        estimated_usd=total_estimated_usd,
+        status=status,
+        duration_ms=round((time.monotonic() - start_wall) * 1000, 2),
+        budget=build_budget_status(budget_state, total_usage, total_estimated_usd),
+    )
