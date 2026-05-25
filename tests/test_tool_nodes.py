@@ -545,3 +545,182 @@ class TestExecutorToolNodes:
         assert trace["summary"]["status"] == "success"
         # Result stored under working.fetch.output (default output_key).
         assert trace["nodes"][0]["output_key"] == "output"
+
+
+class TestPythonToolInterpolation:
+    """Python tool configs interpolate ``module``, ``function``, and ``args``."""
+
+    @pytest.mark.asyncio
+    async def test_args_resolve_from_inputs(self) -> None:
+        import types
+
+        from sirenspec.core.executor import execute
+
+        fake_module = types.ModuleType("fake_args")
+        captured: dict[str, Any] = {}
+
+        def record(path: str, count: int) -> str:
+            captured["path"] = path
+            captured["count"] = count
+            return f"{path}:{count}"
+
+        fake_module.record = record  # type: ignore[attr-defined]
+
+        wf = Workflow.model_validate(
+            {
+                "version": "0.1",
+                "agents": {},
+                "nodes": {
+                    "call": {
+                        "type": "tool",
+                        "tool": "python",
+                        "config": {
+                            "module": "fake_args",
+                            "function": "record",
+                            "args": {"path": "{{ inputs.message }}", "count": 3},
+                        },
+                        "output_key": "out",
+                    }
+                },
+            }
+        )
+
+        with patch("importlib.import_module", return_value=fake_module):
+            trace = await execute(wf, "hello.txt")
+
+        assert trace["summary"]["status"] == "success"
+        assert captured == {"path": "hello.txt", "count": 3}
+        assert trace["nodes"][0]["result"] == "hello.txt:3"
+
+    @pytest.mark.asyncio
+    async def test_args_resolve_from_prior_node(self) -> None:
+        import types
+
+        from sirenspec.core.executor import execute
+
+        fake_module = types.ModuleType("fake_chain")
+        captured: dict[str, Any] = {}
+
+        def parse(raw: str) -> dict[str, str]:
+            return {"path": raw.upper()}
+
+        def use(path: str) -> str:
+            captured["path"] = path
+            return path
+
+        fake_module.parse = parse  # type: ignore[attr-defined]
+        fake_module.use = use  # type: ignore[attr-defined]
+
+        wf = Workflow.model_validate(
+            {
+                "version": "0.1",
+                "agents": {},
+                "nodes": {
+                    "parse": {
+                        "type": "tool",
+                        "tool": "python",
+                        "config": {
+                            "module": "fake_chain",
+                            "function": "parse",
+                            "args": {"raw": "{{ inputs.message }}"},
+                        },
+                        "output_key": "parsed",
+                    },
+                    "use": {
+                        "type": "tool",
+                        "tool": "python",
+                        "config": {
+                            "module": "fake_chain",
+                            "function": "use",
+                            "args": {"path": "{{ parse.parsed.path }}"},
+                        },
+                        "output_key": "out",
+                    },
+                },
+                "edges": [{"from": "parse", "to": "use"}],
+            }
+        )
+
+        with patch("importlib.import_module", return_value=fake_module):
+            trace = await execute(wf, "foo.py")
+
+        assert trace["summary"]["status"] == "success"
+        assert captured == {"path": "FOO.PY"}
+
+    @pytest.mark.asyncio
+    async def test_module_and_function_interpolate(self) -> None:
+        import types
+
+        from sirenspec.core.executor import execute
+
+        fake_module = types.ModuleType("env_picked_module")
+        fake_module.go = lambda: "ran"  # type: ignore[attr-defined]
+
+        wf = Workflow.model_validate(
+            {
+                "version": "0.1",
+                "agents": {},
+                "nodes": {
+                    "call": {
+                        "type": "tool",
+                        "tool": "python",
+                        "config": {
+                            "module": "{{ inputs.message }}",
+                            "function": "go",
+                        },
+                        "output_key": "out",
+                    }
+                },
+            }
+        )
+
+        with patch("importlib.import_module", return_value=fake_module) as imp:
+            trace = await execute(wf, "env_picked_module")
+
+        assert trace["summary"]["status"] == "success"
+        imp.assert_called_with("env_picked_module")
+
+    @pytest.mark.asyncio
+    async def test_nested_args_are_walked(self) -> None:
+        import types
+
+        from sirenspec.core.executor import execute
+
+        fake_module = types.ModuleType("fake_nested")
+        captured: dict[str, Any] = {}
+
+        def take(payload: dict[str, Any]) -> str:
+            captured.update(payload)
+            return "ok"
+
+        fake_module.take = take  # type: ignore[attr-defined]
+
+        wf = Workflow.model_validate(
+            {
+                "version": "0.1",
+                "agents": {},
+                "nodes": {
+                    "call": {
+                        "type": "tool",
+                        "tool": "python",
+                        "config": {
+                            "module": "fake_nested",
+                            "function": "take",
+                            "args": {
+                                "payload": {
+                                    "name": "{{ inputs.message }}",
+                                    "tags": ["{{ inputs.message }}", "static"],
+                                }
+                            },
+                        },
+                        "output_key": "out",
+                    }
+                },
+            }
+        )
+
+        with patch("importlib.import_module", return_value=fake_module):
+            trace = await execute(wf, "thing")
+
+        assert trace["summary"]["status"] == "success"
+        assert captured == {"name": "thing", "tags": ["thing", "static"]}
