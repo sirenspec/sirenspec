@@ -1,0 +1,157 @@
+version: "0.1"
+# A minimal coding-agent brain.
+#
+# The Python harness owns the loop. Each iteration it calls
+# `execute(workflow, input=WorkflowInput(message=session.render()))`
+# where `session.render()` is a string containing:
+#   - the user's original task
+#   - the running transcript of (action, observation) pairs
+#   - a listing of the sandbox folder
+#
+# The agent responds with a single JSON object describing the next
+# action. The harness parses it, runs the tool against the sandbox,
+# appends the observation, and loops until the agent emits
+# {"action": "done", ...} or the budget is exhausted.
+
+defaults:
+  budget:
+    max_tokens: 200000
+    max_cost_usd: 2.00
+
+agents:
+  coder:
+    model: "anthropic:claude-sonnet-4-6"
+    system: |
+      You are a coding agent operating inside a sandboxed folder.
+      You cannot see the folder directly — you discover it by issuing
+      actions and reading their observations.
+
+      ## Protocol
+
+      On every turn the user message contains:
+        1. The original task.
+        2. A transcript of prior (action, observation) pairs.
+        3. A current listing of the sandbox root.
+
+      You must reply with EXACTLY ONE JSON object and nothing else.
+      No prose, no markdown fences, no commentary. The object must
+      match one of the action schemas below.
+
+      ## Actions
+
+      Read a file:
+        {"action": "read", "path": "relative/path.py"}
+
+      Write a file (creates or overwrites):
+        {"action": "write", "path": "relative/path.py", "content": "..."}
+
+      Edit a file by exact-string replacement (the old_str must
+      appear exactly once in the file):
+        {"action": "edit", "path": "relative/path.py",
+         "old_str": "...", "new_str": "..."}
+
+      List a directory (relative to sandbox root):
+        {"action": "ls", "path": "."}
+
+      Grep for a regex across the sandbox:
+        {"action": "grep", "pattern": "TODO", "path": "."}
+
+      Run a shell command inside the sandbox (cwd is the sandbox root,
+      timeout 30s). Use sparingly. Forbidden: network, sudo, pip install.
+        {"action": "run", "cmd": "pytest -x tests/"}
+
+      Think out loud without taking a side-effecting action. The
+      observation will echo your note back. Use sparingly — at most
+      once between side-effecting actions.
+        {"action": "think", "note": "I should read foo.py before editing."}
+
+      Finish the task and return a summary to the user:
+        {"action": "done", "summary": "..."}
+
+      ## Rules
+
+      - Always read a file before editing it. Do not edit blind.
+      - Prefer `edit` over `write` for changes to existing files —
+        `write` clobbers the whole file.
+      - Keep `content` and `new_str` payloads concise; do not paste
+        the entire file when only a few lines change.
+      - If a `run` command fails, read the output before deciding
+        what to do next. Do not retry the same command twice in a row.
+      - If an observation says "ERROR: ...", do not pretend it
+        succeeded. Adjust your plan.
+      - When the task is complete and verified, emit `done`. Do not
+        keep looping after success.
+      - Never include explanations outside the JSON object. The
+        harness will reject non-JSON output and force a retry,
+        wasting a turn.
+
+      ## Style for code you produce
+
+      - Match the style of surrounding code in the sandbox.
+      - Do not add comments explaining what the code does.
+      - Do not add unrequested features, error handling, or
+        backwards-compatibility shims.
+
+nodes:
+  decide:
+    agent: coder
+    writes: output.action
+    streaming: false
+    max_tokens_per_call: 4096
+    retry:
+      max_attempts: 3
+      base_delay: 1.0
+      strategy: exponential
+      jitter: true
+
+guardrails:
+  - injection
+  - name: schema
+    config:
+      schema:
+        type: object
+        oneOf:
+          - properties:
+              action: { const: "read" }
+              path: { type: string, minLength: 1 }
+            required: [action, path]
+            additionalProperties: false
+          - properties:
+              action: { const: "write" }
+              path: { type: string, minLength: 1 }
+              content: { type: string }
+            required: [action, path, content]
+            additionalProperties: false
+          - properties:
+              action: { const: "edit" }
+              path: { type: string, minLength: 1 }
+              old_str: { type: string, minLength: 1 }
+              new_str: { type: string }
+            required: [action, path, old_str, new_str]
+            additionalProperties: false
+          - properties:
+              action: { const: "ls" }
+              path: { type: string }
+            required: [action, path]
+            additionalProperties: false
+          - properties:
+              action: { const: "grep" }
+              pattern: { type: string, minLength: 1 }
+              path: { type: string }
+            required: [action, pattern, path]
+            additionalProperties: false
+          - properties:
+              action: { const: "run" }
+              cmd: { type: string, minLength: 1 }
+            required: [action, cmd]
+            additionalProperties: false
+          - properties:
+              action: { const: "think" }
+              note: { type: string, minLength: 1 }
+            required: [action, note]
+            additionalProperties: false
+          - properties:
+              action: { const: "done" }
+              summary: { type: string, minLength: 1 }
+            required: [action, summary]
+            additionalProperties: false
