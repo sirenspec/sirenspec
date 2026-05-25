@@ -9,6 +9,14 @@ YAML-first agent orchestration SDK. Define multi-agent workflows in human-readab
 
 📚 Documentation: [docs.sirenspec.dev](https://docs.sirenspec.dev)
 
+## Why SirenSpec
+
+Most production "agents" are really just workflows — a fixed sequence of LLM calls with some branching. The problem isn't the logic. It's that the logic lives inside Python files nobody else on the team can read.
+
+SirenSpec is a YAML format and runtime for AI workflows. Write the pipeline once. It's readable by your PM, diffable in git, validatable in CI, and auditable by anyone who needs to understand what your AI is doing — without reading code.
+
+**It is not a dynamic agent framework.** No autonomous tool selection, no open-ended loops. For those, use LangGraph or the OpenAI Agents SDK. SirenSpec is for the 90% of AI workflows that should be deterministic by design.
+
 ## Installation
 
 ```bash
