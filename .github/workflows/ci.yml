@@ -16,11 +16,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: astral-sh/setup-uv@v8.1.0
+      - uses: actions/setup-python@v5
         with:
-          enable-cache: true
-          cache-dependency-glob: uv.lock
           python-version: "3.13"
+
+      - run: curl -LsSf https://astral.sh/uv/install.sh | sh
 
       - run: uv sync --extra dev
 
@@ -34,11 +34,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: astral-sh/setup-uv@v8.1.0
+      - uses: actions/setup-python@v5
         with:
-          enable-cache: true
-          cache-dependency-glob: uv.lock
           python-version: "3.13"
+
+      - run: curl -LsSf https://astral.sh/uv/install.sh | sh
 
       - run: uv sync --extra dev
 
@@ -64,11 +64,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: astral-sh/setup-uv@v8.1.0
+      - uses: actions/setup-python@v5
         with:
-          enable-cache: true
-          cache-dependency-glob: uv.lock
           python-version: "3.13"
+
+      - run: curl -LsSf https://astral.sh/uv/install.sh | sh
 
       - run: uv build
 
