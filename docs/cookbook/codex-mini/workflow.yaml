@@ -1,0 +1,258 @@
+version: "0.1"
+# codex-mini: a coding-agent brain expressed as a per-turn DAG.
+#
+# The Python harness owns the outer loop:
+#   1. session.render() -> string         (task + transcript + sandbox listing)
+#   2. execute(workflow, message=...)     (this DAG runs once)
+#   3. read working.parse.action.action   (which branch fired)
+#   4. read working.<action>.observation  (what happened)
+#   5. append to session memory; repeat until action == "done"
+#
+# Tool implementations live in a user-supplied Python module, picked at
+# runtime via env var SIRENSPEC_TOOL_MODULE. To swap real-fs for a mock,
+# point that env var at a different module. The package ships none of
+# these functions — the tool surface is yours.
+#
+# Expected module interface:
+#   parse_action(raw: str) -> dict       # raw model JSON -> structured action
+#   read_file(path, root) -> str
+#   write_file(path, content, root) -> str
+#   edit_file(path, old_str, new_str, root) -> str
+#   list_dir(path, root) -> str
+#   grep_files(pattern, path, root) -> str
+#   run_cmd(cmd, root) -> str
+#   echo_note(note) -> str               # for the "think" no-op
+#   finish(summary) -> str               # for the "done" no-op
+
+defaults:
+  budget:
+    max_tokens: 200000
+    max_cost_usd: 2.00
+
+agents:
+  planner:
+    model: "anthropic:claude-sonnet-4-6"
+    system: |
+      You are a coding agent operating inside a sandboxed folder. You
+      cannot see the folder directly — you discover it by issuing
+      actions and reading their observations.
+
+      ## Protocol
+
+      Each turn the user message contains the original task, a
+      transcript of prior (action, observation) pairs, and a current
+      listing of the sandbox root. Reply with EXACTLY ONE JSON object
+      and nothing else — no prose, no markdown fences, no commentary.
+
+      ## Actions
+
+      {"action": "read",  "path": "relative/path.py"}
+      {"action": "write", "path": "relative/path.py", "content": "..."}
+      {"action": "edit",  "path": "relative/path.py",
+                          "old_str": "...", "new_str": "..."}
+      {"action": "ls",    "path": "."}
+      {"action": "grep",  "pattern": "TODO", "path": "."}
+      {"action": "run",   "cmd": "pytest -x tests/"}
+      {"action": "think", "note": "..."}
+      {"action": "done",  "summary": "..."}
+
+      ## Rules
+
+      - Always read a file before editing it.
+      - Prefer `edit` over `write` for changes to existing files.
+      - If a `run` command fails, read the output before retrying.
+        Never retry the same command twice in a row.
+      - When an observation says "ERROR: ...", adjust — do not pretend
+        success.
+      - Emit `done` only when the task is complete and verified.
+      - Use `think` sparingly (at most once between side effects).
+
+nodes:
+  # The brain: one LLM call per turn, emits raw JSON action text.
+  plan:
+    agent: planner
+    writes: working.plan.action_raw
+    streaming: false
+    max_tokens_per_call: 4096
+    retry:
+      max_attempts: 3
+      base_delay: 1.0
+      strategy: exponential
+      jitter: true
+
+  # Plumbing: parse the raw JSON into a dict so edges can branch on
+  # fields. Required because the schema guardrail validates but does
+  # not materialise parsed structure into context.
+  parse:
+    type: tool
+    tool: python
+    config:
+      module: "{{ env.SIRENSPEC_TOOL_MODULE }}"
+      function: parse_action
+      args:
+        raw: "{{ plan.action_raw }}"
+    output_key: action
+
+  # Eight action branches. Exactly one fires per turn (selected by the
+  # edge `when:` conditions below). Each writes its result to a
+  # predictable path: working.<id>.observation
+  read:
+    type: tool
+    tool: python
+    config:
+      module: "{{ env.SIRENSPEC_TOOL_MODULE }}"
+      function: read_file
+      args:
+        path: "{{ parse.action.path }}"
+        root: "{{ env.SIRENSPEC_SANDBOX_ROOT }}"
+    output_key: observation
+    on_failure: skip
+
+  write:
+    type: tool
+    tool: python
+    config:
+      module: "{{ env.SIRENSPEC_TOOL_MODULE }}"
+      function: write_file
+      args:
+        path: "{{ parse.action.path }}"
+        content: "{{ parse.action.content }}"
+        root: "{{ env.SIRENSPEC_SANDBOX_ROOT }}"
+    output_key: observation
+    on_failure: skip
+
+  edit:
+    type: tool
+    tool: python
+    config:
+      module: "{{ env.SIRENSPEC_TOOL_MODULE }}"
+      function: edit_file
+      args:
+        path: "{{ parse.action.path }}"
+        old_str: "{{ parse.action.old_str }}"
+        new_str: "{{ parse.action.new_str }}"
+        root: "{{ env.SIRENSPEC_SANDBOX_ROOT }}"
+    output_key: observation
+    on_failure: skip
+
+  ls:
+    type: tool
+    tool: python
+    config:
+      module: "{{ env.SIRENSPEC_TOOL_MODULE }}"
+      function: list_dir
+      args:
+        path: "{{ parse.action.path }}"
+        root: "{{ env.SIRENSPEC_SANDBOX_ROOT }}"
+    output_key: observation
+    on_failure: skip
+
+  grep:
+    type: tool
+    tool: python
+    config:
+      module: "{{ env.SIRENSPEC_TOOL_MODULE }}"
+      function: grep_files
+      args:
+        pattern: "{{ parse.action.pattern }}"
+        path: "{{ parse.action.path }}"
+        root: "{{ env.SIRENSPEC_SANDBOX_ROOT }}"
+    output_key: observation
+    on_failure: skip
+
+  run:
+    type: tool
+    tool: python
+    config:
+      module: "{{ env.SIRENSPEC_TOOL_MODULE }}"
+      function: run_cmd
+      args:
+        cmd: "{{ parse.action.cmd }}"
+        root: "{{ env.SIRENSPEC_SANDBOX_ROOT }}"
+    output_key: observation
+    on_failure: skip
+
+  think:
+    type: tool
+    tool: python
+    config:
+      module: "{{ env.SIRENSPEC_TOOL_MODULE }}"
+      function: echo_note
+      args:
+        note: "{{ parse.action.note }}"
+    output_key: observation
+    on_failure: skip
+
+  done:
+    type: tool
+    tool: python
+    config:
+      module: "{{ env.SIRENSPEC_TOOL_MODULE }}"
+      function: finish
+      args:
+        summary: "{{ parse.action.summary }}"
+    output_key: observation
+    on_failure: skip
+
+edges:
+  - { from: plan,  to: parse }
+  - { from: parse, to: read,  when: working.parse.action.action == "read" }
+  - { from: parse, to: write, when: working.parse.action.action == "write" }
+  - { from: parse, to: edit,  when: working.parse.action.action == "edit" }
+  - { from: parse, to: ls,    when: working.parse.action.action == "ls" }
+  - { from: parse, to: grep,  when: working.parse.action.action == "grep" }
+  - { from: parse, to: run,   when: working.parse.action.action == "run" }
+  - { from: parse, to: think, when: working.parse.action.action == "think" }
+  - { from: parse, to: done,  when: working.parse.action.action == "done" }
+
+guardrails:
+  - injection
+  - name: schema
+    config:
+      schema:
+        type: object
+        oneOf:
+          - properties:
+              action: { const: "read" }
+              path:   { type: string, minLength: 1 }
+            required: [action, path]
+            additionalProperties: false
+          - properties:
+              action:  { const: "write" }
+              path:    { type: string, minLength: 1 }
+              content: { type: string }
+            required: [action, path, content]
+            additionalProperties: false
+          - properties:
+              action:  { const: "edit" }
+              path:    { type: string, minLength: 1 }
+              old_str: { type: string, minLength: 1 }
+              new_str: { type: string }
+            required: [action, path, old_str, new_str]
+            additionalProperties: false
+          - properties:
+              action: { const: "ls" }
+              path:   { type: string }
+            required: [action, path]
+            additionalProperties: false
+          - properties:
+              action:  { const: "grep" }
+              pattern: { type: string, minLength: 1 }
+              path:    { type: string }
+            required: [action, pattern, path]
+            additionalProperties: false
+          - properties:
+              action: { const: "run" }
+              cmd:    { type: string, minLength: 1 }
+            required: [action, cmd]
+            additionalProperties: false
+          - properties:
+              action: { const: "think" }
+              note:   { type: string, minLength: 1 }
+            required: [action, note]
+            additionalProperties: false
+          - properties:
+              action:  { const: "done" }
+              summary: { type: string, minLength: 1 }
+            required: [action, summary]
+            additionalProperties: false
