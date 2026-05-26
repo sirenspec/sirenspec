@@ -2,7 +2,11 @@
   <h1>SirenSpec</h1>
   <img src="docs/logo/crest.svg" alt="Crest, the SirenSpec mascot" width="180"/>
 
-  [![CI](https://github.com/sirenspec/sirenspec/actions/workflows/ci.yml/badge.svg)](https://github.com/sirenspec/sirenspec/actions/workflows/ci.yml)
+  [![CI](https://github.com/sirenspec/sirenspec/actions/workflows/ci.yml/badge.svg)](https://github.com/TJLSmith0831/sirenspec/actions/workflows/ci.yml)
+  [![PyPI](https://img.shields.io/pypi/v/sirenspec)](https://pypi.org/project/sirenspec)
+  [![Python 3.11+](https://img.shields.io/badge/python-3.11+-teal.svg)](https://www.python.org/downloads/)
+  [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+  ![GitHub Sponsors](https://img.shields.io/github/sponsors/TJLSmith0831)
 </div>
 
 YAML-first agent orchestration SDK. Define multi-agent workflows in human-readable YAML and execute them against OpenAI, Anthropic, or Ollama backends.
