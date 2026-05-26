@@ -2,12 +2,24 @@
   <h1>SirenSpec</h1>
   <img src="docs/logo/crest.svg" alt="Crest, the SirenSpec mascot" width="180"/>
 
-  [![CI](https://github.com/sirenspec/sirenspec/actions/workflows/ci.yml/badge.svg)](https://github.com/sirenspec/sirenspec/actions/workflows/ci.yml)
+  [![CI](https://github.com/sirenspec/sirenspec/actions/workflows/ci.yml/badge.svg)](https://github.com/TJLSmith0831/sirenspec/actions/workflows/ci.yml)
+  [![PyPI](https://img.shields.io/pypi/v/sirenspec)](https://pypi.org/project/sirenspec)
+  [![Python 3.11+](https://img.shields.io/badge/python-3.11+-teal.svg)](https://www.python.org/downloads/)
+  [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+  ![GitHub Sponsors](https://img.shields.io/github/sponsors/TJLSmith0831)
 </div>
 
 YAML-first agent orchestration SDK. Define multi-agent workflows in human-readable YAML and execute them against OpenAI, Anthropic, or Ollama backends.
 
 📚 Documentation: [docs.sirenspec.dev](https://docs.sirenspec.dev)
+
+## Why SirenSpec
+
+Most production "agents" are really just workflows — a fixed sequence of LLM calls with some branching. The problem isn't the logic. It's that the logic lives inside Python files nobody else on the team can read.
+
+SirenSpec is a YAML format and runtime for AI workflows. Write the pipeline once. It's readable by your PM, diffable in git, validatable in CI, and auditable by anyone who needs to understand what your AI is doing — without reading code.
+
+**It is not a dynamic agent framework.** No autonomous tool selection, no open-ended loops. For those, use LangGraph or the OpenAI Agents SDK. SirenSpec is for the 90% of AI workflows that should be deterministic by design.
 
 ## Installation
 
