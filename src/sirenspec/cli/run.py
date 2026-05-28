@@ -21,7 +21,7 @@ from sirenspec.core.events import NodeCompleteEvent, SummaryEvent
 from sirenspec.core.executor import execute, execute_streaming
 from sirenspec.core.models import Workflow
 from sirenspec.exceptions import WorkflowLintError
-from sirenspec.yaml.parser import load_env_file, load_workflow
+from sirenspec.yaml.parser import load_workflow
 
 _err = Console(stderr=True)
 
@@ -415,14 +415,17 @@ async def run_streaming(
 
 
 def load_workflow_with_env(workflow_file: str) -> Workflow:
-    """Load and validate a workflow file, then load its env file if configured.
+    """Load and validate a workflow file.
+
+    ``env_file`` loading is now handled eagerly inside :func:`~sirenspec.yaml.parser.load_workflow`,
+    so this function is a thin error-handling wrapper around that call.
 
     :param workflow_file: Path to the workflow YAML file.
     :returns: The validated :class:`~sirenspec.core.models.Workflow` instance.
     :raises typer.Exit: With code 1 on any load or validation error.
     """
     try:
-        workflow = load_workflow(workflow_file)
+        return load_workflow(workflow_file)
     except FileNotFoundError as exc:
         _err.print(f"[red]Error:[/red] {exc}")
         raise typer.Exit(1) from exc
@@ -435,16 +438,6 @@ def load_workflow_with_env(workflow_file: str) -> Workflow:
     except ValueError as exc:
         _err.print(f"[red]Validation error:[/red] {exc}")
         raise typer.Exit(1) from exc
-
-    if workflow.env_file is not None:
-        env_path = Path(workflow_file).parent / workflow.env_file
-        try:
-            load_env_file(env_path)
-        except FileNotFoundError as exc:
-            _err.print(f"[red]Error:[/red] {exc}")
-            raise typer.Exit(1) from exc
-
-    return workflow
 
 
 def resolve_user_input(workflow: Workflow, input_message: str | None) -> str:

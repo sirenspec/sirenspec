@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -19,12 +20,26 @@ from sirenspec.exceptions import WorkflowLintError
 _ENV_LINE_RE = re.compile(r"""^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$""")
 
 
+class EnvFileShadowWarning(UserWarning):
+    """Emitted when an ``env_file`` key is already set to the empty string in ``os.environ``.
+
+    A blank shell export (e.g. ``export MY_KEY=``) prevents the ``.env`` file from
+    supplying its value because :func:`load_env_file` never overwrites existing keys.
+    This warning surfaces the mismatch so developers can unset the variable or remove
+    the empty export.
+    """
+
+
 def load_env_file(path: Path) -> None:
     """Parse a ``.env`` file and set variables in :data:`os.environ`.
 
     Supports ``KEY=VALUE``, quoted values (single or double), inline comments,
     and blank lines. Only sets variables that are not already present in the
     environment so shell exports always take precedence.
+
+    Emits :class:`EnvFileShadowWarning` for each key that is already present in
+    ``os.environ`` as the empty string ``""`` — a common shell-export foot-gun
+    that silently prevents the ``.env`` value from being applied.
 
     :param path: Absolute path to the ``.env`` file.
     :raises FileNotFoundError: If *path* does not exist.
@@ -52,14 +67,29 @@ def load_env_file(path: Path) -> None:
                 value = value[: comment.start()]
         if key not in os.environ:
             os.environ[key] = value
+        elif os.environ[key] == "":
+            warnings.warn(
+                f"env_file key '{key}' is already set to the empty string in os.environ "
+                f"and will not be overridden. Unset the variable or remove the empty shell "
+                f"export so the .env value takes effect.",
+                EnvFileShadowWarning,
+                stacklevel=2,
+            )
 
 
 def load_workflow(filepath: str | Path) -> Workflow:
     """Load and validate a SirenSpec YAML workflow file.
 
+    If the workflow declares an ``env_file:`` directive, the referenced ``.env``
+    file is loaded immediately — before returning the workflow — so that provider
+    clients and other ``os.environ`` consumers that initialise at import time see
+    the correct values.  The path is resolved relative to the workflow file's
+    directory.
+
     :param filepath: Path to the ``.yaml`` workflow file.
-    :raises FileNotFoundError: If the file does not exist.
+    :raises FileNotFoundError: If the workflow file or a declared ``env_file`` does not exist.
     :raises ValueError: If the YAML is malformed or fails schema validation.
+    :raises WorkflowLintError: If any blocking lint rules are violated.
     :returns: A validated Workflow instance.
     """
     path = Path(filepath)
@@ -82,6 +112,9 @@ def load_workflow(filepath: str | Path) -> Workflow:
     except ValidationError as exc:
         field_errors = "; ".join(f"{'.'.join(str(loc) for loc in e['loc'])}: {e['msg']}" for e in exc.errors())
         raise ValueError(f"Workflow validation failed in '{filepath}': {field_errors}") from exc
+
+    if workflow.env_file is not None:
+        load_env_file(path.parent / workflow.env_file)
 
     check_circular_template_refs(workflow)
 
