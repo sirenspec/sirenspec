@@ -12,7 +12,9 @@ from ruamel.yaml import YAML
 from ruamel.yaml.constructor import DuplicateKeyError
 
 from sirenspec.core.interpolation import check_circular_template_refs
+from sirenspec.core.lint import lint_workflow
 from sirenspec.core.models import Workflow
+from sirenspec.exceptions import WorkflowLintError
 
 _ENV_LINE_RE = re.compile(r"""^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$""")
 
@@ -82,4 +84,10 @@ def load_workflow(filepath: str | Path) -> Workflow:
         raise ValueError(f"Workflow validation failed in '{filepath}': {field_errors}") from exc
 
     check_circular_template_refs(workflow)
+
+    lint_issues = lint_workflow(workflow)
+    errors = [i for i in lint_issues if i.level == "error"]
+    if errors:
+        raise WorkflowLintError(errors)
+
     return workflow

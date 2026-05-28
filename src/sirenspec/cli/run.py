@@ -20,6 +20,7 @@ from rich.text import Text
 from sirenspec.core.events import NodeCompleteEvent, SummaryEvent
 from sirenspec.core.executor import execute, execute_streaming
 from sirenspec.core.models import Workflow
+from sirenspec.exceptions import WorkflowLintError
 from sirenspec.yaml.parser import load_env_file, load_workflow
 
 _err = Console(stderr=True)
@@ -424,6 +425,12 @@ def load_workflow_with_env(workflow_file: str) -> Workflow:
         workflow = load_workflow(workflow_file)
     except FileNotFoundError as exc:
         _err.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(1) from exc
+    except WorkflowLintError as exc:
+        for issue in exc.issues:
+            prefix = "[red]Lint error[/red]" if issue.level == "error" else "[yellow]Lint warning[/yellow]"
+            location = f" ({issue.location})" if issue.location else ""
+            _err.print(f"{prefix}{location}: {issue.message}")
         raise typer.Exit(1) from exc
     except ValueError as exc:
         _err.print(f"[red]Validation error:[/red] {exc}")
