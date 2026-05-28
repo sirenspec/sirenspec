@@ -45,7 +45,9 @@ def error_matches_policy(exc: Exception, policy: RetryPolicy) -> bool:
     the ``status_code`` attribute on the exception (set by :class:`~sirenspec.exceptions.ProviderError`
     and compatible HTTP client exceptions).  The special string ``'network_error'`` matches
     any exception that does not have a numeric status code (i.e. connection-level failures
-    such as DNS errors or dropped TCP connections).
+    such as DNS errors or dropped TCP connections).  The special string ``'guardrail_violation'``
+    matches any :class:`~sirenspec.exceptions.GuardrailError` (including subclasses such as
+    :class:`~sirenspec.guardrails.base.GuardrailViolation`).
 
     :param exc: The exception raised by the provider call.
     :param policy: The retry policy specifying which errors trigger a retry.
