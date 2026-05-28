@@ -222,6 +222,7 @@ When `--trace`, `--output json`, or `--trace-file` is used, the full execution t
 | `nodes[].output` | The node's output value (string, dict, list, or null). |
 | `nodes[].writes` | Context path where the output was written. |
 | `nodes[].status` | `"success"`, `"skipped"`, or `"failed"`. |
+| `nodes[].skip_reason` | Why a node was skipped: `"branch_not_taken"` (no incoming edge's `when:` matched) or `"budget_exceeded"` (workflow budget exhausted). `null` for executed nodes. Branch-not-taken nodes are suppressed from the terminal panels but still appear in the JSON trace. |
 | `nodes[].error` | Error message if the node failed, otherwise `null`. |
 | `nodes[].tokens` | Total tokens used by this node. |
 | `nodes[].usage` | Detailed token usage with `prompt_tokens`, `completion_tokens`, `total_tokens`, and `estimated_usd`. |
@@ -232,6 +233,7 @@ When `--trace`, `--output json`, or `--trace-file` is used, the full execution t
 | `summary.total_usage` | Aggregated token usage with detailed breakdown. |
 | `summary.total_duration_ms` | Sum of durations across all nodes. |
 | `summary.status` | `"success"` or `"failed"`. |
+| `summary.budget` | Present only when a `budget:` block is configured. Reports the configured ceilings plus `tokens_used`, `estimated_usd`, `duration_s`, `exceeded`, `violations`, and `skipped_remaining`. See [YAML Reference → budget](/yaml-reference#budget). |
 
 ---
 
@@ -441,6 +443,15 @@ sirenspec validate broken.yaml
 - Node fields (`agent`, `writes`).
 - Edge references — all `from` and `to` values must refer to existing nodes.
 - Node agent references — all `agent` values must refer to existing agents.
+
+After model validation, a **static template linter** runs over every template-bearing field (agent/swrm/synthesis prompts, factory/workflow `inputs`, `for_each`, `swarm_size`):
+
+| Rule | Level | Trigger |
+|------|-------|---------|
+| `working_dot_node_id` | error (blocks load) | `{{ working.<node_id>.* }}` where `<node_id>` is a known node — the canonical form is `{{ <node_id>.output }}`. |
+| `unknown_namespace` | warning | A top-level template name that is neither reserved (`inputs`, `env`, `item`, `index`, `total`) nor a known node ID — usually a typo. |
+
+Errors raise `WorkflowLintError` and fail validation; warnings are printed without blocking. The same linter runs inside `load_workflow()` before any LLM call is made.
 
 Provider credentials and `when:` expressions are **not** evaluated during validation.
 

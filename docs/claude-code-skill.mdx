@@ -62,7 +62,7 @@ The skill is plain text and works with any agent that accepts project-level cont
 
 ```bash
 # Copy the skill prompt into your agent's context file
-cat /path/to/sirenspec/skills/sirenspec/skill.md >> AGENTS.md
+cat /path/to/sirenspec/skills/sirenspec/SKILL.md >> AGENTS.md
 ```
 
 Once the skill content is in your context file, the agent will have full knowledge of the SirenSpec schema without any additional configuration.
@@ -117,10 +117,10 @@ The skill has full knowledge of the SirenSpec schema, including:
 
 | Area | Details |
 |------|---------|
-| Node types | `agent`, `tool` (http/python), `swrm`, `factory`, `workflow` |
-| Guardrails | `injection`, `length`, `schema`, `cost_cap` — fields and config |
-| Interpolation | All `{{ expr }}` namespaces: `inputs`, `working`, `output`, `env`, `item`, `index` |
-| Retry policies | `backoff` strategies, `on_failure` actions, workflow-level `defaults` |
+| Node types | `agent`, `tool` (http/python), `swrm`, `factory`, `workflow`, `human` |
+| Guardrails | `injection`, `length`, `pii`, `schema`, `cost_cap` — fields and config |
+| Interpolation | All `{{ expr }}` namespaces: `inputs`, `working`, `output`, `env`, `item`, `index`, `total`, plus the `default` / `json_or_default` filters |
+| Retry policies | `backoff` strategies, `on_failure` actions, `retry_on_guardrail`, workflow-level `defaults` |
 | Provider URIs | OpenAI, Anthropic, Ollama — model names and authentication |
 | Context paths | `output.*` vs `working.*` conventions and when to use each |
 | Edges | `when:` expression syntax and evaluation rules |

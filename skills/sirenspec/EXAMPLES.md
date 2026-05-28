@@ -175,7 +175,7 @@ agents:
     model: "openai:gpt-4o-mini"
     system: |
       Summarize the following content in 3 bullet points:
-      {{ working.fetch_page.content }}
+      {{ fetch_page.content }}
 
 nodes:
   fetch_page:

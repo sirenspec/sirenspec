@@ -28,10 +28,14 @@ input:
 
 ```bash
 sirenspec run workflow.yaml
-sirenspec validate workflow.yaml      # check without running
+sirenspec validate workflow.yaml      # schema check + load-time linter, without running
 sirenspec run workflow.yaml --trace   # full JSON execution trace
 sirenspec run workflow.yaml --input "Override message"
 ```
+
+`load_workflow()` / `validate` run a static linter: it errors on
+`{{ working.<node_id>.* }}` references and warns on unknown template namespaces
+(likely typos) before any LLM call is made.
 
 ## Install & auth
 
@@ -66,9 +70,16 @@ export ANTHROPIC_API_KEY=sk-ant-...
 ## Template interpolation (`{{ expr }}`)
 
 - `{{ inputs.message }}` — workflow input
-- `{{ working.node_id.field }}` — upstream node output
+- `{{ node_id.output }}` — upstream agent output (canonical form)
+- `{{ node_id.output_key }}` — upstream tool output (e.g. `{{ fetch.diff }}`)
 - `{{ env.VAR_NAME }}` — environment variable (redacted in traces)
-- `{{ value | default('fallback') }}` — safe fallback
+- `{{ working.path }}` — custom context paths you wrote to (e.g. seeded `state`)
+- `{{ value | default('fallback') }}` — fallback on missing key or empty string
+- `{{ value | json_or_default('[]') }}` — fallback on missing key, empty string, or invalid JSON
+
+> Reference an upstream node by its ID (`{{ node_id.output }}`), **not** via the
+> internal `working` namespace. The load-time linter rejects
+> `{{ working.<node_id>.* }}` and tells you the canonical form.
 
 ## Best practices
 
@@ -77,8 +88,10 @@ export ANTHROPIC_API_KEY=sk-ant-...
 - Declare `guardrails: [injection]` at the workflow level (it's the default — don't omit)
 - Use `schema` guardrail when an agent must return structured JSON
 - Set `defaults.retry` at the workflow level for production resilience
-- Use `when:` on edges for conditional branching — keep expressions simple (one comparison)
+- Use `when:` on edges for conditional branching — keep expressions simple (one comparison). Safe builtins (`len`, `bool`, `str`, `int`, `float`, `abs`, `min`, `max`) are available, e.g. `len(working.items) > 0`
 - Prefer `type: swrm` over manual parallel wiring for concurrent multi-agent patterns
+- Set `retry.retry_on_guardrail: true` when an agent must satisfy an output guardrail (e.g. `schema`) — a violation re-runs the LLM call instead of failing
+- For `for_each` factories, the source may be a native list, plain JSON, or fenced ```json``` output — no manual unwrapping needed
 
 ## Reference files
 

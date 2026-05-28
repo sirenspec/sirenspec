@@ -1,4 +1,7 @@
-# Template Interpolation
+---
+title: Template Interpolation
+description: Embed dynamic values in workflow YAML with {{ expr }} syntax.
+---
 
 SirenSpec uses `{{ expr }}` syntax to embed dynamic values in workflow YAML.  Expressions are
 resolved at **node execution time** — values from upstream nodes are available once those nodes
@@ -16,10 +19,19 @@ prompt: "Summarize this: {{ inputs.message }}"
 
 ### Default filter
 
-Use `| default('value')` to supply a fallback when a key might be missing:
+Use `| default('value')` to supply a fallback. It fires both when the key is **missing** and when the resolved value is an **empty string** (`""`):
 
 ```yaml
 prompt: "Context: {{ working.context | default('none provided') }}"
+```
+
+### JSON-or-default filter
+
+Use `| json_or_default('value')` when the value should parse as JSON but might not. It returns the fallback when the key is missing, when the value is an empty string, **or** when the value cannot be parsed as JSON. This covers LLM outputs that return `""` or fenced markdown instead of a clean JSON array:
+
+```yaml
+# upstream agent may emit "", prose, or ```json ... ``` — fall back to an empty list
+for_each: "{{ plan.output | json_or_default('[]') }}"
 ```
 
 ### Multiple placeholders per string
@@ -79,6 +91,14 @@ For workflow nodes, the output is the sub-workflow's output dict. Access sub-nod
 ```yaml
 prompt: "Sub-workflow sentiment: {{ run_child.output.sentiment }}"
 ```
+
+<Warning>
+Reference upstream nodes by their **ID** (`{{ classifier.output }}`), never via the
+internal `working` namespace. `{{ working.<node_id>.* }}` does not resolve at runtime
+and the load-time linter rejects it with the `working_dot_node_id` error, pointing you
+to the canonical `{{ <node_id>.output }}` form. Reserve `working.*` for custom paths you
+write to or seed in `state:`.
+</Warning>
 
 ---
 

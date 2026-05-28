@@ -1,0 +1,41 @@
+---
+title: Changelog
+description: Notable changes to SirenSpec, following Semantic Versioning.
+---
+
+SirenSpec follows [Semantic Versioning](https://semver.org/). This page mirrors the
+[`CHANGELOG.md`](https://github.com/sirenspec/sirenspec/blob/main/CHANGELOG.md) in the repository.
+
+## 0.1.2 — 2026-05-28
+
+A reliability and authoring-ergonomics release driven by early-user feedback. No breaking changes.
+
+### Added
+
+- **Load-time workflow linter** — `load_workflow()` and `sirenspec validate` now run a static linter before execution:
+  - `working_dot_node_id` (error) — rejects `{{ working.<node_id>.* }}` when `<node_id>` is a known node; the canonical form is `{{ <node_id>.output }}`.
+  - `unknown_namespace` (warning) — flags top-level names that are neither a reserved namespace (`inputs`/`env`/`item`/`index`/`total`) nor a known node ID, catching typos before they raise an error at runtime.
+- **`| json_or_default('...')` filter** — fires when a key is missing, when the value is an empty string, *and* when the value cannot be parsed as JSON. See [Interpolation](/interpolation).
+- **Safe builtins in `when:` expressions** — `len`, `bool`, `str`, `int`, `float`, `abs`, `min`, `max` are available, e.g. `len(working.items) > 0`. `__builtins__` remains otherwise blank. See [YAML Reference](/yaml-reference#when-expressions).
+- **`retry_on_guardrail` on retry policies** — when `true`, output guardrail checks run inside the retry loop so a `GuardrailViolation` triggers another provider call instead of an immediate failure. `guardrail_violation` is also accepted as a retry trigger. See [Retry Policies](/retry-policies#retrying-on-guardrail-violations).
+- **Factory `inputs:` exposed as `{{ inputs.key }}`** — resolved factory `inputs:` values are available as named template vars in the spawned agent's system prompt, in addition to the existing user-message join.
+- **`WorkflowLintError`** is now exported from the top-level `sirenspec` package.
+
+### Changed
+
+- **`| default('...')` now fires on empty strings** — previously it engaged only on a missing key; it now also fires when the resolved value is `""`.
+- **`for_each` accepts native lists and fenced JSON** — the loop source may be a native Python list, a plain JSON array, or a fenced ` ```json ` block, so upstream tool and agent outputs work without post-processing.
+- **`env_file:` is loaded eagerly in `load_workflow()`** — environment values are applied before the workflow is returned, so provider clients that read `os.environ` at init time see the correct values. An `EnvFileShadowWarning` is emitted when an `env_file` key is already present in `os.environ` as an empty string. See [YAML Reference](/yaml-reference#env-file).
+- **CLI trace output suppresses branch-not-taken nodes** — `NodeCompleteEvent` gains a `skip_reason` field (`branch_not_taken` / `budget_exceeded`); intentionally untraversed branches no longer appear as noise in the terminal, while `budget_exceeded` skips still print clearly.
+
+### Fixed
+
+- **Python tool config interpolation** — `{{ ... }}` templates inside a Python tool's `module`, `function`, and `args` are now resolved (recursively through nested dicts and lists), matching HTTP tool config behaviour.
+
+## 0.1.1 — 2026-05-23
+
+Maintenance release — CI/CD and release-tooling fixes, README rebrand copy, and badge/link updates. No library behaviour changes.
+
+## 0.1.0 — 2026-05-23
+
+Initial public release: the YAML-first workflow engine, `agent`/`swrm`/`factory`/`tool`/`workflow`/`human` node types, OpenAI/Anthropic/Ollama providers, streaming execution, guardrails, budgets, retry policies, token accounting, the Typer CLI, cassette-based testing, and the `sirenspec.schema.json` artifact.

@@ -76,7 +76,7 @@ export ANTHROPIC_API_KEY=sk-ant-...
 | `anthropic:claude-opus-4-7` | Claude Opus |
 
 <Note>
-The Anthropic provider extracts any `system`-role message and passes it as the top-level `system` parameter, as required by the Anthropic Messages API. The `max_tokens` is fixed at `4096`.
+The Anthropic provider extracts any `system`-role message and passes it as the top-level `system` parameter, as required by the Anthropic Messages API. `max_tokens` defaults to `4096` but is overridden per node by `max_tokens_per_call`.
 </Note>
 
 ---
@@ -157,10 +157,12 @@ This workflow calls OpenAI for classification and Anthropic for the final respon
 Provider URIs are validated when the workflow is executed. An invalid URI raises `sirenspec.exceptions.ProviderError` (a subclass of `SirenSpecError`):
 
 ```python
+import asyncio
+from sirenspec import execute
 from sirenspec.exceptions import ProviderError
 
 try:
-    sirenspec.run(workflow, "hello")
+    asyncio.run(execute(workflow, user_input="hello"))
 except ProviderError as exc:
     print(exc)  # e.g. "Unknown provider 'vertex'; supported: ['anthropic', 'ollama', 'openai']"
 ```
@@ -207,4 +209,4 @@ Each provider records prompt and completion token counts from every call. This u
 }
 ```
 
-The `tokens` field is the sum of prompt and completion tokens; the `usage` field provides the detailed breakdown. `estimated_usd` is reserved for future cost calculation features and is currently always `null`.
+The `tokens` field is the sum of prompt and completion tokens; the `usage` field provides the detailed breakdown. `estimated_usd` is computed from a bundled LiteLLM pricing snapshot — it is `null` for models without a pricing entry (Ollama and other local backends), so the examples above show `null`. See [Budget & Cost Control](/budget#cost-estimation) for details.

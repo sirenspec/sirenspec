@@ -5,6 +5,35 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.1.2] — 2026-05-28
+
+A reliability and authoring-ergonomics release driven by early-user feedback. No breaking changes.
+
+### Added
+
+- **Load-time workflow linter** (`core/lint.py`) — `load_workflow()` now runs a static linter that surfaces problems before execution:
+  - `working_dot_node_id` (error) — rejects `{{ working.<node_id>.* }}` when `<node_id>` is a known node; the canonical form is `{{ <node_id>.output }}`.
+  - `unknown_namespace` (warning) — flags top-level names that are neither a reserved namespace (`inputs`/`env`/`item`/`index`/`total`) nor a known node ID, catching typos before they raise `InterpolationError` at runtime.
+- **`| json_or_default('...')` filter** — engages both when a key is missing *and* when the resolved value cannot be parsed as JSON, covering LLM outputs that return `""` or fenced markdown instead of a JSON array.
+- **Safe builtins in `when:` expressions** — `len`, `bool`, `str`, `int`, `float`, `abs`, `min`, `max` are now available so authors can write conditions like `len(working.items) > 0` without a `NameError`. `__builtins__` remains otherwise blank.
+- **`retry_on_guardrail` on `RetryPolicy`** — when `true`, output guardrail checks run inside the retry loop so a `GuardrailViolation` triggers another provider call rather than an immediate failure. `guardrail_violation` is also accepted as a retry trigger in `error_matches_policy`.
+- **Factory `inputs:` exposed as `{{ inputs.key }}`** — resolved factory `inputs:` values are now available as named template vars in the spawned agent's system prompt, in addition to the existing user-message join. Strictly additive and backward-compatible.
+
+### Changed
+
+- **`| default('...')` now fires on empty strings** — previously it engaged only on `InterpolationError` (missing key); it now also fires when the resolved value is `""`.
+- **`for_each` accepts native lists and fenced JSON** — `resolve_to_list` tries native list passthrough first, then plain JSON, then strips ` ```json ` fences, so upstream tool outputs and fenced agent outputs work as loop sources without post-processing.
+- **`env_file:` is loaded eagerly in `load_workflow()`** — environment values are applied before the workflow is returned, so provider clients that read `os.environ` at init time see the correct values regardless of call order. An `EnvFileShadowWarning` is emitted when an `env_file` key is already present in `os.environ` as an empty string.
+- **CLI trace output suppresses branch-not-taken nodes** — `NodeCompleteEvent` gains a `skip_reason` field (`branch_not_taken` / `budget_exceeded`); branches that were intentionally not traversed no longer appear as `[-]` noise in the terminal, while `budget_exceeded` skips still print clearly.
+
+### Fixed
+
+- **Python tool config interpolation** — `interpolate_tool_config` now resolves `{{ ... }}` templates inside `PythonToolConfig.module`, `.function`, and `.args` (recursively through nested dicts and lists), matching HTTP tool config behaviour. This unblocks dynamic dispatch where a Python tool's inputs depend on prior node outputs or workflow inputs.
+
+## [0.1.1] — 2026-05-23
+
+Maintenance release — CI/CD and release-tooling fixes, README rebrand copy, and badge/link updates. No library behaviour changes.
+
 ## [0.1.0] — 2026-05-23
 
 Initial public release.

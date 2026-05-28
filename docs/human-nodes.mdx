@@ -1,0 +1,116 @@
+---
+title: Human Nodes
+description: Pause a workflow to collect input from a human operator — approvals, edits, and human-in-the-loop gating.
+---
+
+## Overview
+
+A `human` node pauses execution to collect a response from a human operator. It consumes **no LLM tokens**: it renders an optional prompt, blocks until a response arrives (or a timeout expires), and writes the collected text to the workflow context exactly like an agent's output. Downstream nodes and `when:` edges then gate on that response.
+
+```yaml
+nodes:
+  approve_draft:
+    type: human
+    prompt: |
+      {{ draft.output }}
+
+      Approve this draft? (yes / edit / reject)
+    writes: working.approval
+    timeout: 3600
+    on_timeout: use_default
+    default_output: "approved"
+```
+
+---
+
+## Node fields
+
+| Field | Required | Type | Default | Description |
+|-------|----------|------|---------|-------------|
+| `type` | Yes | `"human"` | — | Node type discriminator. |
+| `prompt` | No | string | — | Template string shown to the operator. Supports all standard `{{ expr }}` interpolation. When omitted, only the node ID is shown. |
+| `writes` | Yes | string | — | Dot-notation context path where the collected response is stored. |
+| `timeout` | No | number | none | Wall-clock seconds before `on_timeout` fires. Omitted (or `null`) waits indefinitely. |
+| `on_timeout` | No | `"abort"` \| `"skip"` \| `"use_default"` | `"abort"` | Action when the timeout expires (see below). |
+| `default_output` | Required when `on_timeout` is `"use_default"` | string | — | Fallback response written on timeout. |
+
+---
+
+## Timeout behaviour
+
+| `on_timeout` | Behaviour when the timeout expires |
+|--------------|-------------------------------------|
+| `abort` (default) | Raises `HumanInputError` and stops the workflow. |
+| `skip` | Writes the empty string to `writes` and continues. |
+| `use_default` | Writes `default_output` to `writes` and continues. |
+
+`HumanInputError` is exported from the top-level package:
+
+```python
+from sirenspec import HumanInputError
+```
+
+---
+
+## Supplying responses programmatically
+
+By default the node reads a single line from stdin. When driving SirenSpec from Python — tests, web backends, chat bridges — pass a `human_input_fn` coroutine to [`execute`](/sdk#execute) or [`execute_streaming`](/sdk#execute_streaming) to supply responses without a terminal:
+
+```python
+import asyncio
+from sirenspec import load_workflow, execute
+
+async def auto_approve(prompt: str) -> str:
+    # In production this might await a webhook, a Slack reply, or a DB poll.
+    return "approved"
+
+workflow = load_workflow("workflow.yaml")
+trace = asyncio.run(execute(workflow, user_input="Draft the post.", human_input_fn=auto_approve))
+```
+
+The callable receives the rendered prompt string and returns the operator's response.
+
+---
+
+## Gating downstream nodes
+
+Because the response is written to the context, you can branch on it with `when:` edges:
+
+```yaml
+nodes:
+  approve:
+    type: human
+    prompt: "Approve publishing? (yes/no)"
+    writes: working.approval
+
+  publish:
+    agent: publisher
+    writes: output.result
+
+edges:
+  - from: approve
+    to: publish
+    when: working.approval == "yes"
+```
+
+If the operator answers anything other than `"yes"`, the `publish` node is never activated.
+
+---
+
+## When to use a human node
+
+**Use a human node when:**
+- A draft, plan, or destructive action needs explicit sign-off before proceeding.
+- A human must supply a value the workflow cannot derive (a decision, a correction, a missing fact).
+- You want a reviewable checkpoint inside an otherwise automated pipeline.
+
+**Use something else when:**
+- The decision can be expressed as a deterministic rule — use a `when:` edge on an upstream agent's output instead.
+
+---
+
+## Cookbook recipe
+
+- [Content Approval](/cookbook/content-approval/README) — a human approval gate between draft and publish.
+
+See the [YAML Reference](/yaml-reference#human-node-fields) for the full field-by-field listing.
