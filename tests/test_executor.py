@@ -236,6 +236,38 @@ class TestEvaluateWhenCondition:
         ctx = self._ctx(output={"status": "done"})
         assert evaluate_when_condition('output.status == "done"', ctx) is True
 
+    def test_len_builtin_available(self) -> None:
+        ctx = self._ctx(working={"items": ["a", "b", "c"]})
+        assert evaluate_when_condition("len(working.items) == 3", ctx) is True
+
+    def test_len_builtin_comparison(self) -> None:
+        ctx = self._ctx(working={"items": []})
+        assert evaluate_when_condition("len(working.items) == 0", ctx) is True
+
+    def test_int_builtin_available(self) -> None:
+        ctx = self._ctx(working={"count": "5"})
+        assert evaluate_when_condition("int(working.count) > 3", ctx) is True
+
+    def test_str_builtin_available(self) -> None:
+        ctx = self._ctx(working={"code": 404})
+        assert evaluate_when_condition('str(working.code) == "404"', ctx) is True
+
+    def test_min_max_builtins_available(self) -> None:
+        ctx = self._ctx(working={"scores": [3, 1, 4, 1, 5]})
+        assert evaluate_when_condition("max(working.scores) == 5", ctx) is True
+
+    def test_abs_builtin_available(self) -> None:
+        ctx = self._ctx(working={"delta": -7})
+        assert evaluate_when_condition("abs(working.delta) == 7", ctx) is True
+
+    def test_float_builtin_available(self) -> None:
+        ctx = self._ctx(working={"value": "3.14"})
+        assert evaluate_when_condition("float(working.value) > 3.0", ctx) is True
+
+    def test_open_still_blocked(self) -> None:
+        ctx = self._ctx()
+        assert evaluate_when_condition("open('/etc/passwd')", ctx) is False
+
 
 # ---------------------------------------------------------------------------
 # Conditional branching in execute()

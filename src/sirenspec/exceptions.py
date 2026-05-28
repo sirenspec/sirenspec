@@ -6,6 +6,8 @@ catch the entire family with a single ``except SirenSpecError`` clause.
 
 from __future__ import annotations
 
+from typing import Any
+
 
 class SirenSpecError(Exception):
     """Base class for all SirenSpec exceptions."""
@@ -142,6 +144,20 @@ class HumanInputError(SirenSpecError):
         self.node_id = node_id
         self.reason = reason
         self.timed_out = timed_out
+
+
+class WorkflowLintError(SirenSpecError):
+    """Raised when ``lint_workflow`` finds one or more blocking lint violations.
+
+    :param issues: Non-empty list of :class:`~sirenspec.core.lint.LintIssue` instances
+        that caused the lint run to fail.  All blocking issues are collected before
+        raising so the caller sees the full set at once.
+    """
+
+    def __init__(self, issues: list[Any]) -> None:
+        lines = "\n".join(f"  [{i.level.upper()}] {i.rule}: {i.message}" for i in issues)
+        super().__init__(f"Workflow lint failed with {len(issues)} issue(s):\n{lines}")
+        self.issues = issues
 
 
 class FactoryNodeError(SirenSpecError):

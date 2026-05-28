@@ -12,10 +12,13 @@ Supported namespaces::
     {{ classify.output.sentiment }}     # nested dot access
     {{ item }}                          # current loop item (factory nodes)
     {{ index }}                         # current loop index (factory nodes)
-    {{ expr | default('fallback') }}    # optional fallback on missing key
+    {{ expr | default('fallback') }}          # fallback on missing key or empty string
+    {{ expr | json_or_default('[]') }}        # fallback on missing key, empty string, or invalid JSON
 
 Missing keys raise :class:`~sirenspec.exceptions.InterpolationError` unless a
-``| default('value')`` filter is provided.
+``| default('value')`` or ``| json_or_default('value')`` filter is provided.
+Both filters also engage when the resolved value is an empty string ``""``.
+``json_or_default`` additionally engages when the value is not parseable as JSON.
 """
 
 from __future__ import annotations
@@ -32,6 +35,7 @@ from sirenspec.exceptions import InterpolationError
 
 _TEMPLATE_RE = re.compile(r"\{\{\s*(.+?)\s*\}\}")
 _DEFAULT_RE = re.compile(r"^(.+?)\s*\|\s*default\(\s*['\"](.+?)['\"]\s*\)\s*$")
+_JSON_OR_DEFAULT_RE = re.compile(r"^(.+?)\s*\|\s*json_or_default\(\s*['\"](.+?)['\"]\s*\)\s*$")
 
 _RESERVED_NAMESPACES = frozenset({"inputs", "env", "item", "index", "total"})
 
@@ -136,10 +140,20 @@ def resolve_expression(
 ) -> str:
     """Resolve a single interpolation expression (without braces) to a string value.
 
-    Supports the ``| default('fallback')`` filter: if the expression would raise
-    :class:`~sirenspec.exceptions.InterpolationError`, the default value is returned instead.
+    Supports two optional filters:
 
-    :param expr: The raw expression text, e.g. ``inputs.message`` or ``plan.output | default('')``.
+    ``| default('fallback')``
+        Returns *fallback* when the expression raises
+        :class:`~sirenspec.exceptions.InterpolationError` **or** when the resolved
+        value is the empty string ``""``.
+
+    ``| json_or_default('fallback')``
+        Like ``| default`` but also returns *fallback* when the resolved value
+        cannot be parsed as JSON.  Useful for ``for_each:`` upstream outputs
+        that may legitimately be empty or contain non-JSON text.
+
+    :param expr: The raw expression text, e.g. ``inputs.message`` or
+        ``plan.output | default('')``.
     :param context: The current interpolation context.
     :param redact_env: When ``True``, ``env.*`` values are returned as ``'***'`` instead of their
         real values. Used when building trace output to avoid logging credentials.
@@ -147,17 +161,36 @@ def resolve_expression(
     :returns: The resolved string value.
     """
     default_value: str | None = None
-    default_match = _DEFAULT_RE.match(expr)
-    if default_match:
-        expr = default_match.group(1).strip()
-        default_value = default_match.group(2)
+    use_json_or_default = False
+
+    json_match = _JSON_OR_DEFAULT_RE.match(expr)
+    if json_match:
+        expr = json_match.group(1).strip()
+        default_value = json_match.group(2)
+        use_json_or_default = True
+    else:
+        default_match = _DEFAULT_RE.match(expr)
+        if default_match:
+            expr = default_match.group(1).strip()
+            default_value = default_match.group(2)
 
     try:
-        return _resolve_path(expr, context, redact_env)
+        resolved = _resolve_path(expr, context, redact_env)
     except InterpolationError:
         if default_value is not None:
             return default_value
         raise
+
+    if default_value is not None and resolved == "":
+        return default_value
+
+    if use_json_or_default and default_value is not None:
+        try:
+            json.loads(resolved)
+        except json.JSONDecodeError:
+            return default_value
+
+    return resolved
 
 
 def _resolve_path(expr: str, context: InterpolationContext, redact_env: bool) -> str:
@@ -231,25 +264,123 @@ def resolve_template(
     return _TEMPLATE_RE.sub(replace, template)
 
 
-def resolve_to_list(template: str, context: InterpolationContext) -> list[Any]:
-    """Resolve *template* to a string and parse the result as a JSON list.
+def strip_json_fence(text: str) -> str:
+    """Strip a leading `` ```json `` (or bare `` ``` ``) fence and trailing `` ``` `` from *text*.
 
-    Used by the factory runner to evaluate ``for_each:`` expressions. The
-    upstream node must output a valid JSON array string, e.g. ``["a", "b", "c"]``.
+    Many LLMs wrap JSON output in markdown fences.  This function removes the fence
+    so the inner content can be parsed directly.
 
-    :param template: A template string that resolves to a JSON-encoded list.
-    :param context: The interpolation context.
-    :raises InterpolationError: If resolution fails or the result is not a JSON list.
-    :returns: The parsed Python list.
+    :param text: The raw string that may contain a markdown code fence.
+    :returns: The de-fenced string, or *text* unchanged if no fence is present.
     """
-    resolved = resolve_template(template, context)
+    stripped = text.strip()
+    if not stripped.startswith("```"):
+        return text
+    first_newline = stripped.find("\n")
+    last_fence = stripped.rfind("```")
+    if first_newline == -1 or last_fence <= first_newline:
+        return text
+    return stripped[first_newline:last_fence].strip()
+
+
+def resolve_to_list(template: str, context: InterpolationContext) -> list[Any]:
+    """Resolve *template* and return the result as a Python list.
+
+    Three resolution strategies are tried in order:
+
+    1. **Native list** — if the resolved raw value is already a Python ``list``
+       (e.g. when the upstream is a tool node that returned a list object), it
+       is returned directly without JSON parsing.
+    2. **Plain JSON** — ``json.loads`` on the resolved string.
+    3. **Jsonish (fenced) JSON** — if plain parsing fails, a leading
+       `` ```json `` or `` ``` `` fence is stripped and parsing is retried.
+
+    :param template: A template expression (e.g. ``{{ plan.output }}``) whose
+        resolved value must be a JSON array string or a Python list.
+    :param context: The interpolation context.
+    :raises InterpolationError: If resolution fails, or the result is not a list
+        after all three strategies are exhausted.
+    :returns: The resolved Python list.
+    """
+    raw = resolve_raw_value(template, context)
+    if isinstance(raw, list):
+        return raw
+
+    resolved = str(raw)
     try:
         result = json.loads(resolved)
-    except json.JSONDecodeError as exc:
-        raise InterpolationError(template, "for_each", f"Result is not valid JSON: {exc}") from exc
+    except json.JSONDecodeError:
+        de_fenced = strip_json_fence(resolved)
+        try:
+            result = json.loads(de_fenced)
+        except json.JSONDecodeError as exc:
+            raise InterpolationError(template, "for_each", f"Result is not valid JSON: {exc}") from exc
+
     if not isinstance(result, list):
         raise InterpolationError(template, "for_each", f"Expected a JSON list but got {type(result).__name__}")
     return result
+
+
+def resolve_raw_value(template: str, context: InterpolationContext) -> Any:
+    """Resolve a simple ``{{ expr }}`` template and return the raw Python value without stringification.
+
+    If *template* is not a single ``{{ expr }}`` expression (e.g. it contains
+    literal text or multiple placeholders), it is returned unchanged as a string.
+
+    This is used by :func:`resolve_to_list` to detect when an upstream tool node
+    produced a native Python list rather than a JSON-encoded string.
+
+    :param template: A template string, ideally a single ``{{ expr }}`` placeholder.
+    :param context: The interpolation context.
+    :raises InterpolationError: If the expression cannot be resolved.
+    :returns: The raw Python value (possibly a list, dict, or any type) without ``str()`` coercion.
+    """
+    m = _TEMPLATE_RE.fullmatch(template.strip()) if template else None
+    if m is None:
+        return template
+
+    expr = m.group(1).strip()
+    default_value: str | None = None
+
+    json_match = _JSON_OR_DEFAULT_RE.match(expr)
+    if json_match:
+        expr = json_match.group(1).strip()
+        default_value = json_match.group(2)
+    else:
+        default_match = _DEFAULT_RE.match(expr)
+        if default_match:
+            expr = default_match.group(1).strip()
+            default_value = default_match.group(2)
+
+    parts = expr.strip().split(".")
+    namespace = parts[0]
+
+    if namespace in _RESERVED_NAMESPACES:
+        return resolve_expression(m.group(1).strip(), context)
+
+    try:
+        return _navigate_raw(context.nodes, parts)
+    except (KeyError, TypeError) as exc:
+        if default_value is not None:
+            return default_value
+        raise InterpolationError(expr, namespace, f"Key '{parts[-1]}' not found") from exc
+
+
+def _navigate_raw(data: dict[str, Any], parts: list[str]) -> Any:
+    """Walk *data* along *parts* and return the raw value at the end without stringification.
+
+    :param data: The root dict to traverse.
+    :param parts: Ordered list of key segments.
+    :raises KeyError: If any segment is missing.
+    :raises TypeError: If an intermediate value is not a dict.
+    :returns: The raw Python value at the end of the path.
+    """
+    current: Any = data
+    for part in parts:
+        if not isinstance(current, dict):
+            raise TypeError(f"Expected dict at '{part}', got {type(current).__name__}")
+        current = current[part]
+    return current
 
 
 def check_circular_template_refs(workflow: Workflow) -> None:
