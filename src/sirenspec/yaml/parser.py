@@ -43,6 +43,7 @@ def load_env_file(path: Path) -> None:
 
     :param path: Absolute path to the ``.env`` file.
     :raises FileNotFoundError: If *path* does not exist.
+    :returns: None.
     """
     if not path.exists():
         raise FileNotFoundError(f".env file not found: {path}")
