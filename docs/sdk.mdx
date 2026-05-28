@@ -43,8 +43,11 @@ from sirenspec import (
     RetryExhaustedError,
     SwrmAgentError,
     ToolError,
+    WorkflowLintError,
 )
 ```
+
+`PIIDetectedError`, `InterpolationError`, and `FactoryNodeError` are not re-exported at the top level — import them from `sirenspec.exceptions` when needed.
 
 | Name | Type | Description |
 |------|------|-------------|
@@ -85,8 +88,9 @@ def load_workflow(filepath: str | Path) -> Workflow: ...
 
 | Exception | When |
 |-----------|------|
-| `FileNotFoundError` | The file does not exist. |
+| `FileNotFoundError` | The workflow file — or a declared `env_file` — does not exist. |
 | `ValueError` | YAML is malformed or fails schema validation. |
+| `WorkflowLintError` | The load-time linter found a blocking issue, such as a `{{ working.<node_id>.* }}` reference. |
 
 ---
 
@@ -115,6 +119,7 @@ async def execute(
     workflow: Workflow,
     user_input: str,
     registry: WorkflowRegistry | None = None,
+    human_input_fn: InputCoroutine | None = None,
 ) -> dict[str, Any]: ...
 ```
 
@@ -125,6 +130,7 @@ async def execute(
 | `workflow` | `Workflow` | Validated workflow instance from `load_workflow`. |
 | `user_input` | `str` | The initial user message passed to the first (root) node. |
 | `registry` | `WorkflowRegistry \| None` | Registry of named sub-workflows for resolving `workflow` nodes by name. File-path refs (starting with `.` or `/`) are resolved from disk without a registry. |
+| `human_input_fn` | `InputCoroutine \| None` | Async callable supplying operator responses for `type: human` nodes. Defaults to reading a single line from stdin. Inject a mock in tests or wire in a webhook bridge in production. |
 
 **Returns:**
 
@@ -164,6 +170,7 @@ async def execute_streaming(
     workflow: Workflow,
     user_input: str,
     registry: WorkflowRegistry | None = None,
+    human_input_fn: InputCoroutine | None = None,
 ) -> AsyncGenerator[NodeCompleteEvent | SummaryEvent, None]: ...
 ```
 
@@ -174,6 +181,7 @@ async def execute_streaming(
 | `workflow` | `Workflow` | Validated workflow instance from `load_workflow`. |
 | `user_input` | `str` | The initial user message passed to the first (root) node. |
 | `registry` | `WorkflowRegistry \| None` | Registry of named sub-workflows. Same semantics as `execute`. |
+| `human_input_fn` | `InputCoroutine \| None` | Async callable supplying operator responses for `type: human` nodes. Same semantics as `execute`. |
 
 **Yields:**
 
@@ -263,6 +271,9 @@ SirenSpecError
 │   └── PIIDetectedError      # PII guardrail with action="block" found PII
 ├── HumanInputError           # Human node aborted (e.g. timeout with on_timeout="abort")
 ├── ValidationError           # Workflow schema is invalid
+├── WorkflowLintError         # Load-time linter found a blocking issue (e.g. working.<node_id>)
+├── InterpolationError        # A {{ ... }} template could not be resolved at runtime
+├── FactoryNodeError          # Factory node could not spawn or resolve its instances
 ├── SwrmAgentError            # One or more swrm agents failed
 └── ToolError                 # Tool node execution failed
 ```

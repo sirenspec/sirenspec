@@ -251,6 +251,48 @@ class TestRunFactoryInstance:
         assert error.instance_index == 1
         assert "provider boom" in trace["error"]
 
+    @pytest.mark.asyncio
+    async def test_inputs_exposed_in_inputs_namespace(self) -> None:
+        """Resolved inputs: values are accessible as {{ inputs.key }} in the system prompt."""
+        captured_system: list[str] = []
+
+        async def capture_system(messages: list[dict]) -> str:
+            for msg in messages:
+                if msg.get("role") == "system":
+                    captured_system.append(msg["content"])
+            return "done"
+
+        mock_provider = MagicMock()
+        mock_provider.complete = capture_system
+        mock_provider.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=5)
+
+        node = FactoryNode(
+            agent="worker",
+            for_each="[]",
+            inputs={"step": "{{ item }}"},
+            writes="working.out",
+        )
+        agent_def = AgentDefinition(
+            model="openai:gpt-4o-mini",
+            system="Perform this step: {{ inputs.step }}",
+        )
+
+        with patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider):
+            trace, error = await run_factory_instance(
+                node_id="execute",
+                idx=0,
+                item="write tests",
+                node=node,
+                agent_def=agent_def,
+                base_working={},
+                user_input="goal",
+                guardrail_names=None,
+            )
+
+        assert error is None
+        assert len(captured_system) == 1
+        assert captured_system[0] == "Perform this step: write tests"
+
 
 # ---------------------------------------------------------------------------
 # execute_factory_node

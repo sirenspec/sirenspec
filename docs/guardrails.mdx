@@ -129,6 +129,10 @@ guardrails:
 - **Output:** Parsed as JSON and validated against the schema.
 - **On failure:** Raises a `GuardrailViolation` with a message indicating the path and constraint that failed (e.g., `Schema violation at "$.age": 25 is greater than the maximum of 20`).
 
+<Tip>
+Pair the `schema` guardrail with `retry.retry_on_guardrail: true` so a `GuardrailViolation` re-runs the LLM call instead of failing the run — giving the model another chance to emit conforming JSON. See [Retry Policies](/retry-policies#retrying-on-guardrail-violations).
+</Tip>
+
 **Example:**
 
 ```yaml

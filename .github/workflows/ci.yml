@@ -2,10 +2,9 @@ name: CI
 
 on:
   push:
-    branches:
-      - main
-      - develop
+  workflow_dispatch:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     branches:
       - main
       - develop
@@ -17,11 +16,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-python@v5
         with:
-          enable-cache: true
-          cache-dependency-glob: uv.lock
           python-version: "3.13"
+
+      - run: curl -LsSf https://astral.sh/uv/install.sh | sh
 
       - run: uv sync --extra dev
 
@@ -35,11 +34,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-python@v5
         with:
-          enable-cache: true
-          cache-dependency-glob: uv.lock
           python-version: "3.13"
+
+      - run: curl -LsSf https://astral.sh/uv/install.sh | sh
 
       - run: uv sync --extra dev
 
@@ -50,8 +49,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/setup-node@v4
         with:
@@ -67,11 +64,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-python@v5
         with:
-          enable-cache: true
-          cache-dependency-glob: uv.lock
           python-version: "3.13"
+
+      - run: curl -LsSf https://astral.sh/uv/install.sh | sh
 
       - run: uv build
 

@@ -106,7 +106,9 @@ async def run_factory_instance(
 
     Builds a per-instance :class:`~sirenspec.core.interpolation.InterpolationContext`
     with ``item``, ``index``, and ``total`` populated, resolves ``inputs:`` templates,
-    and calls :func:`~sirenspec.core.agent_runner.execute_agent_node` with a timeout.
+    and exposes the resolved input values in the ``inputs`` namespace so that
+    ``{{ inputs.key }}`` expressions in the agent's system prompt resolve correctly.
+    Then calls :func:`~sirenspec.core.agent_runner.execute_agent_node` with a timeout.
 
     :param node_id: The factory node's workflow ID (used in error messages).
     :param idx: Zero-based instance index (populates ``{{ index }}``).
@@ -122,6 +124,10 @@ async def run_factory_instance(
     loop_ctx = build_interpolation_context(user_input, base_working, item=item, index=idx, total=total)
 
     resolved_inputs = {key: resolve_template(val, loop_ctx) for key, val in node.inputs.items()}
+
+    # Makes {{ inputs.key }} resolvable in the agent system prompt.
+    loop_ctx.inputs.update(resolved_inputs)
+
     prompt = "\n".join(f"{key}: {val}" for key, val in resolved_inputs.items())
     redacted_prompt = "\n".join(
         f"{key}: {resolve_template(val, loop_ctx, redact_env=True)}" for key, val in node.inputs.items()

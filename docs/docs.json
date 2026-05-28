@@ -31,11 +31,15 @@
           },
           {
             "group": "Core Concepts",
-            "pages": ["assistant", "yaml-reference", "providers", "guardrails", "retry-policies", "swrm", "workflow-nodes", "interpolation"]
+            "pages": ["assistant", "yaml-reference", "providers", "guardrails", "retry-policies", "swrm", "factory-nodes", "workflow-nodes", "human-nodes", "budget", "interpolation"]
           },
           {
             "group": "Reference",
             "pages": ["cli-reference", "sdk", "tool-nodes"]
+          },
+          {
+            "group": "Resources",
+            "pages": ["changelog"]
           }
         ]
       },

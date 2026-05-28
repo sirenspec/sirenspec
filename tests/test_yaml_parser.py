@@ -100,3 +100,66 @@ nodes:
         f.write_text("- item1\n- item2\n")
         with pytest.raises(ValueError, match="mapping"):
             load_workflow(f)
+
+
+_MINIMAL_WORKFLOW = """\
+version: "0.1"
+agents:
+  a:
+    model: openai:gpt-4o-mini
+    system: "Hello."
+nodes:
+  n:
+    type: agent
+    agent: a
+    writes: output.result
+edges: []
+"""
+
+
+class TestEnvFileEarlyLoad:
+    def test_env_file_loaded_before_workflow_returned(self, tmp_path: Path) -> None:
+        env_file = tmp_path / ".env"
+        env_file.write_text("TEST_EARLY_LOAD_KEY=loaded_value\n")
+        yaml_content = _MINIMAL_WORKFLOW + f"env_file: {env_file.name}\n"
+        wf_file = tmp_path / "wf.yaml"
+        wf_file.write_text(yaml_content)
+
+        import os
+
+        os.environ.pop("TEST_EARLY_LOAD_KEY", None)
+        try:
+            load_workflow(wf_file)
+            assert os.environ["TEST_EARLY_LOAD_KEY"] == "loaded_value"
+        finally:
+            os.environ.pop("TEST_EARLY_LOAD_KEY", None)
+
+    def test_missing_env_file_raises(self, tmp_path: Path) -> None:
+        yaml_content = _MINIMAL_WORKFLOW + "env_file: missing.env\n"
+        wf_file = tmp_path / "wf.yaml"
+        wf_file.write_text(yaml_content)
+        with pytest.raises(FileNotFoundError, match="missing.env"):
+            load_workflow(wf_file)
+
+    def test_empty_shadow_emits_warning(self, tmp_path: Path) -> None:
+        import os
+        import warnings
+
+        from sirenspec.yaml.parser import EnvFileShadowWarning
+
+        env_file = tmp_path / ".env"
+        env_file.write_text("SHADOW_KEY=real_value\n")
+        yaml_content = _MINIMAL_WORKFLOW + f"env_file: {env_file.name}\n"
+        wf_file = tmp_path / "wf.yaml"
+        wf_file.write_text(yaml_content)
+
+        os.environ["SHADOW_KEY"] = ""
+        try:
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                load_workflow(wf_file)
+            shadow_warnings = [w for w in caught if issubclass(w.category, EnvFileShadowWarning)]
+            assert len(shadow_warnings) == 1
+            assert "SHADOW_KEY" in str(shadow_warnings[0].message)
+        finally:
+            os.environ.pop("SHADOW_KEY", None)

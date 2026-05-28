@@ -8,7 +8,7 @@ from collections.abc import Callable, Coroutine
 from typing import Any, TypeVar
 
 from sirenspec.core.models import RetryPolicy
-from sirenspec.exceptions import RetryExhaustedError
+from sirenspec.exceptions import GuardrailError, RetryExhaustedError
 
 
 def compute_delay(policy: RetryPolicy, attempt: int) -> float:
@@ -45,7 +45,9 @@ def error_matches_policy(exc: Exception, policy: RetryPolicy) -> bool:
     the ``status_code`` attribute on the exception (set by :class:`~sirenspec.exceptions.ProviderError`
     and compatible HTTP client exceptions).  The special string ``'network_error'`` matches
     any exception that does not have a numeric status code (i.e. connection-level failures
-    such as DNS errors or dropped TCP connections).
+    such as DNS errors or dropped TCP connections).  The special string ``'guardrail_violation'``
+    matches any :class:`~sirenspec.exceptions.GuardrailError` (including subclasses such as
+    :class:`~sirenspec.guardrails.base.GuardrailViolation`).
 
     :param exc: The exception raised by the provider call.
     :param policy: The retry policy specifying which errors trigger a retry.
@@ -57,7 +59,10 @@ def error_matches_policy(exc: Exception, policy: RetryPolicy) -> bool:
     status_code: int | None = getattr(exc, "status_code", None)
 
     for trigger in policy.on:
-        if trigger == "network_error":
+        if trigger == "guardrail_violation":
+            if isinstance(exc, GuardrailError):
+                return True
+        elif trigger == "network_error":
             # "network_error" matches any exception that has no HTTP status code.
             if status_code is None:
                 return True

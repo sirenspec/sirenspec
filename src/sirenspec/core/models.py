@@ -43,7 +43,16 @@ class RetryPolicy(BaseModel):
         default_factory=lambda: ["429", "network_error"],
         description=(
             "List of trigger conditions. HTTP status codes are written as strings (e.g. '429', '500'); "
-            "use 'network_error' to also retry on connection-level failures."
+            "use 'network_error' to also retry on connection-level failures; "
+            "use 'guardrail_violation' to retry when an output guardrail rejects the response."
+        ),
+    )
+    retry_on_guardrail: bool = Field(
+        default=False,
+        description=(
+            "When True, output guardrail violations trigger a retry rather than an immediate failure. "
+            "Equivalent to including 'guardrail_violation' in the ``on`` list and wrapping the output "
+            "guardrail check inside the retry loop."
         ),
     )
 

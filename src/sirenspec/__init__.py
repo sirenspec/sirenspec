@@ -1,6 +1,6 @@
 """SirenSpec — YAML-first agent orchestration SDK."""
 
-__version__ = "0.1.0"
+__version__ = "0.1.2"
 
 from sirenspec.core.events import NodeCompleteEvent, SummaryEvent
 from sirenspec.core.executor import execute, execute_streaming
@@ -17,6 +17,7 @@ from sirenspec.exceptions import (
     SwrmAgentError,
     ToolError,
     ValidationError,
+    WorkflowLintError,
 )
 from sirenspec.guardrails.base import Guardrail, GuardrailViolation, WorkflowGuardrail
 from sirenspec.providers.base import LLMProvider
@@ -55,4 +56,5 @@ __all__ = [
     "ValidationError",
     "SwrmAgentError",
     "ToolError",
+    "WorkflowLintError",
 ]

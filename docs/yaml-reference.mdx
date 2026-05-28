@@ -17,6 +17,7 @@ state: {}              # optional
 guardrails: []         # optional
 budget: {}             # optional
 defaults: {}           # optional
+env_file: ""           # optional
 ```
 
 ---
@@ -183,7 +184,7 @@ A `human` node pauses execution to collect a response from a human operator. The
 
 A factory node supports three mutually exclusive execution modes:
 
-**Mode 1: Agent + for_each** — one agent call per item in a runtime JSON list.
+**Mode 1: Agent + for_each** — one agent call per item in a runtime list (native list, JSON array, or fenced ` ```json `).
 
 ```yaml
 nodes:
@@ -211,7 +212,7 @@ nodes:
     writes: working.execute.outputs
 ```
 
-**Mode 3: Swrm + for_each** — one full swrm (parallel specialist agents with optional synthesis) per item in a runtime JSON list.
+**Mode 3: Swrm + for_each** — one full swrm (parallel specialist agents with optional synthesis) per item in a runtime list (native list, JSON array, or fenced ` ```json `).
 
 ```yaml
 nodes:
@@ -239,9 +240,9 @@ nodes:
 |-------|----------|------|-------------|
 | `agent` | One of `agent` or `swrm` | string | Named agent from the workflow's top-level agents map. Mutually exclusive with `swrm`. |
 | `swrm` | One of `agent` or `swrm` | object | Inline swrm spec (with `agents`, optional `synthesis`, optional `concurrency`). Executed per item. Mutually exclusive with `agent`. |
-| `for_each` | One of `for_each` or `swarm_size` | string | Template expression that resolves to a JSON list at runtime. |
+| `for_each` | One of `for_each` or `swarm_size` | string | Template expression resolved to a list at runtime. Accepts a native Python list, a plain JSON array string, or a fenced ` ```json ` block — no manual unwrapping of upstream tool or agent output needed. |
 | `swarm_size` | One of `for_each` or `swarm_size` | int or string | Static count or template expression for parallel agent instances. Only valid with `agent` mode. |
-| `inputs` | No | object | Template strings for each input. Supports `{{ item }}`, `{{ index }}`, and `{{ total }}`. |
+| `inputs` | No | object | Template strings for each input. Supports `{{ item }}`, `{{ index }}`, and `{{ total }}`. Each resolved value is also exposed to the spawned agent's prompt as `{{ inputs.<key> }}`, in addition to being joined into the user message. |
 | `concurrency` | No | integer | Max parallel worker instances. Default: `1`. |
 | `timeout_per_instance` | No | integer | Per-instance timeout in seconds. Default: `60`. |
 | `on_failure` | No | `"abort"` \| `"continue"` | Failure policy: `abort` (raise) or `continue` (skip). Default: `abort`. |
@@ -256,6 +257,8 @@ Inside `inputs:` templates, `agent` prompts, and swrm agent/synthesis prompts (w
 | `{{ item }}` | `for_each` mode only | any | Current list element. |
 | `{{ index }}` | All modes | int | Zero-based position in the list. |
 | `{{ total }}` | All modes | int | Total number of items in the list. |
+
+Each key under `inputs:` is additionally available in the spawned agent's system prompt as `{{ inputs.<key> }}` once resolved. For example, `inputs: { task: "{{ item }}" }` makes `{{ inputs.task }}` reference the current item inside the agent's prompt.
 
 #### Swrm Within Factory
 
@@ -326,8 +329,9 @@ The `when` field enables conditional branching. The expression is evaluated afte
 | `output` | object | The current `output` context (dot-access). |
 | `_budget` | object | Budget state from `cost_cap` guardrail (if active). Fields: `total_tokens` (int), `estimated_usd` (float or None). |
 | `true` / `false` / `null` | literals | YAML boolean/null literals. |
+| `len` / `bool` / `str` / `int` / `float` / `abs` / `min` / `max` | builtins | A small set of safe built-ins, e.g. `len(working.items) > 0`. |
 
-No Python built-ins or imports are available — the namespace is intentionally restricted.
+No imports are available and `__builtins__` is otherwise cleared, so arbitrary code execution is not possible — only the names above are in scope.
 
 ```yaml
 # Activate handle_refund only if the triage agent classified the intent as "refund"
@@ -379,6 +383,18 @@ state:
 ```
 
 State is merged into the corresponding `working` and `output` context buckets at startup. Nodes can read and overwrite these values during execution.
+
+---
+
+## `env_file`
+
+**Optional.** Path to a `.env` file (relative to the workflow file) loaded into `os.environ` before execution. This lets provider clients and `{{ env.* }}` templates pick up credentials without exporting them manually.
+
+```yaml
+env_file: ".env"
+```
+
+The file is loaded **eagerly inside `load_workflow()`** — before the `Workflow` object is returned — so provider clients that read `os.environ` at construction time see the values regardless of call order. Existing environment variables are never overwritten: if a key in the `.env` file is already present in `os.environ` as an empty string, an `EnvFileShadowWarning` is emitted (the existing empty value wins, which is usually a misconfiguration). A missing `env_file` raises `FileNotFoundError`.
 
 ---
 

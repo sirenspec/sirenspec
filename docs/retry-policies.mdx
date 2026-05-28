@@ -36,7 +36,8 @@ nodes:
 | `base_delay` | No | `1.0` | Delay in seconds before attempt 2. |
 | `max_delay` | No | `60.0` | Maximum delay regardless of backoff math. |
 | `jitter` | No | `false` | When `true`, adds a random ±20 % offset to each delay. |
-| `on` | No | `[429, network_error]` | Trigger conditions. Integers match HTTP status codes; `network_error` matches connection failures. |
+| `on` | No | `[429, network_error]` | Trigger conditions. Integers match HTTP status codes; `network_error` matches connection failures; `guardrail_violation` matches an output `GuardrailViolation`. |
+| `retry_on_guardrail` | No | `false` | When `true`, output guardrail checks run **inside** the retry loop so a `GuardrailViolation` re-runs the LLM call instead of failing immediately. |
 
 ### Backoff strategies
 
@@ -47,6 +48,27 @@ nodes:
 | `exponential` | `base_delay × 2^(attempt-1)` |
 
 All strategies are clamped to `max_delay`.
+
+---
+
+## Retrying on guardrail violations
+
+By default, retries only fire on transient transport errors (HTTP codes and network failures). Output guardrails — such as `schema` — run *after* the retry loop, so a malformed-but-successful response fails the run outright.
+
+Set `retry_on_guardrail: true` to fold output guardrail checks into the retry loop. A `GuardrailViolation` then counts as a retryable error and triggers another LLM call, giving the model additional chances to produce output that satisfies the guardrail. Add `guardrail_violation` to the `on` list to make the trigger explicit.
+
+```yaml
+nodes:
+  extract:
+    agent: extractor          # must return JSON matching a schema guardrail
+    writes: output.person
+    retry:
+      max_attempts: 3
+      retry_on_guardrail: true
+      on: [guardrail_violation]
+```
+
+This is the recommended pattern whenever an agent must satisfy a `schema` (or other output) guardrail — see [Guardrails](/guardrails).
 
 ---
 

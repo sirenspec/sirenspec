@@ -1,0 +1,194 @@
+---
+title: Factory Nodes
+description: Fan out work dynamically — spawn one agent or swrm instance per item in a runtime list, or run a fixed-size swarm of identical agents.
+---
+
+## Overview
+
+A `factory` node generates its instances **at runtime** rather than at authoring time. Where a [`swrm`](/swrm) node has a static, author-defined set of agents, a factory decides how many instances to spawn based on a list resolved during execution — one instance per item, or a fixed count. Every instance runs in parallel (bounded by `concurrency`), and all outputs are collected into a list written to a single context path.
+
+```yaml
+nodes:
+  execute:
+    type: factory
+    agent: worker
+    for_each: "{{ plan.output }}"   # resolved to a list at runtime
+    inputs:
+      task: "{{ item }}"
+    concurrency: 4
+    writes: working.execute.outputs
+```
+
+---
+
+## Execution modes
+
+A factory node has three mutually exclusive modes, determined by which fields you set.
+
+| Mode | Required fields | Spawns | Loop variables |
+|------|-----------------|--------|----------------|
+| **Agent + `for_each`** | `agent`, `for_each` | One agent call per list item | `{{ item }}`, `{{ index }}`, `{{ total }}` |
+| **Agent + `swarm_size`** | `agent`, `swarm_size` | N identical agent calls on the same input | `{{ index }}`, `{{ total }}` (no `{{ item }}`) |
+| **Swrm + `for_each`** | `swrm`, `for_each` | One full swrm (parallel specialists + optional synthesis) per list item | `{{ item }}`, `{{ index }}`, `{{ total }}` |
+
+### Mode 1 — Agent + `for_each`
+
+One call to a named agent for each element in a runtime list.
+
+```yaml
+nodes:
+  execute:
+    type: factory
+    agent: worker_agent
+    for_each: "{{ plan.output }}"
+    inputs:
+      task: "{{ item }}"
+      position: "{{ index }} of {{ total }}"
+    concurrency: 4
+    writes: working.execute.outputs
+```
+
+### Mode 2 — Agent + `swarm_size`
+
+N identical calls to the same agent on the same input — useful for sampling multiple candidate responses.
+
+```yaml
+nodes:
+  brainstorm:
+    type: factory
+    agent: ideator
+    swarm_size: 5
+    inputs:
+      position: "{{ index }} of {{ total }}"
+    concurrency: 5
+    writes: working.ideas
+```
+
+`swarm_size` accepts a static integer or a template expression (e.g. `"{{ inputs.count }}"`).
+
+### Mode 3 — Swrm + `for_each`
+
+One full [swrm](/swrm) — parallel specialist agents with an optional synthesis step — per list item.
+
+```yaml
+nodes:
+  grade_papers:
+    type: factory
+    swrm:
+      agents:
+        - id: editor
+          provider: openai
+          model: gpt-4o-mini
+          prompt: "Review: {{ item }}"
+        - id: grader
+          provider: anthropic
+          model: claude-haiku-4-5-20251001
+          prompt: "Grade this paper: {{ item }}"
+      synthesis:
+        provider: anthropic
+        model: claude-haiku-4-5-20251001
+        prompt: |
+          Editor: {{ grade_papers.agents.editor.output }}
+          Grader: {{ grade_papers.agents.grader.output }}
+          Return the final grade.
+    for_each: "{{ inputs.papers }}"
+    concurrency: 3
+    writes: working.grades
+```
+
+---
+
+## Node fields
+
+| Field | Required | Type | Default | Description |
+|-------|----------|------|---------|-------------|
+| `type` | Yes | `"factory"` | — | Node type discriminator. |
+| `agent` | One of `agent` / `swrm` | string | — | Named agent from the workflow's top-level `agents` map. Mutually exclusive with `swrm`. |
+| `swrm` | One of `agent` / `swrm` | object | — | Inline swrm spec (`agents`, optional `synthesis`, optional `concurrency`) executed per item. Mutually exclusive with `agent`. |
+| `for_each` | One of `for_each` / `swarm_size` | string | — | Template expression resolved to a list at runtime. Accepts a native Python list, a JSON array string, or a fenced ` ```json ` block. Mutually exclusive with `swarm_size`. |
+| `swarm_size` | One of `for_each` / `swarm_size` | int or string | — | Static count or template expression for parallel agent instances. Only valid in `agent` mode. |
+| `inputs` | No | object | `{}` | Template strings for each input. Supports `{{ item }}`, `{{ index }}`, `{{ total }}`. Each resolved key is also exposed to the spawned agent's prompt as `{{ inputs.<key> }}`. |
+| `concurrency` | No | integer | `1` | Maximum parallel worker instances. |
+| `timeout_per_instance` | No | integer | `60` | Per-instance timeout in seconds. |
+| `on_failure` | No | `"abort"` \| `"continue"` | `"abort"` | `abort` raises `FactoryNodeError`; `continue` skips the failed instance and keeps the rest. |
+| `writes` | Yes | string | — | Dot-notation path where the list of instance outputs is stored. |
+
+---
+
+## Loop variables
+
+Inside `inputs:` templates, `agent` prompts, and swrm agent/synthesis prompts, three special variables are available:
+
+| Variable | Availability | Type | Description |
+|----------|--------------|------|-------------|
+| `{{ item }}` | `for_each` mode only | any | The current list element. |
+| `{{ index }}` | All modes | int | Zero-based position in the list. |
+| `{{ total }}` | All modes | int | Total number of items. |
+
+Each key under `inputs:` is additionally available in the spawned agent's system prompt as `{{ inputs.<key> }}` once resolved — so `inputs: { task: "{{ item }}" }` makes `{{ inputs.task }}` reference the current item inside the agent's prompt.
+
+<Tip>
+When `for_each` points at an LLM output that may emit prose, an empty string, or a fenced
+` ```json ` block instead of a clean array, wrap it with `| json_or_default('[]')` so a bad
+response falls back to an empty list rather than failing the run. See [Interpolation](/interpolation).
+</Tip>
+
+---
+
+## Output shape
+
+All instance outputs are collected, in list order, and written to the `writes` path:
+
+```yaml
+writes: working.execute.outputs
+# working.execute.outputs == ["result for item 0", "result for item 1", ...]
+```
+
+In Swrm + `for_each` mode, each entry is that item's swrm result — the synthesis output when synthesis is defined, otherwise the list of agent outputs.
+
+Reference the collected list downstream like any other context value:
+
+```yaml
+nodes:
+  aggregate:
+    agent: summarizer        # system: "Summarize these results: {{ execute.output }}"
+    writes: output.report
+```
+
+---
+
+## Failure handling
+
+| `on_failure` | Behaviour |
+|--------------|-----------|
+| `abort` (default) | The first failing instance raises `FactoryNodeError` and the workflow stops. |
+| `continue` | The failing instance is recorded in the trace and skipped; the remaining instances still contribute to the output list. |
+
+`FactoryNodeError` is importable from `sirenspec.exceptions`:
+
+```python
+from sirenspec.exceptions import FactoryNodeError
+```
+
+---
+
+## When to use a factory
+
+**Use a factory when:**
+- The number of work items is unknown until runtime (e.g. a planner agent emits a task list).
+- You want N independent samples of the same prompt (`swarm_size`).
+- Each item needs a full committee-of-experts review (Swrm + `for_each`).
+
+**Use something else when:**
+- The set of agents is fixed and known up front — use [`swrm`](/swrm).
+- Items must share intermediate state or run in sequence — use ordinary nodes with [edges](/yaml-reference#edges).
+
+---
+
+## Cookbook recipes
+
+- [Changelog Annotator](/cookbook/changelog-annotator/README) — agent + `for_each`
+- [GitHub Issues Triage](/cookbook/github-issues-triage/README) — agent + `for_each`
+- [Grading Factory](/cookbook/grading-factory/README) — swrm + `for_each`
+
+See the [YAML Reference](/yaml-reference#factory-node-fields) for the full field-by-field listing.

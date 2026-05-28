@@ -42,17 +42,23 @@ All tool nodes share these top-level fields.
 
 ### `output_key` and context storage
 
-Tool output is stored under `working.<node_id>.<output_key>`. For example, a node named `fetch_diff` with `output_key: diff` writes to `working.fetch_diff.diff`. Downstream agent nodes can reference this value in their system prompts using Jinja-style template syntax:
+Tool output is stored under the node ID and its `output_key`. For example, a node named `fetch_diff` with `output_key: diff` exposes its result as `{{ fetch_diff.diff }}`. Downstream agent nodes reference this value in their system prompts using Jinja-style template syntax:
 
 ```yaml
 agents:
   summarizer:
     system: |
       Summarize the following diff:
-      {{ working.fetch_diff.diff }}
+      {{ fetch_diff.diff }}
 ```
 
-If `output_key` is omitted it defaults to `output`, so the context path becomes `working.<node_id>.output`.
+If `output_key` is omitted it defaults to `output`, so the reference becomes `{{ <node_id>.output }}`.
+
+<Note>
+Reference upstream nodes by their ID (`{{ fetch_diff.diff }}`), **not** via the
+`working` namespace. The load-time linter rejects `{{ working.<node_id>.* }}`.
+Reserve `working.*` for custom paths you write to or seed in `state`.
+</Note>
 
 ---
 
@@ -109,7 +115,7 @@ nodes:
       module: mypackage.tools
       function: parse_diff
       args:
-        raw: "{{ working.fetch_diff.diff }}"
+        raw: "{{ fetch_diff.diff }}"
     output_key: parsed
 ```
 

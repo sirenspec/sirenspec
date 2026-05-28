@@ -21,6 +21,7 @@ from sirenspec.core.models import (
     HttpToolConfig,
     HumanNode,
     OnFailurePolicy,
+    PythonToolConfig,
     RetryPolicy,
     SwrmNode,
     ToolNode,
@@ -40,29 +41,61 @@ from sirenspec.guardrails.registry import build_guardrails
 logger = logging.getLogger(__name__)
 
 
-def interpolate_tool_config(node: ToolNode, ctx: InterpolationContext) -> ToolNode:
-    """Return a copy of *node* with template strings in its HTTP config resolved.
+def interpolate_value(value: Any, ctx: InterpolationContext) -> Any:
+    """Recursively resolve template strings inside an arbitrary JSON-like value.
 
-    Only :class:`~sirenspec.core.models.HttpToolConfig` fields are interpolated
-    (``url``, ``headers``, ``body``). Python tool configs pass through unchanged.
+    Strings are passed through :func:`resolve_template`; dicts and lists are
+    walked recursively; all other types are returned unchanged.
+
+    :param value: A string, dict, list, or leaf scalar that may contain
+        ``{{ expr }}`` placeholders.
+    :param ctx: The interpolation context at the time the node executes.
+    :returns: The same structure with every string resolved.
+    """
+    if isinstance(value, str):
+        return resolve_template(value, ctx)
+    if isinstance(value, dict):
+        return {k: interpolate_value(v, ctx) for k, v in value.items()}
+    if isinstance(value, list):
+        return [interpolate_value(item, ctx) for item in value]
+    return value
+
+
+def interpolate_tool_config(node: ToolNode, ctx: InterpolationContext) -> ToolNode:
+    """Return a copy of *node* with template strings in its config resolved.
+
+    For :class:`~sirenspec.core.models.HttpToolConfig`, ``url``, ``headers``, and
+    ``body`` are resolved. For :class:`~sirenspec.core.models.PythonToolConfig`,
+    ``module``, ``function``, and every string value inside ``args`` (recursively
+    through nested dicts and lists) are resolved.
 
     :param node: The tool node whose config may contain ``{{ expr }}`` placeholders.
     :param ctx: The interpolation context at the time the node executes.
     :returns: A new ToolNode with all resolvable placeholders replaced.
     """
-    if not isinstance(node.config, HttpToolConfig):
+    if isinstance(node.config, HttpToolConfig):
+        cfg = node.config
+        interpolated_url = resolve_template(cfg.url, ctx)
+        interpolated_headers = {k: resolve_template(v, ctx) for k, v in cfg.headers.items()} if cfg.headers else None
+        interpolated_body = resolve_template(cfg.body, ctx) if cfg.body is not None else None
+        new_config: HttpToolConfig | PythonToolConfig = HttpToolConfig(
+            url=interpolated_url,
+            method=cfg.method,
+            headers=interpolated_headers,
+            body=interpolated_body,
+            timeout=cfg.timeout,
+        )
+    elif isinstance(node.config, PythonToolConfig):
+        py_cfg = node.config
+        interpolated_args = interpolate_value(py_cfg.args, ctx) if py_cfg.args is not None else None
+        new_config = PythonToolConfig(
+            module=resolve_template(py_cfg.module, ctx),
+            function=resolve_template(py_cfg.function, ctx),
+            args=interpolated_args,
+        )
+    else:
         return node
-    cfg = node.config
-    interpolated_url = resolve_template(cfg.url, ctx)
-    interpolated_headers = {k: resolve_template(v, ctx) for k, v in cfg.headers.items()} if cfg.headers else None
-    interpolated_body = resolve_template(cfg.body, ctx) if cfg.body is not None else None
-    new_config = HttpToolConfig(
-        url=interpolated_url,
-        method=cfg.method,
-        headers=interpolated_headers,
-        body=interpolated_body,
-        timeout=cfg.timeout,
-    )
+
     return ToolNode(
         type=node.type,
         tool=node.tool,
@@ -117,8 +150,9 @@ def evaluate_when_condition(condition: str, context: WorkflowContext) -> bool:
     * ``working`` — a :class:`DotDict` wrapping ``context.working``
     * ``output``  — a :class:`DotDict` wrapping ``context.output``
     * ``true`` / ``false`` / ``null`` — YAML boolean/null literals
+    * ``len`` / ``bool`` / ``str`` / ``int`` / ``float`` / ``abs`` / ``min`` / ``max`` — safe built-ins
 
-    No built-ins are available (``__builtins__`` is cleared), so arbitrary
+    No other built-ins are available (``__builtins__`` is cleared), so arbitrary
     imports, file access, or other side-effects cannot occur.
 
     :param condition: A Python expression string, e.g. ``working.triage.intent == "refund"``.
@@ -132,6 +166,14 @@ def evaluate_when_condition(condition: str, context: WorkflowContext) -> bool:
             "true": True,
             "false": False,
             "null": None,
+            "len": len,
+            "bool": bool,
+            "str": str,
+            "int": int,
+            "float": float,
+            "abs": abs,
+            "min": min,
+            "max": max,
         }
         result = eval(condition, {"__builtins__": {}}, namespace)  # noqa: S307
         return bool(result)
@@ -977,6 +1019,7 @@ async def execute_streaming(
                 node_id=node_id,
                 node_type=derive_node_type(workflow.nodes[node_id]),
                 status="skipped",
+                skip_reason="branch_not_taken",
             )
             continue
 
@@ -987,6 +1030,7 @@ async def execute_streaming(
                 node_id=node_id,
                 node_type=derive_node_type(node),
                 status="skipped",
+                skip_reason="budget_exceeded",
                 error="budget exceeded — remaining nodes skipped",
             )
             continue

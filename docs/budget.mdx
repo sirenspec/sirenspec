@@ -1,0 +1,118 @@
+---
+title: Budget & Cost Control
+description: Cap a workflow run's total tokens, estimated USD spend, and wall-clock time with a declarative budget block.
+---
+
+## Overview
+
+The workflow-level `budget:` block sets cumulative ceilings on a run. The executor checks the running totals **after every node** and enforces the limits you declare. At least one of `max_tokens`, `max_cost_usd`, or `max_duration_s` must be set — an empty `budget:` block is rejected at validation time.
+
+```yaml
+budget:
+  max_tokens: 50000        # total tokens across all nodes
+  max_cost_usd: 5.00       # estimated USD ceiling for the whole run
+  max_duration_s: 300      # wall-clock cap for the whole run
+  on_exceeded: abort       # abort | warn | skip_remaining
+```
+
+This complements the per-node [`max_tokens_per_call`](/yaml-reference#per-node-max_tokens_per_call) ceiling: `max_tokens_per_call` bounds a single response, while `budget:` bounds the whole run.
+
+---
+
+## Fields
+
+| Field | Required | Type | Default | Description |
+|-------|----------|------|---------|-------------|
+| `max_tokens` | One of the three | integer ≥ 1 | none | Maximum total tokens across all nodes in a run. |
+| `max_cost_usd` | One of the three | number > 0 | none | Maximum estimated USD spend. Falls back to unenforced for models without pricing entries (e.g. Ollama/local models, where the estimate is `None`). |
+| `max_duration_s` | One of the three | number > 0 | none | Maximum wall-clock seconds for the full run. |
+| `on_exceeded` | No | `"abort"` \| `"warn"` \| `"skip_remaining"` | `"abort"` | Action when any ceiling is hit (see below). |
+
+---
+
+## `on_exceeded` actions
+
+| Action | Behaviour when a ceiling is hit |
+|--------|----------------------------------|
+| `abort` (default) | Raises `BudgetExceededError` and stops the run immediately. |
+| `warn` | Logs a structured warning and lets execution continue. |
+| `skip_remaining` | Marks all remaining nodes as skipped (no further LLM calls) and finishes with a successful status. Skipped nodes carry `skip_reason: "budget_exceeded"` in the trace. |
+
+`BudgetExceededError` is exported from the top-level package and carries the violation reason, tokens used, and the USD estimate at the point of the violation:
+
+```python
+from sirenspec import BudgetExceededError
+
+try:
+    trace = await execute(workflow, user_input)
+except BudgetExceededError as exc:
+    print(f"{exc} — {exc.tokens_used} tokens, ${exc.estimated_usd}")
+```
+
+---
+
+## Cost estimation
+
+USD estimates come from a bundled LiteLLM pricing snapshot, refreshed from a local cache when available. Models without a pricing entry (Ollama and other local backends) report `estimated_usd: null`, and a `max_cost_usd` ceiling is effectively unenforced for those models — use `max_tokens` or `max_duration_s` instead when running locally.
+
+---
+
+## Budget status in the trace
+
+When a `budget:` block is configured, the trace `summary` includes a `budget` object:
+
+```json
+{
+  "summary": {
+    "total_tokens": 1832,
+    "budget": {
+      "max_tokens": 50000,
+      "max_cost_usd": 5.0,
+      "max_duration_s": 300,
+      "on_exceeded": "abort",
+      "tokens_used": 1832,
+      "estimated_usd": 0.0021,
+      "duration_s": 3.514,
+      "exceeded": false,
+      "violations": [],
+      "skipped_remaining": false
+    }
+  }
+}
+```
+
+---
+
+## Reading budget state in `when:` expressions
+
+Budget state is also exposed to edge conditions as `_budget`, so you can route around expensive work as the run approaches its ceiling:
+
+```yaml
+edges:
+  - from: initial
+    to: expensive_processing
+    when: _budget.estimated_usd < 2.0
+```
+
+`_budget` exposes `total_tokens` (int) and `estimated_usd` (float or `None`). See [YAML Reference → when expressions](/yaml-reference#when-expressions).
+
+---
+
+## When to use a budget
+
+**Use a budget when:**
+- Running untrusted or open-ended input where token usage is hard to predict.
+- Enforcing a hard cost ceiling per run in production.
+- Bounding wall-clock time for latency-sensitive integrations.
+
+**Pair it with:**
+- Per-node [`max_tokens_per_call`](/yaml-reference#per-node-max_tokens_per_call) to bound individual responses.
+- The [`cost_cap` guardrail](/guardrails#cost_cap) for agent-level enforcement.
+
+---
+
+## Cookbook recipe
+
+- [Budget Guarded](/cookbook/budget-guarded/README) — a workflow that aborts when its USD ceiling is reached.
+
+See the [YAML Reference](/yaml-reference#budget) for the full field listing.

@@ -16,6 +16,11 @@ class NodeCompleteEvent:
     :param output: The node's output value (string, dict, or list).  ``None`` for skipped nodes.
     :param writes: The context path written by this node (agent nodes only).
     :param status: Execution result: ``"success"``, ``"skipped"``, or ``"failed"``.
+    :param skip_reason: Machine-readable reason for a skipped node.
+        ``"branch_not_taken"`` — the node never became active because no edge's
+        ``when:`` condition selected it (normal conditional-branch behaviour).
+        ``"budget_exceeded"`` — the workflow budget was exhausted and remaining
+        nodes were bypassed.  ``None`` for non-skipped nodes.
     :param error: Human-readable error message when ``status="failed"``.
     :param tokens: Total tokens consumed by this node (0 for tool and skipped nodes).
     :param agents: Per-agent execution traces for ``node_type="swrm"`` nodes only.
@@ -34,6 +39,7 @@ class NodeCompleteEvent:
     output: Any = field(default=None)
     writes: str = field(default="")
     status: Literal["success", "skipped", "failed"] = field(default="success")
+    skip_reason: Literal["branch_not_taken", "budget_exceeded"] | None = field(default=None)
     error: str | None = field(default=None)
     tokens: int = field(default=0)
     agents: list[dict[str, Any]] | None = field(default=None)

@@ -26,7 +26,7 @@ agents:
 |-------|----------|-------------|
 | `model` | Yes | Provider URI — `provider:model` format (e.g. `openai:gpt-4o-mini`). |
 | `system` | Yes | System prompt sent to the model on every call. |
-| `guardrails` | No | List of guardrail names. Overrides workflow-level guardrails for this agent only. |
+| `guardrails` | No | List of guardrail names (e.g. `injection`) or `{name, config}` objects for configurable guardrails (`length`, `pii`, `schema`, `cost_cap`). Replaces — does not merge with — the workflow-level list for this agent only. |
 
 ## Model URI Format
 
@@ -80,7 +80,25 @@ agents:
     # inherits workflow-level guardrails: [injection, length]
 ```
 
-An empty list (`[]`) disables all guardrails for that agent. See [Guardrails](/guardrails) for the available options.
+An empty list (`[]`) disables all guardrails for that agent. The agent-level list **replaces** the workflow-level list rather than merging with it.
+
+Configurable guardrails use the `{name, config}` form, exactly as at the workflow level:
+
+```yaml
+agents:
+  extractor:
+    model: "openai:gpt-4o-mini"
+    system: "Extract the person as JSON."
+    guardrails:
+      - injection
+      - name: schema
+        config:
+          schema:
+            type: "object"
+            required: ["name", "age"]
+```
+
+See [Guardrails](/guardrails) for the available options and their config keys.
 
 ## Multiple Agents in One Workflow
 
