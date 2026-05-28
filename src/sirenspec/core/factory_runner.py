@@ -125,9 +125,7 @@ async def run_factory_instance(
 
     resolved_inputs = {key: resolve_template(val, loop_ctx) for key, val in node.inputs.items()}
 
-    # Expose resolved inputs in the `inputs` namespace so {{ inputs.key }} works
-    # inside the agent's system prompt (e.g. {{ inputs.step }} when the factory
-    # declares `inputs: { step: "{{ item }}" }`).
+    # Makes {{ inputs.key }} resolvable in the agent system prompt.
     loop_ctx.inputs.update(resolved_inputs)
 
     prompt = "\n".join(f"{key}: {val}" for key, val in resolved_inputs.items())
