@@ -270,7 +270,9 @@ def render_node_panel(event: NodeCompleteEvent, console: Console, box_style: Box
         return
 
     if event.status == "skipped":
-        console.print(f"  [dim](skipped) {event.node_id}[/dim]")
+        if event.skip_reason == "branch_not_taken":
+            return
+        console.print(f"  [dim](skipped — {event.skip_reason or 'condition'}) {event.node_id}[/dim]")
         return
 
     content_text = ""

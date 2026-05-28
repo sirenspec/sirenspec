@@ -1010,6 +1010,7 @@ async def execute_streaming(
                 node_id=node_id,
                 node_type=derive_node_type(workflow.nodes[node_id]),
                 status="skipped",
+                skip_reason="branch_not_taken",
             )
             continue
 
@@ -1020,6 +1021,7 @@ async def execute_streaming(
                 node_id=node_id,
                 node_type=derive_node_type(node),
                 status="skipped",
+                skip_reason="budget_exceeded",
                 error="budget exceeded — remaining nodes skipped",
             )
             continue
