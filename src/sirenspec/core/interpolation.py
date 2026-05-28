@@ -184,11 +184,11 @@ def resolve_expression(
     if default_value is not None and resolved == "":
         return default_value
 
-    if use_json_or_default:
+    if use_json_or_default and default_value is not None:
         try:
             json.loads(resolved)
         except json.JSONDecodeError:
-            return default_value  # type: ignore[return-value]  # default_value is always str here
+            return default_value
 
     return resolved
 
