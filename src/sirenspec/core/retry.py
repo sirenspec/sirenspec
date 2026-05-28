@@ -8,7 +8,7 @@ from collections.abc import Callable, Coroutine
 from typing import Any, TypeVar
 
 from sirenspec.core.models import RetryPolicy
-from sirenspec.exceptions import RetryExhaustedError
+from sirenspec.exceptions import GuardrailError, RetryExhaustedError
 
 
 def compute_delay(policy: RetryPolicy, attempt: int) -> float:
@@ -57,7 +57,10 @@ def error_matches_policy(exc: Exception, policy: RetryPolicy) -> bool:
     status_code: int | None = getattr(exc, "status_code", None)
 
     for trigger in policy.on:
-        if trigger == "network_error":
+        if trigger == "guardrail_violation":
+            if isinstance(exc, GuardrailError):
+                return True
+        elif trigger == "network_error":
             # "network_error" matches any exception that has no HTTP status code.
             if status_code is None:
                 return True

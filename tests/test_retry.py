@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from sirenspec.core.agent_runner import _policy_with_guardrail_trigger, _run_output_guardrails, execute_agent_node
 from sirenspec.core.executor import execute
 from sirenspec.core.models import (
     AgentDefinition,
@@ -20,6 +21,7 @@ from sirenspec.core.models import (
 from sirenspec.core.retry import compute_delay, run_with_retry
 from sirenspec.core.usage import TokenUsage
 from sirenspec.exceptions import ProviderError, RetryExhaustedError
+from sirenspec.guardrails.base import GuardrailViolation
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -434,3 +436,177 @@ class TestExecutorRetryIntegration:
         assert trace["summary"]["status"] == "failed"
         # Only 1 attempt because node-level max_attempts=1
         assert call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# retry_on_guardrail
+# ---------------------------------------------------------------------------
+
+
+class TestPolicyWithGuardrailTrigger:
+    def test_adds_guardrail_violation_when_absent(self) -> None:
+        policy = RetryPolicy(max_attempts=3, on=["429"])
+        updated = _policy_with_guardrail_trigger(policy)
+        assert "guardrail_violation" in updated.on
+
+    def test_other_triggers_preserved(self) -> None:
+        policy = RetryPolicy(max_attempts=3, on=["429", "network_error"])
+        updated = _policy_with_guardrail_trigger(policy)
+        assert "429" in updated.on
+        assert "network_error" in updated.on
+
+    def test_idempotent_when_already_present(self) -> None:
+        policy = RetryPolicy(max_attempts=3, on=["guardrail_violation"])
+        result = _policy_with_guardrail_trigger(policy)
+        assert result is policy
+
+    def test_original_policy_unchanged(self) -> None:
+        policy = RetryPolicy(max_attempts=3, on=["429"])
+        _policy_with_guardrail_trigger(policy)
+        assert "guardrail_violation" not in policy.on
+
+
+class TestRunOutputGuardrails:
+    def test_passes_text_through_when_no_violation(self) -> None:
+        from sirenspec.guardrails.base import Guardrail
+
+        class PassthroughGuardrail(Guardrail):
+            def check_input(self, text: str) -> str:
+                return text
+
+            def check_output(self, text: str) -> str:
+                return text
+
+        passed: list[str] = []
+        result = _run_output_guardrails("hello", [PassthroughGuardrail()], passed)
+        assert result == "hello"
+        assert len(passed) == 1
+
+    def test_raises_on_guardrail_violation(self) -> None:
+        from sirenspec.guardrails.base import Guardrail
+
+        class RejectingGuardrail(Guardrail):
+            def check_input(self, text: str) -> str:
+                return text
+
+            def check_output(self, text: str) -> str:
+                raise GuardrailViolation("rejected")
+
+        with pytest.raises(GuardrailViolation):
+            _run_output_guardrails("hello", [RejectingGuardrail()], [])
+
+
+class TestRetryOnGuardrail:
+    @pytest.mark.asyncio
+    async def test_guardrail_violation_triggers_retry(self) -> None:
+        """Output guardrail failure retries the LLM call when retry_on_guardrail=True."""
+        call_count = 0
+
+        async def _complete(messages: list[dict]) -> str:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return "BAD"
+            return "GOOD"
+
+        mock_provider = MagicMock()
+        mock_provider.complete = _complete
+        mock_provider.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=5)
+
+        from sirenspec.guardrails.base import Guardrail
+
+        class RejectBadGuardrail(Guardrail):
+            def check_input(self, text: str) -> str:
+                return text
+
+            def check_output(self, text: str) -> str:
+                if text == "BAD":
+                    raise GuardrailViolation("bad output")
+                return text
+
+        with (
+            patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider),
+            patch("sirenspec.core.agent_runner.build_guardrails", return_value=[RejectBadGuardrail()]),
+        ):
+            policy = RetryPolicy(max_attempts=3, backoff="constant", base_delay=0.0, retry_on_guardrail=True)
+            result = await execute_agent_node(
+                node_id="n1",
+                model_uri="openai:gpt-4o-mini",
+                system_prompt="sys",
+                user_input="hi",
+                guardrail_names=None,
+                retry_policy=policy,
+                streaming=False,
+            )
+
+        assert result.output == "GOOD"
+        assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_guardrail_violation_not_retried_by_default(self) -> None:
+        """Without retry_on_guardrail, a guardrail violation immediately fails."""
+        from sirenspec.guardrails.base import Guardrail
+
+        class AlwaysRejectGuardrail(Guardrail):
+            def check_input(self, text: str) -> str:
+                return text
+
+            def check_output(self, text: str) -> str:
+                raise GuardrailViolation("always rejects")
+
+        mock_provider = MagicMock()
+        mock_provider.complete = AsyncMock(return_value="response")
+        mock_provider.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=5)
+
+        with (
+            patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider),
+            patch("sirenspec.core.agent_runner.build_guardrails", return_value=[AlwaysRejectGuardrail()]),
+        ):
+            policy = RetryPolicy(max_attempts=3, backoff="constant", base_delay=0.0)
+            with pytest.raises(GuardrailViolation):
+                await execute_agent_node(
+                    node_id="n1",
+                    model_uri="openai:gpt-4o-mini",
+                    system_prompt="sys",
+                    user_input="hi",
+                    guardrail_names=None,
+                    retry_policy=policy,
+                    streaming=False,
+                )
+
+        assert mock_provider.complete.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_exhausted_retries_raise_retry_exhausted_error(self) -> None:
+        """RetryExhaustedError is raised when all guardrail-triggered retries are used up."""
+        from sirenspec.guardrails.base import Guardrail
+
+        class AlwaysRejectGuardrail(Guardrail):
+            def check_input(self, text: str) -> str:
+                return text
+
+            def check_output(self, text: str) -> str:
+                raise GuardrailViolation("always rejects")
+
+        mock_provider = MagicMock()
+        mock_provider.complete = AsyncMock(return_value="response")
+        mock_provider.last_token_usage = TokenUsage(prompt_tokens=0, completion_tokens=5)
+
+        with (
+            patch("sirenspec.core.agent_runner.resolve_provider", return_value=mock_provider),
+            patch("sirenspec.core.agent_runner.build_guardrails", return_value=[AlwaysRejectGuardrail()]),
+        ):
+            policy = RetryPolicy(max_attempts=2, backoff="constant", base_delay=0.0, retry_on_guardrail=True)
+            with pytest.raises(RetryExhaustedError) as exc_info:
+                await execute_agent_node(
+                    node_id="n1",
+                    model_uri="openai:gpt-4o-mini",
+                    system_prompt="sys",
+                    user_input="hi",
+                    guardrail_names=None,
+                    retry_policy=policy,
+                    streaming=False,
+                )
+
+        assert exc_info.value.attempts == 2
+        assert mock_provider.complete.call_count == 2

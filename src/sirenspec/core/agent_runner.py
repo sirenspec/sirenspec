@@ -10,6 +10,7 @@ from typing import Any
 from sirenspec.core.models import RetryPolicy
 from sirenspec.core.retry import run_with_retry
 from sirenspec.core.usage import TokenUsage
+from sirenspec.guardrails.base import Guardrail
 from sirenspec.guardrails.registry import build_guardrails
 from sirenspec.providers.base import StreamingLLMProvider
 from sirenspec.providers.registry import resolve_provider
@@ -31,6 +32,36 @@ class AgentRunResult:
     duration_ms: float
     guardrails_passed: list[str] = field(default_factory=list)
     retry_attempts: list[dict[str, Any]] = field(default_factory=list)
+
+
+def _policy_with_guardrail_trigger(policy: RetryPolicy) -> RetryPolicy:
+    """Return a copy of *policy* with ``'guardrail_violation'`` appended to ``on`` if absent.
+
+    Used internally by :func:`execute_agent_node` when ``retry_on_guardrail`` is ``True``
+    so that the retry engine treats :class:`~sirenspec.exceptions.GuardrailError` as a
+    retryable condition.
+
+    :param policy: The original :class:`~sirenspec.core.models.RetryPolicy`.
+    :returns: A new :class:`~sirenspec.core.models.RetryPolicy` with ``'guardrail_violation'`` in ``on``.
+    """
+    if "guardrail_violation" in policy.on:
+        return policy
+    return policy.model_copy(update={"on": [*policy.on, "guardrail_violation"]})
+
+
+def _run_output_guardrails(text: str, guardrails: list[Guardrail], guardrails_passed: list[str]) -> str:
+    """Run output guardrails against *text*, recording each pass in *guardrails_passed*.
+
+    :param text: The raw provider output to check.
+    :param guardrails: Ordered list of guardrail instances to apply.
+    :param guardrails_passed: Mutable list; each passed check name is appended in place.
+    :raises GuardrailViolation: If any guardrail rejects the output.
+    :returns: The (possibly transformed) output text after all guardrails pass.
+    """
+    for g in guardrails:
+        text = g.check_output(text)
+        guardrails_passed.append(f"{type(g).__name__}.check_output")
+    return text
 
 
 async def collect_stream(
@@ -96,7 +127,7 @@ async def execute_agent_node(
         Ignored when *streaming* is ``False`` or the provider does not support streaming.
     :param max_tokens: Optional per-call ceiling on completion tokens.  Forwarded to the
         provider as the ``max_tokens`` API parameter so the LLM truncates its own response.
-    :raises GuardrailViolation: If any guardrail rejects the input or output.
+    :raises GuardrailViolation: If any guardrail rejects the input or output (and retry is not configured).
     :raises RetryExhaustedError: If the provider fails on all retry attempts.
     :returns: :class:`AgentRunResult` with output, token usage, timing, and audit trail.
     """
@@ -131,23 +162,35 @@ async def execute_agent_node(
 
     use_streaming = streaming and stream_callback is not None and isinstance(provider, StreamingLLMProvider)
 
+    effective_policy = _policy_with_guardrail_trigger(retry_policy) if retry_policy.retry_on_guardrail else retry_policy
+
     if use_streaming:
         effective_callback: Callable[[str], None] = stream_callback if stream_callback is not None else lambda _: None
 
         async def stream_call() -> str:
-            return await collect_stream(provider, messages, effective_callback, max_tokens=max_tokens)
+            raw = await collect_stream(provider, messages, effective_callback, max_tokens=max_tokens)
+            return (
+                _run_output_guardrails(raw, guardrails, guardrails_passed) if retry_policy.retry_on_guardrail else raw
+            )
 
-        output = await run_with_retry(node_id=node_id, policy=retry_policy, call=stream_call, on_attempt=log_retry)
+        output = await run_with_retry(node_id=node_id, policy=effective_policy, call=stream_call, on_attempt=log_retry)
     else:
 
         async def complete_call() -> str:
             # Only forward max_tokens when set so providers and mocks that pre-date the
             # kwarg (e.g. user-defined LLMProvider subclasses without the parameter) keep working.
-            if max_tokens is None:
-                return await provider.complete(messages)
-            return await provider.complete(messages, max_tokens=max_tokens)
+            raw = (
+                await provider.complete(messages)
+                if max_tokens is None
+                else await provider.complete(messages, max_tokens=max_tokens)
+            )
+            return (
+                _run_output_guardrails(raw, guardrails, guardrails_passed) if retry_policy.retry_on_guardrail else raw
+            )
 
-        output = await run_with_retry(node_id=node_id, policy=retry_policy, call=complete_call, on_attempt=log_retry)
+        output = await run_with_retry(
+            node_id=node_id, policy=effective_policy, call=complete_call, on_attempt=log_retry
+        )
 
     # Read token usage after the retry loop completes; the provider updates
     # last_token_usage after every successful call, so this always reflects the
@@ -155,11 +198,10 @@ async def execute_agent_node(
     token_usage = provider.last_token_usage
     duration_ms = (time.monotonic() - start) * 1000
 
-    # Output guardrails run after a successful provider response. They may raise
-    # GuardrailViolation (e.g. length exceeded) — this is NOT retried.
-    for g in guardrails:
-        output = g.check_output(output)
-        guardrails_passed.append(f"{type(g).__name__}.check_output")
+    if not retry_policy.retry_on_guardrail:
+        for g in guardrails:
+            output = g.check_output(output)
+            guardrails_passed.append(f"{type(g).__name__}.check_output")
 
     return AgentRunResult(
         output=output,
