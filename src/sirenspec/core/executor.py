@@ -150,8 +150,9 @@ def evaluate_when_condition(condition: str, context: WorkflowContext) -> bool:
     * ``working`` — a :class:`DotDict` wrapping ``context.working``
     * ``output``  — a :class:`DotDict` wrapping ``context.output``
     * ``true`` / ``false`` / ``null`` — YAML boolean/null literals
+    * ``len`` / ``bool`` / ``str`` / ``int`` / ``float`` / ``abs`` / ``min`` / ``max`` — safe built-ins
 
-    No built-ins are available (``__builtins__`` is cleared), so arbitrary
+    No other built-ins are available (``__builtins__`` is cleared), so arbitrary
     imports, file access, or other side-effects cannot occur.
 
     :param condition: A Python expression string, e.g. ``working.triage.intent == "refund"``.
@@ -165,6 +166,14 @@ def evaluate_when_condition(condition: str, context: WorkflowContext) -> bool:
             "true": True,
             "false": False,
             "null": None,
+            "len": len,
+            "bool": bool,
+            "str": str,
+            "int": int,
+            "float": float,
+            "abs": abs,
+            "min": min,
+            "max": max,
         }
         result = eval(condition, {"__builtins__": {}}, namespace)  # noqa: S307
         return bool(result)
