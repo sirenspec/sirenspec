@@ -10,8 +10,10 @@ from sirenspec.core.interpolation import (
     check_circular_template_refs,
     extract_node_refs,
     resolve_expression,
+    resolve_raw_value,
     resolve_template,
     resolve_to_list,
+    strip_json_fence,
 )
 from sirenspec.core.models import (
     AgentDefinition,
@@ -332,6 +334,64 @@ class TestResolveToList:
         ctx = _ctx(nodes={})
         with pytest.raises(InterpolationError):
             resolve_to_list("{{ missing.output }}", ctx)
+
+    def test_native_list_returned_directly(self) -> None:
+        ctx = _ctx(nodes={"tool": {"items": ["a", "b", "c"]}})
+        result = resolve_to_list("{{ tool.items }}", ctx)
+        assert result == ["a", "b", "c"]
+
+    def test_fenced_json_parsed(self) -> None:
+        fenced = '```json\n["x", "y"]\n```'
+        ctx = _ctx(nodes={"plan": {"output": fenced}})
+        result = resolve_to_list("{{ plan.output }}", ctx)
+        assert result == ["x", "y"]
+
+    def test_bare_fence_parsed(self) -> None:
+        fenced = '```\n["a"]\n```'
+        ctx = _ctx(nodes={"plan": {"output": fenced}})
+        result = resolve_to_list("{{ plan.output }}", ctx)
+        assert result == ["a"]
+
+    def test_non_json_fenced_still_raises(self) -> None:
+        ctx = _ctx(nodes={"plan": {"output": "```\nnot valid\n```"}})
+        with pytest.raises(InterpolationError) as exc_info:
+            resolve_to_list("{{ plan.output }}", ctx)
+        assert exc_info.value.namespace == "for_each"
+
+
+class TestStripJsonFence:
+    def test_strips_json_fence(self) -> None:
+        assert strip_json_fence('```json\n["a"]\n```') == '["a"]'
+
+    def test_strips_bare_fence(self) -> None:
+        assert strip_json_fence('```\n["a"]\n```') == '["a"]'
+
+    def test_no_fence_unchanged(self) -> None:
+        assert strip_json_fence('["a"]') == '["a"]'
+
+    def test_incomplete_fence_unchanged(self) -> None:
+        assert strip_json_fence("```json\nno closing") == "```json\nno closing"
+
+
+class TestResolveRawValue:
+    def test_returns_list_from_node(self) -> None:
+        ctx = _ctx(nodes={"tool": {"items": ["a", "b"]}})
+        result = resolve_raw_value("{{ tool.items }}", ctx)
+        assert result == ["a", "b"]
+
+    def test_returns_dict_from_node(self) -> None:
+        ctx = _ctx(nodes={"tool": {"data": {"k": "v"}}})
+        result = resolve_raw_value("{{ tool.data }}", ctx)
+        assert result == {"k": "v"}
+
+    def test_literal_string_returned_unchanged(self) -> None:
+        ctx = _ctx()
+        assert resolve_raw_value("plain text", ctx) == "plain text"
+
+    def test_falls_back_to_string_for_reserved_ns(self) -> None:
+        ctx = _ctx(inputs={"message": "hello"})
+        result = resolve_raw_value("{{ inputs.message }}", ctx)
+        assert result == "hello"
 
 
 # ---------------------------------------------------------------------------
