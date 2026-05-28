@@ -12,10 +12,13 @@ Supported namespaces::
     {{ classify.output.sentiment }}     # nested dot access
     {{ item }}                          # current loop item (factory nodes)
     {{ index }}                         # current loop index (factory nodes)
-    {{ expr | default('fallback') }}    # optional fallback on missing key
+    {{ expr | default('fallback') }}          # fallback on missing key or empty string
+    {{ expr | json_or_default('[]') }}        # fallback on missing key, empty string, or invalid JSON
 
 Missing keys raise :class:`~sirenspec.exceptions.InterpolationError` unless a
-``| default('value')`` filter is provided.
+``| default('value')`` or ``| json_or_default('value')`` filter is provided.
+Both filters also engage when the resolved value is an empty string ``""``.
+``json_or_default`` additionally engages when the value is not parseable as JSON.
 """
 
 from __future__ import annotations
@@ -32,6 +35,7 @@ from sirenspec.exceptions import InterpolationError
 
 _TEMPLATE_RE = re.compile(r"\{\{\s*(.+?)\s*\}\}")
 _DEFAULT_RE = re.compile(r"^(.+?)\s*\|\s*default\(\s*['\"](.+?)['\"]\s*\)\s*$")
+_JSON_OR_DEFAULT_RE = re.compile(r"^(.+?)\s*\|\s*json_or_default\(\s*['\"](.+?)['\"]\s*\)\s*$")
 
 _RESERVED_NAMESPACES = frozenset({"inputs", "env", "item", "index", "total"})
 
@@ -136,10 +140,20 @@ def resolve_expression(
 ) -> str:
     """Resolve a single interpolation expression (without braces) to a string value.
 
-    Supports the ``| default('fallback')`` filter: if the expression would raise
-    :class:`~sirenspec.exceptions.InterpolationError`, the default value is returned instead.
+    Supports two optional filters:
 
-    :param expr: The raw expression text, e.g. ``inputs.message`` or ``plan.output | default('')``.
+    ``| default('fallback')``
+        Returns *fallback* when the expression raises
+        :class:`~sirenspec.exceptions.InterpolationError` **or** when the resolved
+        value is the empty string ``""``.
+
+    ``| json_or_default('fallback')``
+        Like ``| default`` but also returns *fallback* when the resolved value
+        cannot be parsed as JSON.  Useful for ``for_each:`` upstream outputs
+        that may legitimately be empty or contain non-JSON text.
+
+    :param expr: The raw expression text, e.g. ``inputs.message`` or
+        ``plan.output | default('')``.
     :param context: The current interpolation context.
     :param redact_env: When ``True``, ``env.*`` values are returned as ``'***'`` instead of their
         real values. Used when building trace output to avoid logging credentials.
@@ -147,17 +161,36 @@ def resolve_expression(
     :returns: The resolved string value.
     """
     default_value: str | None = None
-    default_match = _DEFAULT_RE.match(expr)
-    if default_match:
-        expr = default_match.group(1).strip()
-        default_value = default_match.group(2)
+    use_json_or_default = False
+
+    json_match = _JSON_OR_DEFAULT_RE.match(expr)
+    if json_match:
+        expr = json_match.group(1).strip()
+        default_value = json_match.group(2)
+        use_json_or_default = True
+    else:
+        default_match = _DEFAULT_RE.match(expr)
+        if default_match:
+            expr = default_match.group(1).strip()
+            default_value = default_match.group(2)
 
     try:
-        return _resolve_path(expr, context, redact_env)
+        resolved = _resolve_path(expr, context, redact_env)
     except InterpolationError:
         if default_value is not None:
             return default_value
         raise
+
+    if default_value is not None and resolved == "":
+        return default_value
+
+    if use_json_or_default:
+        try:
+            json.loads(resolved)
+        except json.JSONDecodeError:
+            return default_value  # type: ignore[return-value]  # default_value is always str here
+
+    return resolved
 
 
 def _resolve_path(expr: str, context: InterpolationContext, redact_env: bool) -> str:

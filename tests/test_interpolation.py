@@ -208,6 +208,53 @@ class TestDefaultFilter:
         with pytest.raises(InterpolationError):
             resolve_expression("inputs.missing", ctx)
 
+    def test_default_fires_on_empty_string(self) -> None:
+        ctx = _ctx(inputs={"message": ""})
+        result = resolve_expression("inputs.message | default('fallback')", ctx)
+        assert result == "fallback"
+
+    def test_default_does_not_fire_on_whitespace(self) -> None:
+        ctx = _ctx(inputs={"message": "  "})
+        result = resolve_expression("inputs.message | default('fallback')", ctx)
+        assert result == "  "
+
+    def test_default_does_not_fire_on_zero(self) -> None:
+        ctx = _ctx(inputs={"message": "0"})
+        result = resolve_expression("inputs.message | default('fallback')", ctx)
+        assert result == "0"
+
+
+class TestJsonOrDefaultFilter:
+    def test_fires_on_interpolation_error(self) -> None:
+        ctx = _ctx(nodes={})
+        result = resolve_expression("plan.output | json_or_default('[]')", ctx)
+        assert result == "[]"
+
+    def test_fires_on_empty_string(self) -> None:
+        ctx = _ctx(nodes={"plan": {"output": ""}})
+        result = resolve_expression("plan.output | json_or_default('[]')", ctx)
+        assert result == "[]"
+
+    def test_fires_on_non_json_value(self) -> None:
+        ctx = _ctx(nodes={"plan": {"output": "not json at all"}})
+        result = resolve_expression("plan.output | json_or_default('[]')", ctx)
+        assert result == "[]"
+
+    def test_returns_value_when_valid_json(self) -> None:
+        ctx = _ctx(nodes={"plan": {"output": '["a", "b"]'}})
+        result = resolve_expression("plan.output | json_or_default('[]')", ctx)
+        assert result == '["a", "b"]'
+
+    def test_returns_json_object(self) -> None:
+        ctx = _ctx(nodes={"plan": {"output": '{"key": "val"}'}})
+        result = resolve_expression("plan.output | json_or_default('{}')", ctx)
+        assert result == '{"key": "val"}'
+
+    def test_json_or_default_in_full_template(self) -> None:
+        ctx = _ctx(nodes={"plan": {"output": ""}})
+        result = resolve_template("items: {{ plan.output | json_or_default('[]') }}", ctx)
+        assert result == "items: []"
+
 
 # ---------------------------------------------------------------------------
 # resolve_template: full string rendering
