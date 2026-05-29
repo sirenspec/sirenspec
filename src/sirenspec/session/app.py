@@ -21,6 +21,8 @@ from sirenspec.core.models import Workflow
 from sirenspec.exceptions import SessionError
 from sirenspec.session import theme
 from sirenspec.session.commands import CommandHandler, CommandRegistry, is_command, make_registry
+from sirenspec.session.edit_screen import EditScreen
+from sirenspec.session.editor import EditAssistant
 from sirenspec.session.runtime import TurnNodeEvent, TurnResult, WorkflowSession
 from sirenspec.session.snapshots import SnapshotStore
 from sirenspec.session.summary import WorkflowSummary, summarise_workflow
@@ -147,6 +149,7 @@ class LaunchApp(App):
         self.color_mode = theme.ColorMode(enabled=True)
         self.summary: WorkflowSummary = summarise_workflow(session.workflow, session.name)
         self.snapshots = SnapshotStore(session.workflow_path)
+        self.editor = EditAssistant()
         self.snapshot_label = self.snapshots.latest_label()
         self.stream_buffer: list[str] = []
         self.registry: CommandRegistry = make_registry(self.build_command_handlers())
@@ -172,6 +175,7 @@ class LaunchApp(App):
             "run": self.command_run,
             "snapshot": self.command_snapshot,
             "diff": self.command_diff,
+            "edit": self.command_edit,
         }
 
     def compose(self) -> ComposeResult:
@@ -539,6 +543,20 @@ class LaunchApp(App):
     async def action_rollback(self) -> None:
         """Roll back to the latest snapshot (^R)."""
         await self.command_rollback("")
+
+    async def command_edit(self, _: str) -> None:
+        """Open the suggestive ``/edit`` split editor over the studio.
+
+        :param _: Unused argument string.
+        """
+        self.push_screen(EditScreen(self.editor, self.session, self.snapshots, self.on_edit_applied))
+
+    def on_edit_applied(self) -> None:
+        """Repaint the studio after the editor writes an accepted change."""
+        self.summary = summarise_workflow(self.session.workflow, self.session.name)
+        self.update_snapshot_label()
+        self.query_one("#splash", SplashHeader).show_splash(self.summary, self.color_mode)
+        self.transcript.add_notice("workflow updated via /edit", style=theme.LIGHT)
 
 
 def render_plain(workflow: Workflow, workflow_name: str, console: Console) -> None:

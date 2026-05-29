@@ -182,6 +182,15 @@ class SnapshotError(SessionError):
     """
 
 
+class EditAssistantError(SessionError):
+    """Raised when the ``/edit`` suggestive assistant cannot produce or apply a change.
+
+    Covers the absence of any usable provider key (neither Anthropic nor OpenAI), a
+    proposal that cannot be parsed into workflow YAML, or an accepted change that fails the
+    ``validate`` gate before being written back to the workflow file.
+    """
+
+
 class FactoryNodeError(SirenSpecError):
     """Raised when a factory node instance fails and ``on_failure`` is ``'abort'``.
 
