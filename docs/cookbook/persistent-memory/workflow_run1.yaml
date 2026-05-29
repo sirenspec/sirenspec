@@ -1,0 +1,21 @@
+version: "0.1"
+
+memory:
+  backend: sqlite
+  path: .sirenspec/research-memory
+  ttl: 86400  # entries live for 24 hours
+
+agents:
+  researcher:
+    model: "openai:gpt-4o-mini"
+    system: |
+      You are a research agent. Summarise the following topic in 2-3 sentences:
+      {{ inputs.message }}
+
+nodes:
+  summarise:
+    agent: researcher
+    writes: memory.summary  # persisted to the SQLite store
+
+input:
+  message: "The history of the Turing Award"

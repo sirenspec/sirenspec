@@ -37,7 +37,7 @@ _TEMPLATE_RE = re.compile(r"\{\{\s*(.+?)\s*\}\}")
 _DEFAULT_RE = re.compile(r"^(.+?)\s*\|\s*default\(\s*['\"](.+?)['\"]\s*\)\s*$")
 _JSON_OR_DEFAULT_RE = re.compile(r"^(.+?)\s*\|\s*json_or_default\(\s*['\"](.+?)['\"]\s*\)\s*$")
 
-_RESERVED_NAMESPACES = frozenset({"inputs", "env", "item", "index", "total"})
+_RESERVED_NAMESPACES = frozenset({"inputs", "env", "item", "index", "total", "memory"})
 
 
 @dataclass
@@ -51,6 +51,7 @@ class InterpolationContext:
     :param item: Current loop iteration value. ``None`` outside a factory loop.
     :param index: Current loop iteration index. ``None`` outside a factory loop.
     :param total: Total number of instances in the current factory loop. ``None`` outside a loop.
+    :param memory: Snapshot of live persistent memory keys for ``{{ memory.key }}`` resolution.
     """
 
     inputs: dict[str, Any]
@@ -59,6 +60,7 @@ class InterpolationContext:
     item: Any | None = None
     index: int | None = None
     total: int | None = None
+    memory: dict[str, Any] = field(default_factory=dict)
 
 
 def build_interpolation_context(
@@ -68,6 +70,7 @@ def build_interpolation_context(
     index: int | None = None,
     total: int | None = None,
     extra_inputs: dict[str, Any] | None = None,
+    memory: dict[str, Any] | None = None,
 ) -> InterpolationContext:
     """Build an :class:`InterpolationContext` from executor state.
 
@@ -79,6 +82,8 @@ def build_interpolation_context(
     :param extra_inputs: Additional key/value pairs merged into the ``inputs`` namespace.
         Used by sub-workflow nodes to inject bound inputs so that ``{{ inputs.key }}``
         resolves correctly inside the sub-workflow.
+    :param memory: Snapshot of live persistent memory keys from the MemoryManager.
+        When provided, ``{{ memory.key }}`` expressions resolve against this dict.
     :returns: A fully populated interpolation context.
     """
     inputs: dict[str, Any] = {"message": user_input}
@@ -91,6 +96,7 @@ def build_interpolation_context(
         item=item,
         index=index,
         total=total,
+        memory=memory or {},
     )
 
 
@@ -235,6 +241,11 @@ def _resolve_path(expr: str, context: InterpolationContext, redact_env: bool) ->
         if redact_env:
             return "***"
         return context.env[var_name]
+
+    if namespace == "memory":
+        if len(parts) < 2:
+            raise InterpolationError(stripped, "memory", "Missing key name after 'memory.'")
+        return str(navigate_dict(context.memory, parts[1:], stripped, "memory"))
 
     return str(navigate_dict(context.nodes, parts, stripped, namespace))
 

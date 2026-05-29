@@ -578,3 +578,48 @@ class TestEnvVarIntegration:
         result = resolve_template("Secret: {{ env.SIREN_SECRET }}", ctx, redact_env=True)
         assert result == "Secret: ***"
         assert "do_not_log_me" not in result
+
+
+class TestMemoryNamespace:
+    def test_memory_key_resolves(self) -> None:
+        ctx = build_interpolation_context("in", {}, memory={"summary": "prior result"})
+        result = resolve_template("Summary: {{ memory.summary }}", ctx)
+        assert result == "Summary: prior result"
+
+    def test_memory_key_missing_raises(self) -> None:
+        ctx = build_interpolation_context("in", {}, memory={})
+        with pytest.raises(InterpolationError):
+            resolve_template("{{ memory.missing }}", ctx)
+
+    def test_memory_key_with_default_filter(self) -> None:
+        ctx = build_interpolation_context("in", {}, memory={})
+        result = resolve_template("{{ memory.missing | default('fallback') }}", ctx)
+        assert result == "fallback"
+
+    def test_memory_empty_namespace_no_key_raises(self) -> None:
+        ctx = build_interpolation_context("in", {}, memory={})
+        with pytest.raises(InterpolationError):
+            resolve_template("{{ memory.key }}", ctx)
+
+    def test_memory_integer_value_stringified(self) -> None:
+        ctx = build_interpolation_context("in", {}, memory={"count": 42})
+        result = resolve_template("Count: {{ memory.count }}", ctx)
+        assert result == "Count: 42"
+
+    def test_memory_not_in_node_refs(self) -> None:
+        refs = extract_node_refs("{{ memory.summary }}", known_node_ids={"summary"})
+        assert refs == set()
+
+    def test_build_interpolation_context_memory_defaults_empty(self) -> None:
+        ctx = build_interpolation_context("in", {})
+        assert ctx.memory == {}
+
+    def test_build_interpolation_context_memory_passed(self) -> None:
+        ctx = build_interpolation_context("in", {}, memory={"x": "y"})
+        assert ctx.memory == {"x": "y"}
+
+    def test_memory_missing_key_after_prefix_raises(self) -> None:
+        ctx = InterpolationContext(inputs={"message": "hi"}, nodes={}, memory={})
+        with pytest.raises(InterpolationError) as exc_info:
+            resolve_expression("memory.no_key", ctx)
+        assert "memory" in str(exc_info.value)

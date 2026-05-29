@@ -1,0 +1,121 @@
+---
+title: Persistent Cross-Run Memory
+description: Store agent findings across workflow runs and recall them in later sessions using the memory block.
+---
+
+By default, all SirenSpec state lives in memory and disappears when the process exits. The `memory:` block changes that — it wires the workflow to a persistent key-value store so any node can write a value in one run and read it back in the next.
+
+## What it demonstrates
+
+- Declaring a `memory:` block with the SQLite backend
+- Writing to a persistent key via `writes: memory.<key>`
+- Reading from persistent memory in a later run via `{{ memory.<key> }}`
+- TTL configuration so stale findings expire automatically
+
+## Run it
+
+```bash
+# Run 1: research a topic and store the summary
+sirenspec run docs/cookbook/persistent-memory/workflow_run1.yaml
+
+# Run 2: build on the stored findings without re-calling the LLM
+sirenspec run docs/cookbook/persistent-memory/workflow_run2.yaml
+```
+
+The SQLite database is created at `.sirenspec/research-memory/memory.db` on the first run and reused automatically on subsequent runs.
+
+## Workflow — Run 1 (write)
+
+```yaml docs/cookbook/persistent-memory/workflow_run1.yaml
+version: "0.1"
+
+memory:
+  backend: sqlite
+  path: .sirenspec/research-memory
+  ttl: 86400  # entries live for 24 hours
+
+agents:
+  researcher:
+    model: "openai:gpt-4o-mini"
+    system: |
+      You are a research agent. Summarise the following topic in 2-3 sentences:
+      {{ inputs.message }}
+
+nodes:
+  summarise:
+    agent: researcher
+    writes: memory.summary  # persisted to the SQLite store
+
+input:
+  message: "The history of the Turing Award"
+```
+
+## Workflow — Run 2 (read)
+
+```yaml docs/cookbook/persistent-memory/workflow_run2.yaml
+version: "0.1"
+
+memory:
+  backend: sqlite
+  path: .sirenspec/research-memory  # same store — picks up run 1 findings
+
+agents:
+  analyst:
+    model: "openai:gpt-4o-mini"
+    system: |
+      You are an analyst. Using only the prior research below, write three
+      actionable insights. Do not repeat the summary verbatim.
+
+      Prior research:
+      {{ memory.summary }}
+
+nodes:
+  analyse:
+    agent: analyst
+    writes: output.insights
+
+input:
+  message: "Derive insights from the stored research."
+```
+
+## How memory works
+
+| Concept | Detail |
+|---|---|
+| `writes: memory.<key>` | Routes the node output to the persistent store instead of the in-process context |
+| `{{ memory.<key> }}` | Resolved from a snapshot taken at the start of the run — consistent for the whole execution |
+| `ttl` | Seconds until an entry expires. Omit for indefinite persistence. |
+| `backend: sqlite` | Default. Single file, safe for concurrent processes. |
+| `backend: file` | Plain JSON file. Simpler, suitable for single-process use cases. |
+
+## Backend choice
+
+Use **SQLite** (the default) whenever:
+- Multiple workflow processes may run concurrently against the same store.
+- You want atomic, transactional writes with no risk of JSON corruption.
+
+Use **file** when:
+- You want a human-readable store you can inspect or edit directly.
+- Your workflow runs in a strictly single-process environment.
+
+## TTL guidance
+
+```yaml
+memory:
+  backend: sqlite
+  path: .sirenspec/memory
+  ttl: 3600      # 1 hour — good for session-scoped context
+  # ttl: 86400   # 24 hours — daily research cache
+  # ttl: null    # no expiry — permanent knowledge base
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Budget-Guarded Workflow" href="/cookbook/budget-guarded/README">
+    Cap token spend across all nodes.
+  </Card>
+  <Card title="YAML Reference" href="/yaml-reference">
+    Every field available in a workflow file.
+  </Card>
+</CardGroup>

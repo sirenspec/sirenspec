@@ -160,6 +160,10 @@ class WorkflowLintError(SirenSpecError):
         self.issues = issues
 
 
+class MemoryError(SirenSpecError):
+    """Raised when a memory store operation fails (I/O, JSON decode, SQLite errors)."""
+
+
 class FactoryNodeError(SirenSpecError):
     """Raised when a factory node instance fails and ``on_failure`` is ``'abort'``.
 

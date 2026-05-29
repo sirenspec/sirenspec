@@ -7,7 +7,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from pydantic import ValidationError
 
-from sirenspec.core.models import AgentDefinition, Edge, Node, Workflow, WorkflowInput
+from sirenspec.core.models import AgentDefinition, Edge, MemoryConfig, Node, Workflow, WorkflowInput
 
 
 class TestAgentDefinition:
@@ -149,3 +149,67 @@ class TestWorkflow:
             nodes={"n": Node(agent="a", writes="output.x")},
         )
         assert wf.version == version
+
+    def test_workflow_with_memory_sqlite(self) -> None:
+        wf = Workflow(
+            version="0.1",
+            agents={"a": AgentDefinition(model="openai:gpt-4o-mini", system="s")},
+            nodes={"n": Node(agent="a", writes="memory.result")},
+            memory=MemoryConfig(backend="sqlite", path=".sirenspec/memory", ttl=3600),
+        )
+        assert wf.memory is not None
+        assert wf.memory.backend == "sqlite"
+        assert wf.memory.ttl == 3600
+
+    def test_workflow_with_memory_file(self) -> None:
+        wf = Workflow(
+            version="0.1",
+            agents={"a": AgentDefinition(model="openai:gpt-4o-mini", system="s")},
+            nodes={"n": Node(agent="a", writes="output.x")},
+            memory=MemoryConfig(backend="file", path="/tmp/mem"),
+        )
+        assert wf.memory is not None
+        assert wf.memory.backend == "file"
+        assert wf.memory.ttl is None
+
+    def test_workflow_without_memory_is_none(self) -> None:
+        wf = Workflow(
+            version="0.1",
+            agents={"a": AgentDefinition(model="openai:gpt-4o-mini", system="s")},
+            nodes={"n": Node(agent="a", writes="output.x")},
+        )
+        assert wf.memory is None
+
+
+class TestMemoryConfig:
+    def test_defaults(self) -> None:
+        cfg = MemoryConfig()
+        assert cfg.backend == "sqlite"
+        assert cfg.path == ".sirenspec/memory"
+        assert cfg.ttl is None
+
+    def test_file_backend(self) -> None:
+        cfg = MemoryConfig(backend="file")
+        assert cfg.backend == "file"
+
+    def test_sqlite_backend(self) -> None:
+        cfg = MemoryConfig(backend="sqlite")
+        assert cfg.backend == "sqlite"
+
+    def test_ttl_must_be_positive(self) -> None:
+        with pytest.raises(ValidationError):
+            MemoryConfig(ttl=0)
+
+    def test_ttl_one_is_valid(self) -> None:
+        cfg = MemoryConfig(ttl=1)
+        assert cfg.ttl == 1
+
+    def test_invalid_backend_raises(self) -> None:
+        with pytest.raises(ValidationError):
+            MemoryConfig(backend="redis")  # type: ignore[arg-type]
+
+    def test_from_dict(self) -> None:
+        cfg = MemoryConfig.model_validate({"backend": "file", "path": "/data/mem", "ttl": 86400})
+        assert cfg.backend == "file"
+        assert cfg.path == "/data/mem"
+        assert cfg.ttl == 86400
