@@ -19,7 +19,7 @@ from typing import Any
 from sirenspec.core.events import NodeCompleteEvent, SummaryEvent
 from sirenspec.core.executor import execute_streaming
 from sirenspec.core.models import AgentNode, SwrmNode, Workflow
-from sirenspec.exceptions import SessionError
+from sirenspec.exceptions import SessionError, SirenSpecError
 from sirenspec.memory.manager import build_store
 from sirenspec.session.summary import provider_of
 from sirenspec.yaml.parser import load_workflow
@@ -367,7 +367,7 @@ class WorkflowSession:
         """
         try:
             self.workflow = load_workflow(str(self.workflow_path))
-        except Exception as exc:  # noqa: BLE001 — surface every load failure as a session error
+        except (SirenSpecError, OSError, ValueError) as exc:
             raise SessionError(f"Reload failed: {exc}") from exc
         self.mtime = self.current_mtime()
 

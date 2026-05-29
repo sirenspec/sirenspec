@@ -18,7 +18,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import OptionList, TextArea
 
 from sirenspec.core.models import Workflow
-from sirenspec.exceptions import SessionError
+from sirenspec.exceptions import SessionError, SirenSpecError
 from sirenspec.session import theme
 from sirenspec.session.commands import CommandHandler, CommandRegistry, is_command, make_registry
 from sirenspec.session.edit_screen import EditScreen
@@ -612,7 +612,7 @@ def run_launch(workflow_path: Path, *, plain: bool, is_tty: bool, session_id: st
     """
     try:
         workflow = load_workflow(str(workflow_path))
-    except Exception as exc:  # noqa: BLE001 — normalise all load failures into SessionError
+    except (SirenSpecError, OSError, ValueError) as exc:
         raise SessionError(f"Could not load workflow '{workflow_path}': {exc}") from exc
 
     workflow_name = workflow_path.stem
