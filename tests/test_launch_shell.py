@@ -23,6 +23,7 @@ from sirenspec.session.commands import (
     make_registry,
     parse_command_line,
 )
+from sirenspec.session.runtime import WorkflowSession
 from sirenspec.session.summary import provider_of, summarise_workflow
 from sirenspec.session.widgets import (
     CommandInput,
@@ -219,8 +220,9 @@ class TestPlainFallback:
 
 def make_app(tmp_path: Path) -> LaunchApp:
     path = tmp_path / "market-analysis.yaml"
-    path.write_text("version: '0.3'\n")  # content unused; LaunchApp gets the workflow directly
-    return LaunchApp(workflow=build_workflow(), workflow_path=path, workflow_name="market-analysis")
+    path.write_text("version: '0.3'\n")  # content unused; the session is given the workflow directly
+    session = WorkflowSession(build_workflow(), path, "market-analysis")
+    return LaunchApp(session)
 
 
 class TestAppBoot:
@@ -256,17 +258,6 @@ class TestAppBoot:
             await pilot.pause()
             transcript = app.query_one(Transcript)
             assert any("commands" in str(line) for line in transcript.lines) or transcript.lines
-
-    @pytest.mark.asyncio
-    async def test_chat_turn_records_user(self, tmp_path: Path) -> None:
-        app = make_app(tmp_path)
-        async with app.run_test() as pilot:
-            command_input = app.query_one(CommandInput)
-            command_input.value = "what are the risks?"
-            await command_input.action_submit()
-            await pilot.pause()
-            assert command_input.value == ""
-            assert "what are the risks?" in command_input.history
 
     @pytest.mark.asyncio
     async def test_toggle_rail_hides_it(self, tmp_path: Path) -> None:

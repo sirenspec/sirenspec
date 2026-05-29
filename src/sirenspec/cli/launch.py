@@ -27,24 +27,38 @@ def stdout_is_tty() -> bool:
 def launch_command(
     workflow_file: Annotated[str, typer.Argument(help="Path to the workflow YAML file")],
     plain: Annotated[
-        bool, typer.Option("--plain", help="Disable colour and the full-screen UI (plain console fallback)")
+        bool,
+        typer.Option(
+            "--plain",
+            help="Disable colour and the full-screen UI (plain console fallback)",
+        ),
     ] = False,
+    session: Annotated[
+        str | None,
+        typer.Option(
+            "--session",
+            help="Resume a named session; persists conversation via the workflow's memory backend",
+        ),
+    ] = None,
 ) -> None:
     """Open the SirenSpec workflow studio for a workflow.
 
     Boots the full-screen Textual studio — a scrolling transcript, the collapsible workflow
-    rail, the command palette, and the trace drawer — themed with the SirenSpec brand.
-    Non-interactive terminals and ``--plain`` / ``NO_COLOR`` fall back to a plain console.
+    rail, the command palette, and the trace drawer — themed with the SirenSpec brand.  The
+    workflow runs live against real providers, one turn at a time; ``--session`` rehydrates a
+    prior conversation from the workflow's ``memory:`` backend.  Non-interactive terminals and
+    ``--plain`` / ``NO_COLOR`` fall back to a plain console.
 
     :param workflow_file: Path to the workflow YAML file to load into the session.
     :param plain: When ``True``, skip the full-screen UI and print a plain console summary.
+    :param session: Optional session id to persist and rehydrate conversation state.
     """
     path = Path(workflow_file)
     if not path.exists():
         _err.print(f"[red]Error:[/red] workflow file not found: {workflow_file}")
         raise typer.Exit(1)
     try:
-        run_launch(path, plain=plain, is_tty=stdout_is_tty())
+        run_launch(path, plain=plain, is_tty=stdout_is_tty(), session_id=session)
     except SessionError as exc:
         _err.print(f"[red]Launch error:[/red] {exc}")
         raise typer.Exit(1) from exc

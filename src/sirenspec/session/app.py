@@ -20,7 +20,8 @@ from textual.widgets import OptionList
 from sirenspec.core.models import Workflow
 from sirenspec.exceptions import SessionError
 from sirenspec.session import theme
-from sirenspec.session.commands import CommandRegistry, is_command, make_registry
+from sirenspec.session.commands import CommandHandler, CommandRegistry, is_command, make_registry
+from sirenspec.session.runtime import TurnNodeEvent, TurnResult, WorkflowSession
 from sirenspec.session.summary import WorkflowSummary, summarise_workflow
 from sirenspec.session.widgets import (
     CommandInput,
@@ -126,9 +127,8 @@ FooterHints {
 class LaunchApp(App):
     """The ``sirenspec launch`` workflow studio Textual application.
 
-    :param workflow: The validated workflow to load into the session.
-    :param workflow_path: Filesystem path to the workflow YAML (used by ``/reload``).
-    :param workflow_name: Human-facing workflow name (typically the file stem).
+    :param session: The live :class:`~sirenspec.session.runtime.WorkflowSession` the studio
+        tests against and renders.
     """
 
     CSS = LAUNCH_CSS
@@ -139,22 +139,19 @@ class LaunchApp(App):
         Binding("escape", "dismiss_palette", "dismiss", show=False),
     ]
 
-    def __init__(self, workflow: Workflow, workflow_path: Path, workflow_name: str) -> None:
+    def __init__(self, session: WorkflowSession) -> None:
         super().__init__()
-        self.workflow = workflow
-        self.workflow_path = workflow_path
-        self.workflow_name = workflow_name
+        self.session = session
         self.color_mode = theme.ColorMode(enabled=True)
-        self.summary: WorkflowSummary = summarise_workflow(workflow, workflow_name)
+        self.summary: WorkflowSummary = summarise_workflow(session.workflow, session.name)
         self.snapshot_label = "v1"
-        self.turns = 0
-        self.session_cost_usd: float | None = None
+        self.stream_buffer: list[str] = []
         self.registry: CommandRegistry = make_registry(self.build_command_handlers())
 
-    def build_command_handlers(self) -> dict:
+    def build_command_handlers(self) -> dict[str, CommandHandler]:
         """Return the mapping of command name to async handler bound to this app.
 
-        Commands whose feature is not part of this shell are intentionally omitted so the
+        Commands whose feature is not part of this build are intentionally omitted so the
         registry wires them to a handler that reports them as unavailable.
 
         :returns: A dict of command name to async handler.
@@ -163,6 +160,7 @@ class LaunchApp(App):
             "help": self.command_help,
             "exit": self.command_exit,
             "reload": self.command_reload,
+            "run": self.command_run,
         }
 
     def compose(self) -> ComposeResult:
@@ -180,37 +178,40 @@ class LaunchApp(App):
             yield FooterHints(id="footer")
 
     def on_mount(self) -> None:
-        """Apply the theme and paint every region from the initial workflow state."""
+        """Apply the theme, paint every region, and start the hot-reload watcher."""
         self.register_theme(theme.build_theme(self.color_mode))
         self.theme = "sirenspec"
         self.refresh_chrome()
         self.query_one("#footer", FooterHints).show_hints(self.registry)
         self.query_one("#splash", SplashHeader).show_splash(self.summary, self.color_mode)
         self.query_one(CommandInput).focus()
+        self.set_interval(1.0, self.check_reload)
 
-    def refresh_chrome(self) -> None:
-        """Repaint the status bar, rail, and trace drawer from current session state."""
-        provider = self.summary.primary_provider
+    def refresh_chrome(self, *, live: bool = False) -> None:
+        """Repaint the status bar, rail, and trace drawer from current session state.
+
+        :param live: Whether a turn is currently executing (shows ``● live``).
+        """
         self.query_one("#statusbar", StatusBar).update_status(
-            name=self.workflow_name,
-            provider=provider,
-            live=False,
+            name=self.session.name,
+            provider=self.summary.primary_provider,
+            live=live,
             snapshot_label=self.snapshot_label,
         )
         self.query_one("#rail", WorkflowRail).show_rail(
             self.summary,
             snapshot_label=self.snapshot_label,
-            turns=self.turns,
-            cost_usd=self.session_cost_usd,
+            turns=self.session.turns,
+            cost_usd=self.session.session_cost_usd,
         )
         self.query_one("#drawer", TraceDrawer).show_trace(
             node_label="",
             latency_s=None,
             tokens=0,
             cost_usd=None,
-            turn=self.turns,
-            total_turns=self.turns,
-            session_cost_usd=self.session_cost_usd,
+            turn=self.session.turns,
+            total_turns=self.session.turns,
+            session_cost_usd=self.session.session_cost_usd,
         )
 
     @property
@@ -283,15 +284,98 @@ class LaunchApp(App):
             self.transcript.add_notice(str(exc), style=theme.YOU)
 
     async def handle_turn(self, message: str) -> None:
-        """Handle a chat turn against the workflow.
-
-        The shell records the user turn and notes that the live testing runtime is not yet
-        attached; the runtime sub-feature replaces this with real multi-turn execution.
+        """Run a chat turn live against the workflow, streaming attribution and the reply.
 
         :param message: The user's message text.
         """
         self.transcript.add_user(message)
-        self.transcript.add_notice("testing runtime not attached in this shell — see /help", style=theme.TERM_FAINT)
+        await self.drive(self.session.take_turn(message, token_callback=self.on_token))
+
+    async def drive(self, events: object) -> None:
+        """Consume a turn event stream, painting attribution lines and the final result.
+
+        :param events: An async generator of :class:`TurnNodeEvent` / :class:`TurnResult`.
+        """
+        self.stream_buffer = []
+        self.refresh_chrome(live=True)
+        try:
+            async for event in events:  # type: ignore[attr-defined]
+                if isinstance(event, TurnResult):
+                    self.present_result(event)
+                elif isinstance(event, TurnNodeEvent):
+                    self.transcript.add_attribution(
+                        event.label, f"{event.tokens} tok", spinning=event.status == "success"
+                    )
+        except SessionError as exc:
+            self.transcript.add_notice(str(exc), style=theme.YOU)
+        finally:
+            self.mark_live(False)
+
+    def mark_live(self, live: bool) -> None:
+        """Update only the status bar's live indicator, leaving the rail and drawer intact.
+
+        :param live: Whether a turn is currently executing.
+        """
+        self.query_one("#statusbar", StatusBar).update_status(
+            name=self.session.name,
+            provider=self.summary.primary_provider,
+            live=live,
+            snapshot_label=self.snapshot_label,
+        )
+
+    def on_token(self, chunk: str) -> None:
+        """Collect a streamed token chunk for the in-flight turn.
+
+        :param chunk: The text chunk emitted by the provider.
+        """
+        self.stream_buffer.append(chunk)
+
+    def present_result(self, result: TurnResult) -> None:
+        """Render a completed turn's reply and update the rail and trace drawer.
+
+        :param result: The turn's :class:`TurnResult`.
+        """
+        streamed = "".join(self.stream_buffer)
+        reply = result.text or streamed or "(no output)"
+        if result.status == "failed":
+            self.transcript.add_notice(reply, style=theme.YOU)
+        else:
+            self.transcript.add_siren(reply)
+        self.query_one("#drawer", TraceDrawer).show_trace(
+            node_label=result.last_label,
+            latency_s=result.duration_s,
+            tokens=result.tokens,
+            cost_usd=result.cost_usd,
+            turn=self.session.turns,
+            total_turns=self.session.turns,
+            session_cost_usd=self.session.session_cost_usd,
+        )
+        self.query_one("#rail", WorkflowRail).show_rail(
+            self.summary,
+            snapshot_label=self.snapshot_label,
+            turns=self.session.turns,
+            cost_usd=self.session.session_cost_usd,
+        )
+
+    def check_reload(self) -> None:
+        """Hot-reload the workflow when its file changes on disk (preserving history)."""
+        if self.session.file_changed():
+            self.perform_reload("workflow.yaml changed on disk — reloaded")
+
+    def perform_reload(self, notice: str) -> None:
+        """Reload the workflow from disk, repaint the chrome, and post *notice*.
+
+        :param notice: The transcript message to show after a successful reload.
+        """
+        try:
+            self.session.reload()
+        except SessionError as exc:
+            self.transcript.add_notice(str(exc), style=theme.YOU)
+            return
+        self.summary = summarise_workflow(self.session.workflow, self.session.name)
+        self.refresh_chrome()
+        self.query_one("#splash", SplashHeader).show_splash(self.summary, self.color_mode)
+        self.transcript.add_notice(notice, style=theme.LIGHT)
 
     # ------------------------------------------------------------------ #
     # Key actions                                                        #
@@ -330,19 +414,19 @@ class LaunchApp(App):
         self.exit()
 
     async def command_reload(self, _: str) -> None:
-        """Reload the workflow from disk and repaint the chrome.
+        """Reload the workflow from disk on demand and repaint the chrome.
 
         :param _: Unused argument string.
-        :raises SessionError: If the workflow file can no longer be loaded or validated.
         """
-        try:
-            self.workflow = load_workflow(str(self.workflow_path))
-        except Exception as exc:  # noqa: BLE001 — surface every load failure as a session error
-            raise SessionError(f"Reload failed: {exc}") from exc
-        self.summary = summarise_workflow(self.workflow, self.workflow_name)
-        self.refresh_chrome()
-        self.query_one("#splash", SplashHeader).show_splash(self.summary, self.color_mode)
-        self.transcript.add_notice("reloaded workflow.yaml", style=theme.LIGHT)
+        self.perform_reload("reloaded workflow.yaml")
+
+    async def command_run(self, _: str) -> None:
+        """Execute the full workflow graph end-to-end (vs. turn-by-turn chat).
+
+        :param _: Unused argument string.
+        """
+        self.transcript.add_notice("running the full workflow graph…", style=theme.CREST_LIGHT)
+        await self.drive(self.session.run_full(token_callback=self.on_token))
 
 
 def render_plain(workflow: Workflow, workflow_name: str, console: Console) -> None:
@@ -380,13 +464,14 @@ def build_console(*, is_tty: bool) -> Console:
     return Console(force_terminal=False, no_color=True)
 
 
-def run_launch(workflow_path: Path, *, plain: bool, is_tty: bool) -> None:
+def run_launch(workflow_path: Path, *, plain: bool, is_tty: bool, session_id: str | None = None) -> None:
     """Resolve colour mode and either run the studio app or print the plain fallback.
 
     :param workflow_path: Path to the workflow YAML file.
     :param plain: Whether the ``--plain`` flag was supplied.
     :param is_tty: Whether stdout is an interactive terminal.
-    :raises SessionError: If the workflow cannot be loaded.
+    :param session_id: Optional id for a persistent, resumable session via ``--session``.
+    :raises SessionError: If the workflow cannot be loaded or the session cannot be created.
     """
     try:
         workflow = load_workflow(str(workflow_path))
@@ -399,4 +484,8 @@ def run_launch(workflow_path: Path, *, plain: bool, is_tty: bool) -> None:
         render_plain(workflow, workflow_name, build_console(is_tty=is_tty))
         return
 
-    LaunchApp(workflow=workflow, workflow_path=workflow_path, workflow_name=workflow_name).run()
+    session = WorkflowSession(workflow, workflow_path, workflow_name, session_id=session_id)
+    try:
+        LaunchApp(session).run()
+    finally:
+        session.close()
