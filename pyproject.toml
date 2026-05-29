@@ -25,6 +25,7 @@ dependencies = [
     "pydantic>=2.13.4",
     "rich>=15.0.0",
     "ruamel-yaml>=0.19.1",
+    "textual>=1.0.0",
     "typer>=0.25.1",
 ]
 

@@ -164,6 +164,16 @@ class MemoryError(SirenSpecError):
     """Raised when a memory store operation fails (I/O, JSON decode, SQLite errors)."""
 
 
+class SessionError(SirenSpecError):
+    """Raised when the ``sirenspec launch`` studio session fails.
+
+    Covers launch-time failures across the testing runtime, the ``/edit`` assistant,
+    and the snapshot store — e.g. a workflow that cannot be loaded into a session, a
+    hot-reload that fails validation, or a snapshot/rollback I/O error.  Subsystems may
+    raise this directly or wrap an upstream :class:`SirenSpecError` as the cause.
+    """
+
+
 class FactoryNodeError(SirenSpecError):
     """Raised when a factory node instance fails and ``on_failure`` is ``'abort'``.
 
