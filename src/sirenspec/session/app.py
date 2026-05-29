@@ -15,7 +15,7 @@ from rich.console import Console
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
-from textual.widgets import OptionList
+from textual.widgets import OptionList, TextArea
 
 from sirenspec.core.models import Workflow
 from sirenspec.exceptions import SessionError
@@ -85,11 +85,14 @@ Transcript {
 CommandInput {
     dock: bottom;
     margin: 0 1 0 1;
-    height: 3;
+    height: auto;
+    min-height: 3;
+    max-height: 8;
     border: round $border;
     background: $background;
 }
 CommandInput:focus { border: round $primary; }
+CommandInput > .text-area--cursor-line { background: $background; }
 
 CommandPalette {
     layer: overlay;
@@ -248,7 +251,7 @@ class LaunchApp(App):
         """
         line = event.value.strip()
         command_input = self.query_one(CommandInput)
-        command_input.value = ""
+        command_input.reset_prompt()
         self.close_palette()
         if not line:
             return
@@ -258,12 +261,17 @@ class LaunchApp(App):
         else:
             await self.handle_turn(line)
 
-    def on_input_changed(self, event: CommandInput.Changed) -> None:
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
         """Open or filter the command palette while the user types a ``/`` command.
 
-        :param event: The input change event.
+        Only the main prompt drives the palette; changes from other text areas (e.g. the
+        ``/edit`` editing buffer) are ignored.
+
+        :param event: The text-area change event.
         """
-        value = event.value
+        if event.text_area is not self.query_one(CommandInput):
+            return
+        value = event.text_area.text
         if is_command(value):
             palette = self.query_one(CommandPalette)
             palette.show_matches(self.registry, value)
@@ -280,7 +288,6 @@ class LaunchApp(App):
             return
         command_input = self.query_one(CommandInput)
         command_input.value = f"/{event.option.id} "
-        command_input.cursor_position = len(command_input.value)
         self.close_palette()
         command_input.focus()
 

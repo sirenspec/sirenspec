@@ -12,7 +12,8 @@ from rich.text import Text
 from textual import events
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Input, OptionList, RichLog, Static
+from textual.message import Message
+from textual.widgets import OptionList, RichLog, Static, TextArea
 from textual.widgets.option_list import Option
 
 from sirenspec.session import theme
@@ -245,62 +246,160 @@ def format_cost(cost_usd: float | None) -> str:
     return f"${cost_usd:.3f}"
 
 
-class CommandInput(Input):
-    """The bordered prompt input with up/down command history."""
+PASTE_MAX_LINES = 3
+PASTE_MAX_WORDS = 100
 
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
-        self.history: list[str] = []
+
+def should_collapse_paste(text: str) -> bool:
+    """Return whether pasted *text* is large enough to collapse into a placeholder.
+
+    :param text: The pasted text.
+    :returns: ``True`` when the paste exceeds 3 lines or 100 words.
+    """
+    return len(text.splitlines()) > PASTE_MAX_LINES or len(text.split()) > PASTE_MAX_WORDS
+
+
+def paste_placeholder(index: int, line_count: int) -> str:
+    """Build the placeholder shown in place of a collapsed paste.
+
+    :param index: The 1-based paste counter within the current prompt.
+    :param line_count: The number of lines in the pasted text.
+    :returns: A placeholder like ``"[Pasted text #1 (lines 1-42)]"``.
+    """
+    return f"[Pasted text #{index} (lines 1-{line_count})]"
+
+
+class CommandInput(TextArea):
+    """The multi-line prompt: Enter submits, Shift+Enter / Ctrl+J insert a newline.
+
+    Up/Down browse command history at the buffer's top/bottom edges (and move the caret
+    otherwise).  Large pastes (more than 3 lines or 100 words) are collapsed into a
+    ``[Pasted text …]`` placeholder that expands back to the full text on submit.
+    """
+
+    class Submitted(Message, namespace="input"):
+        """Posted when the user submits the prompt (routes to ``on_input_submitted``).
+
+        :param value: The submitted text with any collapsed pastes expanded.
+        """
+
+        def __init__(self, value: str) -> None:
+            super().__init__()
+            self.value = value
+
+    def __init__(self, **kwargs: object) -> None:
+        kwargs.setdefault("show_line_numbers", False)
+        kwargs.setdefault("soft_wrap", True)
+        super().__init__(**kwargs)  # type: ignore[arg-type]
+        self.command_history: list[str] = []
         self.history_index: int | None = None
+        self.pasted_blocks: dict[str, str] = {}
+        self.paste_counter = 0
+
+    @property
+    def value(self) -> str:
+        """The current prompt text (alias of :attr:`TextArea.text`).
+
+        :returns: The raw buffer text, including any paste placeholders.
+        """
+        return self.text
+
+    @value.setter
+    def value(self, new_value: str) -> None:
+        self.text = new_value
+        self.move_cursor(self.document.end)
+
+    def expanded_value(self) -> str:
+        """Return the buffer text with every collapsed paste placeholder expanded.
+
+        :returns: The full text the user intends to submit.
+        """
+        text = self.text
+        for placeholder, original in self.pasted_blocks.items():
+            text = text.replace(placeholder, original)
+        return text
+
+    def reset_prompt(self) -> None:
+        """Clear the buffer and forget any collapsed pastes."""
+        self.pasted_blocks = {}
+        self.paste_counter = 0
+        self.value = ""
 
     def remember(self, line: str) -> None:
         """Append *line* to the history ring and reset the browse cursor.
 
         :param line: The submitted line to remember.
         """
-        if line and (not self.history or self.history[-1] != line):
-            self.history.append(line)
+        if line and (not self.command_history or self.command_history[-1] != line):
+            self.command_history.append(line)
         self.history_index = None
 
     def history_prev(self) -> None:
-        """Move one step backwards through history into the input value."""
-        if not self.history:
+        """Move one step backwards through history into the prompt."""
+        if not self.command_history:
             return
         if self.history_index is None:
-            self.history_index = len(self.history) - 1
+            self.history_index = len(self.command_history) - 1
         elif self.history_index > 0:
             self.history_index -= 1
-        self.value = self.history[self.history_index]
-        self.cursor_position = len(self.value)
+        self.value = self.command_history[self.history_index]
 
     def history_next(self) -> None:
         """Move one step forwards through history, clearing past the newest entry."""
         if self.history_index is None:
             return
-        if self.history_index < len(self.history) - 1:
+        if self.history_index < len(self.command_history) - 1:
             self.history_index += 1
-            self.value = self.history[self.history_index]
+            self.value = self.command_history[self.history_index]
         else:
             self.history_index = None
             self.value = ""
-        self.cursor_position = len(self.value)
+
+    async def action_submit(self) -> None:
+        """Post a :class:`Submitted` message with the expanded prompt text."""
+        self.post_message(self.Submitted(self.expanded_value()))
 
     async def _on_key(self, event: events.Key) -> None:
-        """Intercept up/down for history before the default cursor handling.
+        """Map Enter to submit, Shift+Enter / Ctrl+J to newline, and Up/Down to history.
 
         :param event: The key event.
         """
-        if event.key == "up":
+        if event.key == "enter":
+            event.prevent_default()
+            event.stop()
+            await self.action_submit()
+            return
+        if event.key in ("ctrl+j", "shift+enter"):
+            event.prevent_default()
+            event.stop()
+            self.insert("\n")
+            return
+        if event.key == "up" and self.cursor_location[0] == 0:
             event.prevent_default()
             event.stop()
             self.history_prev()
             return
-        if event.key == "down":
+        if event.key == "down" and self.cursor_location[0] == self.document.line_count - 1:
             event.prevent_default()
             event.stop()
             self.history_next()
             return
         await super()._on_key(event)
+
+    async def _on_paste(self, event: events.Paste) -> None:
+        """Collapse large pastes into a placeholder; insert small pastes normally.
+
+        :param event: The paste event carrying the pasted text.
+        """
+        if should_collapse_paste(event.text):
+            event.prevent_default()
+            event.stop()
+            self.paste_counter += 1
+            placeholder = paste_placeholder(self.paste_counter, len(event.text.splitlines()))
+            self.pasted_blocks[placeholder] = event.text
+            self.insert(placeholder)
+            return
+        await super()._on_paste(event)
 
 
 class CommandPalette(OptionList):
@@ -413,4 +512,4 @@ class RightPane(Vertical):
         """
         yield SplashHeader(id="splash")
         yield Transcript(id="transcript", wrap=True, markup=False)
-        yield CommandInput(placeholder="Ask the workflow, or type / for commands", id="input")
+        yield CommandInput(id="input")
