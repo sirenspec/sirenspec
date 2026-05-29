@@ -211,6 +211,14 @@ class Transcript(RichLog):
         """
         self.write(Text(f"      {message}", style=style))
 
+    def add_line(self, message: str, style: str = theme.TERM_DIM) -> None:
+        """Append a flush-left styled line (no speaker gutter), used for diffs.
+
+        :param message: The line text.
+        :param style: The Rich style for the line.
+        """
+        self.write(Text(message, style=style))
+
 
 def gutter_line(label: str, message: str, label_style: str) -> Text:
     """Build a two-column transcript row: a right-aligned label gutter then the message.

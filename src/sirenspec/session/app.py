@@ -22,6 +22,7 @@ from sirenspec.exceptions import SessionError
 from sirenspec.session import theme
 from sirenspec.session.commands import CommandHandler, CommandRegistry, is_command, make_registry
 from sirenspec.session.runtime import TurnNodeEvent, TurnResult, WorkflowSession
+from sirenspec.session.snapshots import SnapshotStore
 from sirenspec.session.summary import WorkflowSummary, summarise_workflow
 from sirenspec.session.widgets import (
     CommandInput,
@@ -136,6 +137,7 @@ class LaunchApp(App):
         Binding("ctrl+c", "quit", "quit", priority=True, show=False),
         Binding("ctrl+b", "toggle_rail", "rail"),
         Binding("ctrl+t", "toggle_drawer", "trace"),
+        Binding("ctrl+r", "rollback", "rollback", show=False),
         Binding("escape", "dismiss_palette", "dismiss", show=False),
     ]
 
@@ -144,9 +146,16 @@ class LaunchApp(App):
         self.session = session
         self.color_mode = theme.ColorMode(enabled=True)
         self.summary: WorkflowSummary = summarise_workflow(session.workflow, session.name)
-        self.snapshot_label = "v1"
+        self.snapshots = SnapshotStore(session.workflow_path)
+        self.snapshot_label = self.snapshots.latest_label()
         self.stream_buffer: list[str] = []
         self.registry: CommandRegistry = make_registry(self.build_command_handlers())
+        self.registry.register(
+            "rollback",
+            "restore a snapshot (reversible)",
+            self.command_rollback,
+            glyph="↺",
+        )
 
     def build_command_handlers(self) -> dict[str, CommandHandler]:
         """Return the mapping of command name to async handler bound to this app.
@@ -161,6 +170,8 @@ class LaunchApp(App):
             "exit": self.command_exit,
             "reload": self.command_reload,
             "run": self.command_run,
+            "snapshot": self.command_snapshot,
+            "diff": self.command_diff,
         }
 
     def compose(self) -> ComposeResult:
@@ -423,10 +434,111 @@ class LaunchApp(App):
     async def command_run(self, _: str) -> None:
         """Execute the full workflow graph end-to-end (vs. turn-by-turn chat).
 
+        Auto-snapshots the working file before running so the pre-run state is recoverable.
+
         :param _: Unused argument string.
         """
+        self.auto_snapshot("run", "pre-run")
         self.transcript.add_notice("running the full workflow graph…", style=theme.CREST_LIGHT)
         await self.drive(self.session.run_full(token_callback=self.on_token))
+
+    def auto_snapshot(self, trigger: str, label: str) -> None:
+        """Take a best-effort snapshot before a destructive or notable action.
+
+        Snapshot failures are surfaced as a notice but never block the action.
+
+        :param trigger: The snapshot trigger (e.g. ``"run"``, ``"test"``).
+        :param label: A human label for the snapshot.
+        """
+        try:
+            self.snapshots.create(label=label, trigger=trigger)
+        except SessionError as exc:
+            self.transcript.add_notice(f"snapshot skipped: {exc}", style=theme.TERM_FAINT)
+            return
+        self.update_snapshot_label()
+
+    def update_snapshot_label(self) -> None:
+        """Refresh the active-snapshot label shown in the status bar and rail."""
+        self.snapshot_label = self.snapshots.latest_label()
+        self.refresh_chrome()
+
+    async def command_snapshot(self, args: str) -> None:
+        """Save a labelled snapshot of the working workflow file.
+
+        :param args: An optional label for the snapshot.
+        """
+        try:
+            snapshot = self.snapshots.create(label=args, trigger="manual")
+        except SessionError as exc:
+            self.transcript.add_notice(str(exc), style=theme.YOU)
+            return
+        self.update_snapshot_label()
+        suffix = f" ({snapshot.label})" if snapshot.label else ""
+        self.transcript.add_notice(f"saved snapshot {snapshot.ref}{suffix}", style=theme.LIGHT)
+
+    async def command_diff(self, args: str) -> None:
+        """Render a diff: working vs. latest, working vs. a snapshot, or between two.
+
+        :param args: Empty (working vs. latest), one ref (working vs. that snapshot), or
+            two refs (snapshot vs. snapshot).
+        """
+        snapshots = self.snapshots.list()
+        if not snapshots:
+            self.transcript.add_notice("no snapshots yet — use /snapshot first", style=theme.TERM_FAINT)
+            return
+        tokens = args.split()
+        try:
+            if not tokens:
+                lines = self.snapshots.diff(snapshots[-1])
+            elif len(tokens) == 1:
+                lines = self.snapshots.diff(self.snapshots.resolve(tokens[0]))
+            else:
+                lines = self.snapshots.diff(self.snapshots.resolve(tokens[0]), self.snapshots.resolve(tokens[1]))
+        except SessionError as exc:
+            self.transcript.add_notice(str(exc), style=theme.YOU)
+            return
+        self.render_diff(lines)
+
+    def render_diff(self, lines: list[str]) -> None:
+        """Render unified-diff *lines* into the transcript with +/- colouring.
+
+        :param lines: Unified-diff lines from the snapshot store.
+        """
+        if not lines:
+            self.transcript.add_notice("no differences", style=theme.TERM_FAINT)
+            return
+        for line in lines:
+            if line.startswith("+") and not line.startswith("+++"):
+                style = theme.LIGHT
+            elif line.startswith("-") and not line.startswith("---"):
+                style = "#ff5f57"
+            elif line.startswith("@@"):
+                style = theme.CREST_LIGHT
+            else:
+                style = theme.TERM_DIM
+            self.transcript.add_line(line, style=style)
+
+    async def command_rollback(self, args: str) -> None:
+        """Restore a snapshot (defaulting to the latest), reversibly, and reload.
+
+        :param args: An optional snapshot ref/label to restore; defaults to the latest.
+        """
+        snapshots = self.snapshots.list()
+        if not snapshots:
+            self.transcript.add_notice("no snapshots to roll back to", style=theme.TERM_FAINT)
+            return
+        try:
+            target = self.snapshots.resolve(args) if args.strip() else snapshots[-1]
+            safety = self.snapshots.rollback(target)
+        except SessionError as exc:
+            self.transcript.add_notice(str(exc), style=theme.YOU)
+            return
+        self.perform_reload(f"rolled back to {target.ref} (state saved as {safety.ref})")
+        self.update_snapshot_label()
+
+    async def action_rollback(self) -> None:
+        """Roll back to the latest snapshot (^R)."""
+        await self.command_rollback("")
 
 
 def render_plain(workflow: Workflow, workflow_name: str, console: Console) -> None:

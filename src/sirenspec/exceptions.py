@@ -174,6 +174,14 @@ class SessionError(SirenSpecError):
     """
 
 
+class SnapshotError(SessionError):
+    """Raised when a snapshot store operation fails.
+
+    Covers create/list/diff/rollback failures — e.g. an unknown snapshot reference, a
+    corrupt snapshot index, or an I/O error writing under ``.sirenspec/versions/``.
+    """
+
+
 class FactoryNodeError(SirenSpecError):
     """Raised when a factory node instance fails and ``on_failure`` is ``'abort'``.
 
