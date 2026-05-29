@@ -28,7 +28,7 @@ from sirenspec.core.models import AgentNode, FactoryNode, SwrmNode, Workflow, Wo
 
 _TEMPLATE_RE = re.compile(r"\{\{\s*(.+?)\s*\}\}")
 _DEFAULT_FILTER_RE = re.compile(r"^(.+?)\s*\|\s*(?:default|json_or_default)\s*\(")
-_RESERVED = frozenset({"inputs", "env", "item", "index", "total"})
+_RESERVED = frozenset({"inputs", "env", "item", "index", "total", "memory"})
 
 
 @dataclass

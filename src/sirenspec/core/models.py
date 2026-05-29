@@ -124,6 +124,27 @@ class BudgetConfig(BaseModel):
         return self
 
 
+class MemoryConfig(BaseModel):
+    """Top-level workflow memory configuration.
+
+    Declares a persistent key-value store that survives process restarts.  Node
+    ``writes:`` paths starting with ``memory.`` are routed to this store instead of
+    the in-process :class:`~sirenspec.core.context.WorkflowContext`.  All live keys
+    are snapshotted before execution and exposed as ``{{ memory.key }}`` in templates.
+
+    :param backend: Storage backend — ``'sqlite'`` (default, safer for concurrent writes)
+        or ``'file'`` (plain JSON file, sufficient for single-process use).
+    :param path: Directory (SQLite) or file base-path (JSON) for the store.
+        Relative paths are resolved against the current working directory.
+    :param ttl: Default time-to-live in seconds for all entries.  ``None`` means
+        entries persist indefinitely.  Individual node writes may override this.
+    """
+
+    backend: Literal["file", "sqlite"] = "sqlite"
+    path: str = ".sirenspec/memory"
+    ttl: int | None = Field(default=None, ge=1, description="Default TTL in seconds; None means no expiry.")
+
+
 class AgentDefinition(BaseModel):
     """Defines an LLM agent: model URI, system prompt, and optional guardrails."""
 
@@ -643,6 +664,13 @@ class Workflow(BaseModel):
         description=(
             "Path to a .env file to load before execution, relative to the workflow file. "
             "Variables are set in os.environ so provider clients pick them up automatically."
+        ),
+    )
+    memory: MemoryConfig | None = Field(
+        default=None,
+        description=(
+            "Optional persistent memory store.  When set, node writes to 'memory.*' paths "
+            "are persisted across runs and '{{ memory.key }}' resolves in all templates."
         ),
     )
 

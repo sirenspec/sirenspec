@@ -34,9 +34,10 @@ from sirenspec.core.tool_runner import execute_tool_node
 from sirenspec.core.usage import TokenUsage
 from sirenspec.core.workflow_registry import WorkflowRegistry
 from sirenspec.core.workflow_runner import resolve_node_inputs, resolve_sub_workflow
-from sirenspec.exceptions import BudgetExceededError, HumanInputError, RetryExhaustedError, ValidationError
+from sirenspec.exceptions import BudgetExceededError, HumanInputError, MemoryError, RetryExhaustedError, ValidationError
 from sirenspec.guardrails.base import GuardrailViolation, WorkflowGuardrail
 from sirenspec.guardrails.registry import build_guardrails
+from sirenspec.memory.manager import MemoryManager, build_store
 
 logger = logging.getLogger(__name__)
 
@@ -301,6 +302,37 @@ def derive_node_type(node: Any) -> str:
     return type(node).__name__.lower().removesuffix("node")
 
 
+def route_write(
+    path: str,
+    value: Any,
+    context: WorkflowContext,
+    memory_manager: MemoryManager | None,
+    memory_snapshot: dict[str, Any],
+) -> None:
+    """Write *value* to either the memory store or the workflow context depending on *path*.
+
+    Paths that start with ``memory.`` are routed to *memory_manager* (stripped of the prefix)
+    and the in-process *memory_snapshot* is updated so subsequent nodes in the same run see
+    the new value via ``{{ memory.key }}`` interpolation.
+    All other paths go to :meth:`~sirenspec.core.context.WorkflowContext.write`.
+
+    :param path: Dot-notation write path, e.g. ``output.reply`` or ``memory.summary``.
+    :param value: The value to persist.
+    :param context: The live workflow context for non-memory writes.
+    :param memory_manager: Active MemoryManager; ``None`` when the workflow has no ``memory:`` block.
+    :param memory_snapshot: The live snapshot dict passed to interpolation contexts; updated in-place.
+    :raises MemoryError: When *path* starts with ``memory.`` but the workflow has no ``memory:`` block.
+    """
+    if path.startswith("memory."):
+        key = path[len("memory.") :]
+        if memory_manager is None:
+            raise MemoryError(f"Cannot write to '{path}': workflow has no 'memory:' block configured.")
+        memory_manager.write(key, value)
+        memory_snapshot[key] = value
+        return
+    context.write(path, value)
+
+
 def resolve_retry_policy(workflow: Workflow, node_id: str) -> RetryPolicy:
     """Return the effective :class:`~sirenspec.core.models.RetryPolicy` for *node_id*.
 
@@ -437,6 +469,12 @@ async def execute(
     context = WorkflowContext(initial_state=workflow.state)
     node_ids = list(workflow.nodes.keys())
 
+    memory_manager: MemoryManager | None = None
+    memory_snapshot: dict[str, Any] = {}
+    if workflow.memory is not None:
+        memory_manager = MemoryManager(build_store(workflow.memory))
+        memory_snapshot = memory_manager.read_namespace()
+
     # Build two graph structures: out_edges for edge traversal after each node
     # completes, and in_degree for identifying root nodes (those with no predecessors).
     out_edges: dict[str, list[tuple[str, str | None]]] = {n: [] for n in node_ids}
@@ -499,7 +537,9 @@ async def execute(
         # Human node — pauses for operator input; no provider call.           #
         # ------------------------------------------------------------------ #
         if isinstance(node, HumanNode):
-            human_interp_ctx = build_interpolation_context(user_input, context.working, extra_inputs=initial_inputs)
+            human_interp_ctx = build_interpolation_context(
+                user_input, context.working, extra_inputs=initial_inputs, memory=memory_snapshot
+            )
             rendered_prompt = resolve_template(node.prompt, human_interp_ctx) if node.prompt else ""
             human_trace: dict[str, Any] = {
                 "id": node_id,
@@ -521,9 +561,9 @@ async def execute(
                 trace_nodes.append(human_trace)
                 break
 
-            context.write(node.writes, human_result.response)
+            route_write(node.writes, human_result.response, context, memory_manager, memory_snapshot)
             context.write(f"working.{node_id}.output", human_result.response)
-            last_writes_path = node.writes
+            last_writes_path = f"working.{node_id}.output" if node.writes.startswith("memory.") else node.writes
 
             human_trace["response_received"] = human_result.response
             human_trace["timed_out"] = human_result.timed_out
@@ -558,6 +598,7 @@ async def execute(
                     working=context.working,
                     output=context.output,
                     global_guardrail_names=global_guardrail_names,
+                    memory=memory_snapshot,
                 )
             except Exception as exc:
                 duration_ms = (time.monotonic() - start_time) * 1000
@@ -619,7 +660,9 @@ async def execute(
             }
             start_time = time.monotonic()
             try:
-                tool_interp_ctx = build_interpolation_context(user_input, context.working, extra_inputs=initial_inputs)
+                tool_interp_ctx = build_interpolation_context(
+                    user_input, context.working, extra_inputs=initial_inputs, memory=memory_snapshot
+                )
                 interpolated_node = interpolate_tool_config(node, tool_interp_ctx)
                 run_result = await execute_tool_node(node_id, interpolated_node)
                 context.write(f"working.{node_id}.{node.output_key}", run_result.result)
@@ -657,6 +700,7 @@ async def execute(
                     working=context.working,
                     output=context.output,
                     guardrail_names=global_guardrail_names,
+                    memory=memory_snapshot,
                 )
             except Exception as exc:
                 duration_ms = (time.monotonic() - start_time) * 1000
@@ -675,10 +719,10 @@ async def execute(
                 break
 
             outputs_list = factory_trace["outputs"]
-            context.write(node.writes, outputs_list)
+            route_write(node.writes, outputs_list, context, memory_manager, memory_snapshot)
             context.write(f"working.{node_id}.outputs", outputs_list)
             context.write(f"working.{node_id}.output", "\n".join(s for s in outputs_list if s))
-            last_writes_path = node.writes
+            last_writes_path = f"working.{node_id}.output" if node.writes.startswith("memory.") else node.writes
 
             total_usage += TokenUsage(prompt_tokens=0, completion_tokens=factory_trace["tokens"])
             total_duration_ms += factory_trace["duration_ms"]
@@ -737,7 +781,7 @@ async def execute(
             context.write(f"output.{node_id}", sub_output)
             context.write(f"working.{node_id}.output", sub_output)
             if node.writes:
-                context.write(node.writes, sub_output)
+                route_write(node.writes, sub_output, context, memory_manager, memory_snapshot)
             last_writes_path = f"output.{node_id}"
 
             total_usage += TokenUsage(prompt_tokens=0, completion_tokens=wf_trace["tokens"])
@@ -785,7 +829,9 @@ async def execute(
 
         # Resolve the system prompt with the current context so {{ inputs.* }} and
         # {{ node_id.output }} expressions in system prompts are evaluated at runtime.
-        interp_ctx = build_interpolation_context(user_input, context.working, extra_inputs=initial_inputs)
+        interp_ctx = build_interpolation_context(
+            user_input, context.working, extra_inputs=initial_inputs, memory=memory_snapshot
+        )
         resolved_system = resolve_template(agent_def.system, interp_ctx)
         redacted_system = resolve_template(agent_def.system, interp_ctx, redact_env=True)
 
@@ -818,9 +864,9 @@ async def execute(
                 max_tokens=node.max_tokens_per_call,
             )
 
-            context.write(node.writes, run_result.output)
+            route_write(node.writes, run_result.output, context, memory_manager, memory_snapshot)
             context.write(f"working.{node_id}.output", run_result.output)
-            last_writes_path = node.writes
+            last_writes_path = f"working.{node_id}.output" if node.writes.startswith("memory.") else node.writes
 
             for target, condition in out_edges[node_id]:
                 if condition is None or evaluate_when_condition(condition, context):
@@ -899,8 +945,8 @@ async def execute(
 
             elif action == "use_default":
                 default_val = on_failure_policy.default_output or ""
-                context.write(node.writes, default_val)
-                last_writes_path = node.writes
+                route_write(node.writes, default_val, context, memory_manager, memory_snapshot)
+                last_writes_path = f"working.{node_id}.output" if node.writes.startswith("memory.") else node.writes
                 agent_node_trace["on_failure_action"] = "use_default"
                 agent_node_trace["response_received"] = default_val
                 trace_nodes.append(agent_node_trace)
@@ -935,13 +981,17 @@ async def execute(
     if budget_status is not None:
         summary["budget"] = budget_status
 
-    return {
-        "workflow": {"version": workflow.version},
-        "input": {"message": user_input},
-        "nodes": trace_nodes,
-        "output": context.output,
-        "summary": summary,
-    }
+    try:
+        return {
+            "workflow": {"version": workflow.version},
+            "input": {"message": user_input},
+            "nodes": trace_nodes,
+            "output": context.output,
+            "summary": summary,
+        }
+    finally:
+        if memory_manager is not None:
+            memory_manager.close()
 
 
 async def execute_streaming(
@@ -985,6 +1035,12 @@ async def execute_streaming(
     start_wall = time.monotonic()
     context = WorkflowContext(initial_state=workflow.state)
     node_ids = list(workflow.nodes.keys())
+
+    memory_manager_s: MemoryManager | None = None
+    memory_snapshot_s: dict[str, Any] = {}
+    if workflow.memory is not None:
+        memory_manager_s = MemoryManager(build_store(workflow.memory))
+        memory_snapshot_s = memory_manager_s.read_namespace()
 
     out_edges: dict[str, list[tuple[str, str | None]]] = {n: [] for n in node_ids}
     in_degree: dict[str, int] = dict.fromkeys(node_ids, 0)
@@ -1038,7 +1094,9 @@ async def execute_streaming(
         active_node_count += 1
 
         if isinstance(node, HumanNode):
-            human_interp_ctx = build_interpolation_context(user_input, context.working, extra_inputs=initial_inputs)
+            human_interp_ctx = build_interpolation_context(
+                user_input, context.working, extra_inputs=initial_inputs, memory=memory_snapshot_s
+            )
             rendered_prompt = resolve_template(node.prompt, human_interp_ctx) if node.prompt else ""
             try:
                 human_result = await execute_human_node(node_id, node, rendered_prompt, human_input_fn)
@@ -1052,9 +1110,9 @@ async def execute_streaming(
                 )
                 break
 
-            context.write(node.writes, human_result.response)
+            route_write(node.writes, human_result.response, context, memory_manager_s, memory_snapshot_s)
             context.write(f"working.{node_id}.output", human_result.response)
-            last_writes_path = node.writes
+            last_writes_path = f"working.{node_id}.output" if node.writes.startswith("memory.") else node.writes
             total_duration_ms += human_result.duration_ms
 
             try:
@@ -1093,6 +1151,7 @@ async def execute_streaming(
                     working=context.working,
                     output=context.output,
                     global_guardrail_names=global_guardrail_names,
+                    memory=memory_snapshot_s,
                 )
             except Exception as exc:
                 duration_ms = (time.monotonic() - node_start) * 1000
@@ -1150,7 +1209,9 @@ async def execute_streaming(
         if isinstance(node, ToolNode):
             node_start = time.monotonic()
             try:
-                tool_interp_ctx = build_interpolation_context(user_input, context.working, extra_inputs=initial_inputs)
+                tool_interp_ctx = build_interpolation_context(
+                    user_input, context.working, extra_inputs=initial_inputs, memory=memory_snapshot_s
+                )
                 interpolated_node = interpolate_tool_config(node, tool_interp_ctx)
                 run_result = await execute_tool_node(node_id, interpolated_node)
                 context.write(f"working.{node_id}.{node.output_key}", run_result.result)
@@ -1192,6 +1253,7 @@ async def execute_streaming(
                     working=context.working,
                     output=context.output,
                     guardrail_names=global_guardrail_names,
+                    memory=memory_snapshot_s,
                 )
             except Exception as exc:
                 duration_ms = (time.monotonic() - node_start) * 1000
@@ -1206,10 +1268,10 @@ async def execute_streaming(
                 break
 
             outputs_list = factory_trace["outputs"]
-            context.write(node.writes, outputs_list)
+            route_write(node.writes, outputs_list, context, memory_manager_s, memory_snapshot_s)
             context.write(f"working.{node_id}.outputs", outputs_list)
             context.write(f"working.{node_id}.output", "\n".join(s for s in outputs_list if s))
-            last_writes_path = node.writes
+            last_writes_path = f"working.{node_id}.output" if node.writes.startswith("memory.") else node.writes
 
             total_usage += TokenUsage(prompt_tokens=0, completion_tokens=factory_trace["tokens"])
             total_duration_ms += factory_trace["duration_ms"]
@@ -1274,7 +1336,7 @@ async def execute_streaming(
             context.write(f"output.{node_id}", sub_output)
             context.write(f"working.{node_id}.output", sub_output)
             if node.writes:
-                context.write(node.writes, sub_output)
+                route_write(node.writes, sub_output, context, memory_manager_s, memory_snapshot_s)
             last_writes_path = f"output.{node_id}"
 
             total_usage += TokenUsage(prompt_tokens=0, completion_tokens=wf_trace["tokens"])
@@ -1322,7 +1384,9 @@ async def execute_streaming(
         retry_policy = resolve_retry_policy(workflow, node_id)
         on_failure_policy = resolve_on_failure_policy(workflow, node_id)
 
-        interp_ctx = build_interpolation_context(user_input, context.working, extra_inputs=initial_inputs)
+        interp_ctx = build_interpolation_context(
+            user_input, context.working, extra_inputs=initial_inputs, memory=memory_snapshot_s
+        )
         resolved_system = resolve_template(agent_def.system, interp_ctx)
 
         node_start = time.monotonic()
@@ -1339,9 +1403,9 @@ async def execute_streaming(
                 max_tokens=node.max_tokens_per_call,
             )
 
-            context.write(node.writes, run_result.output)
+            route_write(node.writes, run_result.output, context, memory_manager_s, memory_snapshot_s)
             context.write(f"working.{node_id}.output", run_result.output)
-            last_writes_path = node.writes
+            last_writes_path = f"working.{node_id}.output" if node.writes.startswith("memory.") else node.writes
 
             for target, condition in out_edges[node_id]:
                 if condition is None or evaluate_when_condition(condition, context):
@@ -1432,8 +1496,8 @@ async def execute_streaming(
 
             elif action == "use_default":
                 default_val = on_failure_policy.default_output or ""
-                context.write(node.writes, default_val)
-                last_writes_path = node.writes
+                route_write(node.writes, default_val, context, memory_manager_s, memory_snapshot_s)
+                last_writes_path = f"working.{node_id}.output" if node.writes.startswith("memory.") else node.writes
                 for target, condition in out_edges[node_id]:
                     if condition is None or evaluate_when_condition(condition, context):
                         active_nodes.add(target)
@@ -1458,11 +1522,15 @@ async def execute_streaming(
             )
             break
 
-    yield SummaryEvent(
-        total_nodes=active_node_count,
-        total_tokens=total_usage.total,
-        estimated_usd=total_estimated_usd,
-        status=status,
-        duration_ms=round((time.monotonic() - start_wall) * 1000, 2),
-        budget=build_budget_status(budget_state, total_usage, total_estimated_usd),
-    )
+    try:
+        yield SummaryEvent(
+            total_nodes=active_node_count,
+            total_tokens=total_usage.total,
+            estimated_usd=total_estimated_usd,
+            status=status,
+            duration_ms=round((time.monotonic() - start_wall) * 1000, 2),
+            budget=build_budget_status(budget_state, total_usage, total_estimated_usd),
+        )
+    finally:
+        if memory_manager_s is not None:
+            memory_manager_s.close()

@@ -255,6 +255,7 @@ async def execute_swrm(
     working: dict[str, Any],
     output: dict[str, Any],
     global_guardrail_names: list[str] | None,
+    memory: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Execute a swrm node and return a structured trace dict.
 
@@ -300,7 +301,7 @@ async def execute_swrm(
     concurrency = node.concurrency if node.concurrency is not None else len(agents)
     semaphore = asyncio.Semaphore(concurrency)
 
-    interp_ctx = build_interpolation_context(user_input, working)
+    interp_ctx = build_interpolation_context(user_input, working, memory=memory)
 
     agent_results: dict[str, str] = {}
 
@@ -380,7 +381,7 @@ async def execute_swrm(
             **working,
             node_id: {"agents": {aid: {"output": out} for aid, out in agent_results.items()}},
         }
-        synth_ctx = build_interpolation_context(user_input, synth_working)
+        synth_ctx = build_interpolation_context(user_input, synth_working, memory=memory)
         synthesis_trace = {
             "prompt_sent": None,
             "response_received": None,

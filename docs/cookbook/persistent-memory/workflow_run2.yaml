@@ -1,0 +1,23 @@
+version: "0.1"
+
+memory:
+  backend: sqlite
+  path: .sirenspec/research-memory  # same store — picks up run 1 findings
+
+agents:
+  analyst:
+    model: "openai:gpt-4o-mini"
+    system: |
+      You are an analyst. Using only the prior research below, write three
+      actionable insights. Do not repeat the summary verbatim.
+
+      Prior research:
+      {{ memory.summary }}
+
+nodes:
+  analyse:
+    agent: analyst
+    writes: output.insights
+
+input:
+  message: "Derive insights from the stored research."

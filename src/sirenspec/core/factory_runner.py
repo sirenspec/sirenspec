@@ -101,6 +101,7 @@ async def run_factory_instance(
     user_input: str,
     guardrail_names: list[str] | None,
     total: int | None = None,
+    memory: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], FactoryNodeError | None]:
     """Execute a single factory instance and return ``(trace_dict, error_or_None)``.
 
@@ -119,9 +120,10 @@ async def run_factory_instance(
     :param user_input: The original workflow input message.
     :param guardrail_names: Guardrail names to apply to this instance.
     :param total: Total number of instances in this execution; populates ``{{ total }}``.
+    :param memory: Current memory namespace snapshot for ``{{ memory.* }}`` expressions.
     :returns: Tuple of (instance trace dict, FactoryNodeError or None on success).
     """
-    loop_ctx = build_interpolation_context(user_input, base_working, item=item, index=idx, total=total)
+    loop_ctx = build_interpolation_context(user_input, base_working, item=item, index=idx, total=total, memory=memory)
 
     resolved_inputs = {key: resolve_template(val, loop_ctx) for key, val in node.inputs.items()}
 
@@ -192,6 +194,7 @@ async def run_swrm_factory_instance(
     user_input: str,
     guardrail_names: list[str] | None,
     total: int,
+    memory: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], FactoryNodeError | None]:
     """Execute one swrm for a single factory item and return ``(trace_dict, error_or_None)``.
 
@@ -208,9 +211,10 @@ async def run_swrm_factory_instance(
     :param user_input: The original workflow input message.
     :param guardrail_names: Workflow-level guardrail names.
     :param total: Total number of items in this execution (populates ``{{ total }}``).
+    :param memory: Current memory namespace snapshot for ``{{ memory.* }}`` expressions.
     :returns: Tuple of (instance trace dict, FactoryNodeError or None on success).
     """
-    interp_ctx = build_interpolation_context(user_input, base_working, item=item, index=idx, total=total)
+    interp_ctx = build_interpolation_context(user_input, base_working, item=item, index=idx, total=total, memory=memory)
 
     instance_trace: dict[str, Any] = {
         "index": idx,
@@ -263,6 +267,7 @@ async def execute_factory_node(
     working: dict[str, Any],
     output: dict[str, Any],
     guardrail_names: list[str] | None,
+    memory: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Execute a factory node: fan-out over a runtime list with concurrency control.
 
@@ -296,6 +301,7 @@ async def execute_factory_node(
     :param working: Current working context dict (read-only snapshot).
     :param output: Current output context dict (read-only snapshot).
     :param guardrail_names: Workflow-level guardrail names.
+    :param memory: Current memory namespace snapshot for ``{{ memory.* }}`` expressions.
     :raises FactoryNodeError: If ``on_failure`` is ``'abort'`` and any instance fails.
     :returns: Structured trace dict for the factory node.
     """
@@ -321,6 +327,7 @@ async def execute_factory_node(
                     user_input=user_input,
                     guardrail_names=guardrail_names,
                     total=total,
+                    memory=memory,
                 )
 
         tasks = [run_swrm_with_semaphore(idx, item) for idx, item in enumerate(items)]
@@ -349,6 +356,7 @@ async def execute_factory_node(
                     user_input=user_input,
                     guardrail_names=agent_guardrail_names,
                     total=total,
+                    memory=memory,
                 )
 
         tasks = [run_with_semaphore(idx, item) for idx, item in enumerate(items)]

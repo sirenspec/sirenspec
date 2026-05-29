@@ -6,6 +6,29 @@
   "required": ["version", "nodes"],
   "additionalProperties": false,
   "definitions": {
+    "MemoryConfig": {
+      "type": "object",
+      "description": "Persistent cross-run memory store configuration.",
+      "additionalProperties": false,
+      "properties": {
+        "backend": {
+          "type": "string",
+          "enum": ["file", "sqlite"],
+          "default": "sqlite",
+          "description": "Storage backend: 'sqlite' (default, safer for concurrent writes) or 'file' (plain JSON)."
+        },
+        "path": {
+          "type": "string",
+          "default": ".sirenspec/memory",
+          "description": "Directory path (sqlite) or file base-path (file) for the store. Relative to the working directory."
+        },
+        "ttl": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Default time-to-live in seconds for all entries. Omitted means entries persist indefinitely."
+        }
+      }
+    },
     "AgentNode": {
       "type": "object",
       "description": "A regular agent node that runs a single named agent and writes output to a context path.",
@@ -489,6 +512,10 @@
     "budget": {
       "$ref": "#/definitions/BudgetConfig",
       "description": "Optional cumulative budget for the run. The executor enforces token/USD/duration ceilings after every node and includes the status in the trace summary."
+    },
+    "memory": {
+      "$ref": "#/definitions/MemoryConfig",
+      "description": "Optional persistent memory store. When set, node writes to 'memory.*' paths are persisted across runs and '{{ memory.key }}' resolves in all templates."
     }
   }
 }
