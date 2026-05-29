@@ -6,6 +6,19 @@ description: Notable changes to SirenSpec, following Semantic Versioning.
 SirenSpec follows [Semantic Versioning](https://semver.org/). This page mirrors the
 [`CHANGELOG.md`](https://github.com/sirenspec/sirenspec/blob/main/CHANGELOG.md) in the repository.
 
+## Unreleased
+
+### Added
+
+- **`sirenspec launch` — the workflow studio.** A full-screen [Textual](https://textual.textualize.io/) TUI for building, testing, and refining a workflow, themed with the SirenSpec brand (Crest mascot + `#0D9373` / `#07C983` palette). See [Workflow Studio](/launch).
+  - **Production-style testing runtime** — each message is a live turn against real providers; agents retain context across turns; per-node attribution shows provider, tokens, latency, and a running cost estimate. `/run` executes the full graph end-to-end. The session hot-reloads on file save without losing history, and `--session <id>` persists/rehydrates the conversation through the workflow's `memory:` backend.
+  - **`/edit` suggestive editor** — a split view where an AI assistant (your own key — Anthropic first, then OpenAI) proposes changes as an approve-able diff. Accepted changes are validated before write and auto-snapshotted; `/test` runs the in-progress edit live without leaving edit mode.
+  - **Native snapshots** — git-independent version control under `.sirenspec/versions/`: `/snapshot`, `/diff`, and one-key reversible rollback (`^R`), with auto-snapshots before `/run`/`/test` and on accept, plus a configurable retention policy.
+  - **Multi-line prompt** — `Enter` submits, `Shift+Enter` / `Ctrl+J` insert a newline, and large pastes (more than 3 lines or 100 words) collapse into a `[Pasted text …]` placeholder that expands on submit.
+  - **Graceful degradation** — `--plain`, `NO_COLOR`, and non-interactive terminals fall back to a plain console.
+- New `SessionError`, `SnapshotError`, and `EditAssistantError` members of the `SirenSpecError` hierarchy.
+- New runtime dependency: `textual`.
+
 ## 0.1.2 — 2026-05-28
 
 A reliability and authoring-ergonomics release driven by early-user feedback. No breaking changes.

@@ -1,0 +1,112 @@
+---
+title: Workflow Studio
+description: Test, edit, and version your workflow live in a full-screen terminal studio with sirenspec launch.
+---
+
+`sirenspec launch` turns any workflow into a polished full-screen **TUI** — a one-stop workflow studio in the terminal. You **test workflows as if in production** (the workflow's agents run live), and when something is off you **triage and edit in place** with a suggestive AI assistant, backed by **local version snapshots** so iteration is fearless.
+
+It fits the pipeline like this: `init` scaffolds → **`launch` builds, tests & refines** → `run` executes in production.
+
+```bash
+sirenspec launch workflow.yaml
+```
+
+The studio is built with [Textual](https://textual.textualize.io/) and themed with the SirenSpec brand (the Crest mascot and the `#0D9373` / `#07C983` palette). On a non-interactive terminal — or with `--plain` / `NO_COLOR` — it falls back cleanly to a plain console summary.
+
+## The layout
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│  ⌁ SirenSpec · market-analysis          ● live   ◇ snapshot v3   anthropic │
+├──────────────────────────────────────────────────────────────────────┤
+│   ╭─ Crest ─╮                                                          │
+│   │  ◜◞◟◝   │   market-analysis · 3 nodes · 2 agents                   │
+│   ╰─────────╯   testing in production mode                             │
+│                                                                        │
+│   You    What are the risks in the Q2 report?                          │
+│   ⠙ analyze ▸ risk (anthropic)         1.2s · 412 tok · $0.004         │
+│   Siren  Three concentration risks stand out: …                        │
+├──────────────────────────────────────────────────────────────────────┤
+│ ›                                                                      │
+├──────────────────────────────────────────────────────────────────────┤
+│ /edit  /run  /snapshot  /diff  /reload  /help   ↑↓ history   ^C quit   │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+- **Status bar** — workflow name, live/idle state, the active snapshot, and the provider.
+- **Workflow rail** (`^B` to toggle) — the node tree, the agent roster, and live session stats (turns and cost).
+- **Transcript** — the conversation, with a per-node attribution line under each turn.
+- **Prompt** — a multi-line input with command history.
+- **Trace drawer** (`^T` to toggle) — the active node, latency, tokens, and the running cost.
+
+## Testing in production mode
+
+Type a message and press `Enter`. Each message is a **turn**: the studio runs the workflow's agents live against your configured providers (Anthropic first, then OpenAI), streams the response into the transcript, and shows per-node attribution — the active node, its provider, token count, latency, and a running USD cost estimate.
+
+Agents **retain context across turns** within a session, so a follow-up question sees everything said so far.
+
+- **`/run`** executes the full workflow graph end-to-end, rather than turn-by-turn chat.
+- **Hot-reload** — when you save the workflow file in your editor, the studio rebuilds the session automatically without losing the conversation.
+- **`--session <id>`** persists the conversation through the workflow's [`memory:`](/yaml-reference) backend and rehydrates it on the next launch:
+
+  ```bash
+  sirenspec launch workflow.yaml --session demo
+  ```
+
+  This requires the workflow to declare a `memory:` block to persist into.
+
+## Editing with `/edit`
+
+`/edit` opens a split view — the workflow on the left, an assistant conversation on the right. Describe a change in plain language and the assistant proposes it as a **diff** you can act on:
+
+```
+┌─ SirenSpec · /edit market-analysis ────────────────────────── anthropic ─┐
+├──────────────────────────────┬────────────────────────────────────────────┤
+│ workflow.yaml          ◇ v3  │  You: flag PII before the report is analyzed│
+│  nodes:                      │  Proposed change ▾                         │
+│   ▸ analyze (swrm)           │   + - id: pii_filter                       │
+│   ▸ store (tool: http)       │   +   type: guardrail                      │
+│                              │  [a]ccept   [e]dit   [r]eject              │
+├──────────────────────────────┴────────────────────────────────────────────┤
+│ ✎ editor · accept auto-snapshots        /test   /exit-edit   ^C           │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+The assistant runs on **your own provider key** — Anthropic preferred, OpenAI as a fallback. It is **suggestive only**: it never writes silently.
+
+- **`[a]ccept`** — the change must pass `validate` before it is written; invalid proposals are rejected with a reason. Every accepted change auto-creates a snapshot.
+- **`[e]dit`** — open the proposal in an editable buffer to tweak it before accepting.
+- **`[r]eject`** — discard the proposal.
+- **`/test`** — run the in-progress edit against the live runtime without leaving edit mode.
+- **`/exit-edit`** — return to the studio.
+
+## Snapshots and rollback
+
+The studio keeps **git-independent** version control for the workflow under `.sirenspec/versions/`, so you can iterate without fear.
+
+| Command | Action |
+|---------|--------|
+| `/snapshot [label]` | Save a labelled snapshot of the working file. |
+| `/diff` | Diff the working tree against the latest snapshot. |
+| `/diff vN` | Diff the working tree against snapshot `vN`. |
+| `/diff vN vM` | Diff two snapshots against each other. |
+| `/rollback [vN]` | Restore a snapshot (defaults to the latest). |
+
+Rollback is **reversible**: the current state is snapshotted before the restore, so you can roll the rollback back. `^R` rolls back to the latest snapshot in one keystroke. Snapshots are auto-created before a `/run` and before a `/test`, and on every accepted `/edit`. A retention policy keeps all manual / accepted / rollback snapshots and prunes older automatic ones.
+
+## The prompt
+
+The prompt is multi-line:
+
+- **`Enter`** submits the turn.
+- **`Shift+Enter`** or **`Ctrl+J`** insert a newline.
+- **`↑` / `↓`** browse command history (and move the caret within a multi-line buffer).
+- Large pastes (more than 3 lines or 100 words) collapse into a `[Pasted text #N (lines 1-K)]` placeholder that expands to the full text when you submit.
+
+## Slash commands and keys
+
+Type `/` to summon the command palette. See the [CLI Reference](/cli-reference#sirenspec-launch) for the full command and key-binding tables.
+
+## Graceful degradation
+
+If the terminal is not interactive, or `NO_COLOR` is set, or you pass `--plain`, `launch` prints a colourless summary of the workflow and points you at `sirenspec run` instead of starting the full-screen app.

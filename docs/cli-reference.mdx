@@ -77,6 +77,53 @@ Next steps:
 
 ---
 
+## `sirenspec launch`
+
+Open the **workflow studio** — a full-screen [Textual](https://textual.textualize.io/) TUI for testing a workflow as if it were in production, editing it in place with an AI assistant, and snapshotting versions. See the [Workflow Studio](/launch) guide for the full tour.
+
+```bash
+sirenspec launch <workflow-file> [OPTIONS]
+```
+
+**Arguments:**
+
+| Argument | Description |
+|----------|-------------|
+| `workflow-file` | Path to the workflow YAML file to load into the session. |
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--session TEXT` | Resume a named session; persists and rehydrates the conversation via the workflow's `memory:` backend. |
+| `--plain` | Disable colour and the full-screen UI, printing a plain console summary instead. |
+
+The studio also falls back to the plain console automatically when `NO_COLOR` is set or stdout is not an interactive terminal.
+
+**Slash commands** (type `/` to summon the palette):
+
+| Command | Action |
+|---------|--------|
+| `/edit` | Open the suggestive editor: an AI assistant proposes changes as an approve-able diff. |
+| `/run` | Execute the full workflow graph end-to-end (vs. turn-by-turn chat). |
+| `/snapshot [label]` | Save a labelled version snapshot under `.sirenspec/versions/`. |
+| `/diff [vN] [vM]` | Diff the working tree against a snapshot, or two snapshots against each other. |
+| `/rollback [vN]` | Restore a snapshot (defaults to the latest); the prior state is snapshotted first, so it is reversible. |
+| `/reload` | Rebuild the session from the workflow file on disk. |
+| `/help` | List the available commands. |
+| `/exit` | Leave the studio. |
+
+**Key bindings:** `Enter` submits a turn · `Shift+Enter` / `Ctrl+J` insert a newline · `↑/↓` browse history · `^B` toggles the workflow rail · `^T` toggles the trace drawer · `^R` rolls back to the latest snapshot · `^C` quits.
+
+**Exit codes:**
+
+| Code | Meaning |
+|------|---------|
+| `0` | The studio closed normally. |
+| `1` | The workflow could not be loaded, or the session could not be created (e.g. `--session` without a `memory:` backend). |
+
+---
+
 ## `sirenspec run`
 
 Execute a workflow and display the results. By default, node execution is rendered with Rich formatting to the terminal (streaming per-node view). Use `--trace` or `--output json` to output the full JSON execution trace instead.

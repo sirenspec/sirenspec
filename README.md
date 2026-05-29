@@ -62,16 +62,33 @@ The repository pins Python 3.13 in `.python-version` for development. Users runn
 
 ## CLI
 
-SirenSpec ships six commands. See the [CLI Reference](https://docs.sirenspec.dev/cli-reference) for the full surface.
+SirenSpec ships seven commands. See the [CLI Reference](https://docs.sirenspec.dev/cli-reference) for the full surface.
 
 | Command | Purpose |
 |---------|---------|
 | `sirenspec init` | Interactive scaffolding for a new `workflow.yaml` and `.env.example`. |
+| `sirenspec launch` | Open the full-screen **workflow studio** — test live, edit with an AI assistant, snapshot. |
 | `sirenspec run` | Execute a workflow with streaming node output (or `--trace` for JSON). |
 | `sirenspec validate` | Parse and schema-check a workflow without making LLM calls. |
 | `sirenspec explain` | Print a dry-run execution plan (text or JSON) — no LLM calls. |
 | `sirenspec render` | Render a workflow as a Mermaid diagram. |
 | `sirenspec test` | Discover and run YAML test fixtures, with optional cassette replay. |
+
+### `sirenspec launch`
+
+Open the **workflow studio** — a full-screen Textual TUI for testing a workflow as if it were in production. A scrolling transcript runs each message as a live turn against real providers, with per-node attribution (provider, tokens, latency, cost). A `/` command palette drives the studio:
+
+```bash
+sirenspec launch workflow.yaml
+sirenspec launch workflow.yaml --session demo   # resume a saved conversation (needs a memory: backend)
+sirenspec launch workflow.yaml --plain          # plain console fallback (also honours NO_COLOR / non-TTY)
+```
+
+- **Test live** — type a message to run a turn; agents retain context across turns. `/run` executes the full graph end-to-end.
+- **`/edit`** — a suggestive AI assistant (your own key — Anthropic first, then OpenAI) proposes changes as an approve-able diff; accepted changes are validated and auto-snapshotted.
+- **Snapshots** — `/snapshot` saves a version under `.sirenspec/versions/`, `/diff` compares versions, and `^R` rolls back (reversibly).
+- **Hot-reload** — edits to the file on disk rebuild the session without losing the conversation.
+- **Multi-line input** — `Enter` submits; `Shift+Enter` / `Ctrl+J` add a newline; large pastes collapse to a `[Pasted text …]` placeholder.
 
 ### `sirenspec run`
 

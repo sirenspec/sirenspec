@@ -27,7 +27,7 @@
         "groups": [
           {
             "group": "Getting Started",
-            "pages": ["introduction", "quickstart", "claude-code-skill"]
+            "pages": ["introduction", "quickstart", "launch", "claude-code-skill"]
           },
           {
             "group": "Core Concepts",
