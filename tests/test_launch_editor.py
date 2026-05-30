@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
 import pytest
+from textual.widgets import Input
 
 from sirenspec.core.usage import TokenUsage
 from sirenspec.exceptions import EditAssistantError
@@ -14,6 +15,7 @@ from sirenspec.session.app import LaunchApp
 from sirenspec.session.edit_screen import EditScreen
 from sirenspec.session.editor import EditAssistant, choose_model, strip_code_fences
 from sirenspec.session.runtime import WorkflowSession
+from sirenspec.session.widgets import Transcript
 from sirenspec.yaml.parser import load_workflow
 
 CURRENT_YAML = """version: "0.1"
@@ -179,6 +181,36 @@ class TestEditScreenIntegration:
             screen.action_reject()
             assert screen.proposal is None
             assert "helpful" in path.read_text()  # unchanged
+
+    @pytest.mark.asyncio
+    async def test_exit_edit_does_not_bubble_to_main_app_as_unknown_command(self, tmp_path: Path) -> None:
+        """``/exit-edit`` typed in the edit input pops the screen and is not re-dispatched
+        by :class:`LaunchApp.on_input_submitted` as an unknown command notice."""
+        app, _ = make_app(tmp_path)
+        async with app.run_test() as pilot:
+            await app.command_edit("")
+            await pilot.pause()
+            screen = app.screen
+            assert isinstance(screen, EditScreen)
+            edit_input = screen.query_one("#edit-input", Input)
+            edit_input.value = "/exit-edit"
+            await pilot.press("enter")
+            for _ in range(10):
+                await pilot.pause(0.05)
+            assert not isinstance(app.screen, EditScreen)  # popped back to the main studio
+            tx = "\n".join(str(line) for line in app.query_one(Transcript).lines)
+            assert "unknown command" not in tx
+
+    @pytest.mark.asyncio
+    async def test_propose_stream_invokes_chunk_callback(self) -> None:
+        """``EditAssistant.propose_stream`` must invoke ``on_chunk`` so the UI can paint
+        progress while the model is still generating."""
+        use_provider(PROPOSED_YAML)
+        assistant = EditAssistant(model_uri="anthropic:claude-haiku-4-5-20251001")
+        received: list[str] = []
+        change = await assistant.propose_stream(CURRENT_YAML, "make the agent concise", received.append)
+        assert received, "on_chunk must be called at least once during streaming"
+        assert "".join(received).strip() == change.new_yaml.strip()
 
     @pytest.mark.asyncio
     async def test_validation_gate_blocks_invalid_accept(self, tmp_path: Path) -> None:

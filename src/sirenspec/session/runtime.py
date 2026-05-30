@@ -18,6 +18,7 @@ from typing import Any
 
 from sirenspec.core.events import NodeCompleteEvent, SummaryEvent
 from sirenspec.core.executor import execute_streaming
+from sirenspec.core.human_runner import InputCoroutine
 from sirenspec.core.models import AgentNode, SwrmNode, Workflow
 from sirenspec.exceptions import SessionError, SirenSpecError
 from sirenspec.memory.manager import build_store
@@ -112,6 +113,20 @@ def build_turn_input(history: list[Turn], message: str) -> str:
     return "\n".join(lines)
 
 
+def format_history_transcript(history: list[Turn]) -> str:
+    """Render prior turns as a plain ``role: content`` transcript for the ``inputs.history`` template slot.
+
+    Mirrors the contract used by demo hosts (e.g. claude-code-mini's ``main.py``) so workflows
+    written for those hosts behave the same inside the studio.
+
+    :param history: The session's prior turns, oldest first.
+    :returns: A newline-joined transcript, or ``""`` when there are no prior turns.
+    """
+    if not history:
+        return ""
+    return "\n".join(f"{turn.role}: {turn.content}" for turn in history)
+
+
 def node_attribution_label(workflow: Workflow, node_id: str) -> tuple[str, str]:
     """Build a human-facing attribution label and provider for a node.
 
@@ -134,6 +149,8 @@ async def stream_execution(
     workflow: Workflow,
     user_input: str,
     token_callback: TokenCallback | None,
+    human_input_fn: InputCoroutine | None = None,
+    initial_inputs: dict[str, Any] | None = None,
 ) -> AsyncGenerator[TurnNodeEvent | TurnResult]:
     """Run *workflow* once against *user_input*, yielding node attribution then a result.
 
@@ -153,7 +170,13 @@ async def stream_execution(
     cost_usd: float | None = None
     status = "success"
 
-    async for event in execute_streaming(workflow, user_input, stream_callback=token_callback):
+    async for event in execute_streaming(
+        workflow,
+        user_input,
+        stream_callback=token_callback,
+        human_input_fn=human_input_fn,
+        initial_inputs=initial_inputs,
+    ):
         if isinstance(event, NodeCompleteEvent):
             if event.status == "skipped":
                 continue
@@ -290,6 +313,7 @@ class WorkflowSession:
         self,
         message: str,
         token_callback: TokenCallback | None = None,
+        human_input_fn: InputCoroutine | None = None,
     ) -> AsyncGenerator[TurnNodeEvent | TurnResult]:
         """Run one chat turn, threading prior turns so agents retain context.
 
@@ -298,8 +322,15 @@ class WorkflowSession:
         :returns: An async generator of node events followed by a single :class:`TurnResult`.
         """
         effective_input = build_turn_input(self.history, message)
+        history_text = format_history_transcript(self.history)
         result: TurnResult | None = None
-        async for event in stream_execution(self.workflow, effective_input, token_callback):
+        async for event in stream_execution(
+            self.workflow,
+            effective_input,
+            token_callback,
+            human_input_fn,
+            initial_inputs={"history": history_text, "message": message},
+        ):
             if isinstance(event, TurnResult):
                 result = event
             else:
@@ -312,6 +343,7 @@ class WorkflowSession:
     async def run_full(
         self,
         token_callback: TokenCallback | None = None,
+        human_input_fn: InputCoroutine | None = None,
     ) -> AsyncGenerator[TurnNodeEvent | TurnResult]:
         """Execute the full workflow graph end-to-end with its declared input.
 
@@ -323,7 +355,14 @@ class WorkflowSession:
         :returns: An async generator of node events followed by a single :class:`TurnResult`.
         """
         user_input = self.resolve_run_input()
-        async for event in stream_execution(self.workflow, user_input, token_callback):
+        history_text = format_history_transcript(self.history)
+        async for event in stream_execution(
+            self.workflow,
+            user_input,
+            token_callback,
+            human_input_fn,
+            initial_inputs={"history": history_text, "message": user_input},
+        ):
             if isinstance(event, TurnResult):
                 self.total_tokens += event.tokens
                 if event.cost_usd is not None:
@@ -385,6 +424,7 @@ __all__ = [
     "TurnResult",
     "WorkflowSession",
     "build_turn_input",
+    "format_history_transcript",
     "node_attribution_label",
     "stream_execution",
 ]

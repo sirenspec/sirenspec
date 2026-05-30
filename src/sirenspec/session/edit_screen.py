@@ -8,9 +8,11 @@ an approve-able diff — accept (validate + write + snapshot), edit (tweak in pl
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 
 from rich.text import Text
+from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -23,6 +25,37 @@ from sirenspec.session.commands import parse_command_line
 from sirenspec.session.editor import EditAssistant, ProposedChange
 from sirenspec.session.runtime import TurnResult, WorkflowSession, stream_execution
 from sirenspec.session.snapshots import SnapshotStore
+
+
+class ProposalEditArea(TextArea):
+    """A TextArea that routes 'a' and 'r' to the screen's decision actions.
+
+    Textual strips printable-character bindings from parent widgets when a TextArea has
+    focus (``check_consume_key`` returns ``True`` for printable chars), so Screen-level
+    ``Binding("a", "accept")`` never fires while this widget is focused.  This subclass
+    handles ``a``/``r`` in ``_on_key`` directly so the accept/reject flow always works,
+    regardless of focus state.
+    """
+
+    async def _on_key(self, event: events.Key) -> None:
+        """Route 'a'/'r' as decision keys when a proposal is pending.
+
+        :param event: The key event.
+        """
+        screen = self.screen
+        if getattr(screen, "proposal", None) is not None:
+            if event.key == "a":
+                event.prevent_default()
+                event.stop()
+                await screen.action_accept()
+                return
+            if event.key == "r":
+                event.prevent_default()
+                event.stop()
+                screen.action_reject()
+                return
+        await super()._on_key(event)
+
 
 EDIT_CSS = """
 EditScreen { background: $background; layers: base; }
@@ -112,9 +145,21 @@ class EditScreen(Screen):
             yield VerticalScroll(Static(id="edit-yaml-body"), id="edit-yaml")
             with Vertical(id="edit-right"):
                 yield RichLog(id="assistant", wrap=True, markup=False)
-                yield TextArea(id="edit-area", language="yaml")
+                yield ProposalEditArea(id="edit-area", language="yaml")
                 yield Input(placeholder="Describe a change, or /test  /exit-edit", id="edit-input")
         yield Static(id="edit-footer")
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        """Disable accept/reject when the instruction input has focus so typing still works.
+
+        :param action: The action being checked.
+        :param parameters: Action parameters (unused).
+        :returns: ``False`` to disable the action (key falls through to the focused widget),
+            ``True`` to allow it (matches the base-class default).
+        """
+        if action in ("accept", "reject") and isinstance(self.focused, Input):
+            return False
+        return True
 
     def on_mount(self) -> None:
         """Paint the header, footer, and workflow view, then focus the instruction input."""
@@ -163,8 +208,12 @@ class EditScreen(Screen):
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         """Route a submitted line as an edit-mode command or an edit instruction.
 
+        Stops the message so the parent :class:`LaunchApp.on_input_submitted` does not
+        also try to dispatch it (and post a spurious "unknown command" for ``/exit-edit``).
+
         :param event: The input submission event.
         """
+        event.stop()
         line = event.value.strip()
         self.query_one("#edit-input", Input).value = ""
         if not line:
@@ -181,18 +230,40 @@ class EditScreen(Screen):
         await self.request_proposal(line)
 
     async def request_proposal(self, instruction: str) -> None:
-        """Ask the assistant for a proposed change and render its diff.
+        """Ask the assistant for a proposed change, streaming progress as it arrives.
+
+        The assistant log gets a live ``▸ thinking · NN chars`` indicator that updates on
+        every streamed chunk, so the screen never feels frozen during the round-trip.  Once
+        the full YAML is received the indicator is replaced with the unified diff and the
+        decision-key hint.
 
         :param instruction: The user's natural-language edit instruction.
         """
         self.assistant.write(Text(f"You: {instruction}", style=theme.YOU))
+        received = 0
+        ticks = 0
+        self.assistant.write(Text("▸ thinking…", style=theme.CREST_LIGHT))
+
+        def on_chunk(chunk: str) -> None:
+            nonlocal received, ticks
+            received += len(chunk)
+            ticks += 1
+            # Cheap throttle: repaint at most every few chunks to keep the log readable.
+            if ticks % 5 == 0 or ticks == 1:
+                self.assistant.write(Text(f"  · streaming · {received} chars", style=theme.TERM_FAINT))
+
         try:
-            self.proposal = await self.editor.propose(self.current_yaml(), instruction)
+            self.proposal = await self.editor.propose_stream(self.current_yaml(), instruction, on_chunk)
         except SessionError as exc:
             self.assistant.write(Text(str(exc), style=theme.YOU))
             return
         self.render_proposal(self.proposal)
-        self.set_focus(None)  # blur input so a/e/r act as decisions
+        # Blur the Input AND focus the screen so a/e/r reach the screen-level bindings
+        # immediately — without an explicit screen focus, the next keypress can race the
+        # focus change and land in the still-active Input widget.
+        self.query_one("#edit-input", Input).blur()
+        self.set_focus(None)
+        self.focus()
 
     def render_proposal(self, proposal: ProposedChange) -> None:
         """Render a proposed change's diff and the decision keys in the assistant pane.
@@ -221,6 +292,10 @@ class EditScreen(Screen):
         if self.proposal is None:
             return
         content = self.proposed_content()
+        # Surface "applying…" immediately, then yield so it paints before the synchronous
+        # validate + write + reload chain runs (which otherwise looks like a freeze).
+        self.assistant.write(Text("▸ applying…", style=theme.CREST_LIGHT))
+        await asyncio.sleep(0)
         try:
             self.editor.validate(content, self.session.workflow_path)
         except SessionError as exc:

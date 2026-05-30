@@ -9,6 +9,8 @@ console via :func:`run_launch`.
 
 from __future__ import annotations
 
+import asyncio
+import sys
 from pathlib import Path
 
 from rich.console import Console
@@ -155,6 +157,8 @@ class LaunchApp(App):
         self.editor = EditAssistant()
         self.snapshot_label = self.snapshots.latest_label()
         self.stream_buffer: list[str] = []
+        self._palette_selecting: bool = False
+        self._pending_approval: asyncio.Future[str] | None = None
         self.registry: CommandRegistry = make_registry(self.build_command_handlers())
         self.registry.register(
             "rollback",
@@ -247,12 +251,24 @@ class LaunchApp(App):
     async def on_input_submitted(self, event: CommandInput.Submitted) -> None:
         """Handle a submitted input line as either a slash command or a chat turn.
 
+        When a :class:`~sirenspec.core.models.HumanNode` is waiting on an operator response
+        (``self._pending_approval`` is set), the next submission resolves that future
+        instead of starting a new chat turn — so an approval prompt and its answer use the
+        same input box the user is already typing in.
+
         :param event: The input submission event.
         """
-        line = event.value.strip()
+        raw = event.value
         command_input = self.query_one(CommandInput)
         command_input.reset_prompt()
         self.close_palette()
+        if self._pending_approval is not None and not self._pending_approval.done():
+            response = raw.strip()
+            self.transcript.add_user(response)
+            command_input.remember(raw)
+            self._pending_approval.set_result(response)
+            return
+        line = raw.strip()
         if not line:
             return
         command_input.remember(line)
@@ -261,15 +277,43 @@ class LaunchApp(App):
         else:
             await self.handle_turn(line)
 
+    async def await_human_input(self, prompt_text: str) -> str:
+        """Surface a HumanNode prompt to the user and await their reply in the chat box.
+
+        Installed as the executor's ``human_input_fn`` so that ``type: human`` nodes inside
+        the studio never fall back to stdin (which Textual has captured).  The prompt is
+        rendered into the transcript and the next :class:`CommandInput` submission resolves
+        the awaiting future.
+
+        :param prompt_text: The fully-rendered prompt to show the operator.
+        :returns: The operator's typed response (trailing whitespace stripped).
+        """
+        for line in prompt_text.splitlines() or [""]:
+            self.transcript.add_notice(line, style=theme.CREST_LIGHT)
+        self.transcript.add_notice("(type your answer below and press enter)", style=theme.TERM_FAINT)
+        loop = asyncio.get_running_loop()
+        self._pending_approval = loop.create_future()
+        self.query_one(CommandInput).focus()
+        try:
+            return await self._pending_approval
+        finally:
+            self._pending_approval = None
+
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
         """Open or filter the command palette while the user types a ``/`` command.
 
         Only the main prompt drives the palette; changes from other text areas (e.g. the
-        ``/edit`` editing buffer) are ignored.
+        ``/edit`` editing buffer) are ignored.  When the change came from a palette
+        selection (``_palette_selecting`` is set), close the palette rather than re-opening
+        it — the selection already filled the input.
 
         :param event: The text-area change event.
         """
         if event.text_area is not self.query_one(CommandInput):
+            return
+        if self._palette_selecting:
+            self._palette_selecting = False
+            self.close_palette()
             return
         value = event.text_area.text
         if is_command(value):
@@ -282,13 +326,17 @@ class LaunchApp(App):
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         """Fill the input with the chosen palette command and return focus to it.
 
+        Sets ``_palette_selecting`` before updating the input value so that the
+        ``TextArea.Changed`` message processed in the next event-loop tick closes the
+        palette instead of re-opening it.
+
         :param event: The palette selection event.
         """
         if event.option.id is None:
             return
         command_input = self.query_one(CommandInput)
+        self._palette_selecting = True
         command_input.value = f"/{event.option.id} "
-        self.close_palette()
         command_input.focus()
 
     def close_palette(self) -> None:
@@ -311,7 +359,13 @@ class LaunchApp(App):
         :param message: The user's message text.
         """
         self.transcript.add_user(message)
-        await self.drive(self.session.take_turn(message, token_callback=self.on_token))
+        await self.drive(
+            self.session.take_turn(
+                message,
+                token_callback=self.on_token,
+                human_input_fn=self.await_human_input,
+            )
+        )
 
     async def drive(self, events: object) -> None:
         """Consume a turn event stream, painting attribution lines and the final result.
@@ -451,7 +505,12 @@ class LaunchApp(App):
         """
         self.auto_snapshot("run", "pre-run")
         self.transcript.add_notice("running the full workflow graph…", style=theme.CREST_LIGHT)
-        await self.drive(self.session.run_full(token_callback=self.on_token))
+        await self.drive(
+            self.session.run_full(
+                token_callback=self.on_token,
+                human_input_fn=self.await_human_input,
+            )
+        )
 
     def auto_snapshot(self, trigger: str, label: str) -> None:
         """Take a best-effort snapshot before a destructive or notable action.
@@ -610,6 +669,10 @@ def run_launch(workflow_path: Path, *, plain: bool, is_tty: bool, session_id: st
     :param session_id: Optional id for a persistent, resumable session via ``--session``.
     :raises SessionError: If the workflow cannot be loaded or the session cannot be created.
     """
+    workflow_dir = str(workflow_path.parent.resolve())
+    if workflow_dir not in sys.path:
+        sys.path.insert(0, workflow_dir)
+
     try:
         workflow = load_workflow(str(workflow_path))
     except (SirenSpecError, OSError, ValueError) as exc:

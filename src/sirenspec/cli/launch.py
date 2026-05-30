@@ -41,13 +41,32 @@ def launch_command(
         ),
     ] = None,
 ) -> None:
-    """Open the SirenSpec workflow studio for a workflow.
+    """Launch the interactive full-screen workflow studio (TUI).
 
     Boots the full-screen Textual studio — a scrolling transcript, the collapsible workflow
     rail, the command palette, and the trace drawer — themed with the SirenSpec brand.  The
     workflow runs live against real providers, one turn at a time; ``--session`` rehydrates a
     prior conversation from the workflow's ``memory:`` backend.  Non-interactive terminals and
     ``--plain`` / ``NO_COLOR`` fall back to a plain console.
+
+    \b
+    Slash commands (type / to open the palette):
+      /run        run the full workflow graph end-to-end
+      /edit       open the suggestive workflow editor
+      /snapshot   save a named version snapshot of workflow.yaml
+      /diff       compare the working file against a snapshot
+      /rollback   restore a snapshot (auto-saves a safety copy first)
+      /reload     reload the workflow file without restarting
+      /help       list all registered commands
+      /exit       leave the studio
+
+    \b
+    Keyboard shortcuts:
+      Ctrl+B      toggle the workflow rail (left sidebar)
+      Ctrl+T      toggle the trace drawer (bottom bar)
+      Ctrl+R      roll back to the latest snapshot
+      Esc         dismiss the command palette
+      Ctrl+C      quit
 
     :param workflow_file: Path to the workflow YAML file to load into the session.
     :param plain: When ``True``, skip the full-screen UI and print a plain console summary.

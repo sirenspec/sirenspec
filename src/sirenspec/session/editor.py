@@ -12,7 +12,7 @@ from __future__ import annotations
 import difflib
 import os
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -60,6 +60,27 @@ def choose_model(env: Mapping[str, str] | None = None) -> str:
     if env.get("OPENAI_API_KEY"):
         return DEFAULT_OPENAI_MODEL
     raise EditAssistantError("No provider key found: set ANTHROPIC_API_KEY or OPENAI_API_KEY to use /edit.")
+
+
+def build_proposed_change(current_yaml: str, instruction: str, raw: str) -> ProposedChange:
+    """Assemble a :class:`ProposedChange` from the raw model output.
+
+    :param current_yaml: The current workflow YAML text.
+    :param instruction: The instruction that produced the change.
+    :param raw: The model's raw reply (may include surrounding code fences).
+    :returns: A :class:`ProposedChange` with stripped YAML and a unified diff.
+    """
+    new_yaml = strip_code_fences(raw)
+    diff_lines = list(
+        difflib.unified_diff(
+            current_yaml.splitlines(),
+            new_yaml.splitlines(),
+            fromfile="workflow.yaml",
+            tofile="proposed",
+            lineterm="",
+        )
+    )
+    return ProposedChange(instruction=instruction, new_yaml=new_yaml, diff_lines=diff_lines)
 
 
 def strip_code_fences(text: str) -> str:
@@ -118,17 +139,50 @@ class EditAssistant:
         except SirenSpecError as exc:
             raise EditAssistantError(f"Assistant request failed: {exc}") from exc
 
-        new_yaml = strip_code_fences(raw)
-        diff_lines = list(
-            difflib.unified_diff(
-                current_yaml.splitlines(),
-                new_yaml.splitlines(),
-                fromfile="workflow.yaml",
-                tofile="proposed",
-                lineterm="",
-            )
-        )
-        return ProposedChange(instruction=instruction, new_yaml=new_yaml, diff_lines=diff_lines)
+        return build_proposed_change(current_yaml, instruction, raw)
+
+    async def propose_stream(
+        self,
+        current_yaml: str,
+        instruction: str,
+        on_chunk: Callable[[str], None],
+    ) -> ProposedChange:
+        """Streaming variant of :meth:`propose` — feeds *on_chunk* live as the model responds.
+
+        Falls back to a single ``complete`` call followed by one ``on_chunk`` invocation when
+        the resolved provider does not implement ``stream``.
+
+        :param current_yaml: The current workflow YAML text.
+        :param instruction: The user's natural-language edit instruction.
+        :param on_chunk: Callable invoked with each streamed text chunk so the caller can
+            paint live progress in the UI.
+        :raises EditAssistantError: If no provider is available or the call fails.
+        :returns: The :class:`ProposedChange` for the user to review.
+        """
+        try:
+            provider = resolve_provider(self.resolve_model())
+        except SirenSpecError as exc:
+            raise EditAssistantError(f"Could not initialise the assistant provider: {exc}") from exc
+
+        messages = [
+            {"role": "system", "content": EDIT_SYSTEM_PROMPT},
+            {"role": "user", "content": f"Current workflow.yaml:\n{current_yaml}\n\nInstruction: {instruction}"},
+        ]
+        stream = getattr(provider, "stream", None)
+        chunks: list[str] = []
+        try:
+            if stream is None:
+                raw = await provider.complete(messages)
+                on_chunk(raw)
+                chunks.append(raw)
+            else:
+                async for chunk in stream(messages):
+                    chunks.append(chunk)
+                    on_chunk(chunk)
+        except SirenSpecError as exc:
+            raise EditAssistantError(f"Assistant request failed: {exc}") from exc
+
+        return build_proposed_change(current_yaml, instruction, "".join(chunks))
 
     def validate(self, new_yaml: str, workflow_path: Path) -> Workflow:
         """Validate proposed YAML by loading it through the normal workflow parser.
