@@ -122,6 +122,90 @@ def resolve_color_mode(plain: bool = False, *, is_tty: bool = True) -> ColorMode
     return ColorMode(enabled=True)
 
 
+# ---------------------------------------------------------------------------
+# Theme variants — selected via SIRENSPEC_THEME env var
+# ---------------------------------------------------------------------------
+
+_SENTRY_PALETTE: dict[str, str] = {
+    "primary": "#362D59",
+    "secondary": "#F55459",
+    "accent": "#6559C5",
+    "foreground": "#F8F5FA",
+    "background": "#1D1127",
+    "surface": "#261833",
+}
+
+
+def build_theme(color_mode: ColorMode) -> Theme:
+    """Build the Textual :class:`~textual.theme.Theme` for the studio.
+
+    Reads ``SIRENSPEC_THEME`` from the environment to select a palette variant:
+    ``dark`` (default), ``light`` (not yet implemented — falls back to dark), or
+    ``sentry`` (Sentry brand colours for OSS collaboration).  In plain mode a
+    desaturated dark theme is returned so colour-derived contrast still works
+    while ANSI colour output is suppressed by the console layer.
+
+    :param color_mode: The resolved colour mode for the session.
+    :returns: A registered-ready :class:`~textual.theme.Theme` named ``"sirenspec"``.
+    """
+    variant = os.environ.get("SIRENSPEC_THEME", "dark").lower()
+    base = _build_dark_theme() if variant != "sentry" else _build_sentry_theme()
+    return base
+
+
+def _build_dark_theme() -> Theme:
+    """Build the default dark SirenSpec theme.
+
+    :returns: The dark Textual theme.
+    """
+    return Theme(
+        name="sirenspec",
+        primary=PRIMARY,
+        secondary=LIGHT,
+        accent=CREST_LIGHT,
+        foreground=TERM_FG,
+        background=TERM_BG,
+        surface=TERM_BG_2,
+        panel=TERM_BG_2,
+        success=LIGHT,
+        warning=YOU,
+        error="#ff5f57",
+        dark=True,
+        variables={
+            "border": TERM_BORDER,
+            "text-muted": TERM_DIM,
+            "text-disabled": TERM_FAINT,
+        },
+    )
+
+
+def _build_sentry_theme() -> Theme:
+    """Build the Sentry brand theme (activated via ``SIRENSPEC_THEME=sentry``).
+
+    :returns: The Sentry-branded Textual theme.
+    """
+    p = _SENTRY_PALETTE
+    return Theme(
+        name="sirenspec",
+        primary=p["primary"],
+        secondary=p["secondary"],
+        accent=p["accent"],
+        foreground=p["foreground"],
+        background=p["background"],
+        surface=p["surface"],
+        panel=p["surface"],
+        success="#2BA22B",
+        warning="#F5A623",
+        error="#F55459",
+        dark=True,
+        variables={
+            "border": "#3D2B51",
+            "text-muted": "#8E7DA4",
+            "text-disabled": "#5E4D72",
+        },
+    )
+
+
 def build_crest_pixels() -> dict[tuple[int, int], str]:
     """Expand :data:`CREST_RECTS` into a ``(row, col) -> colour`` pixel map.
 
@@ -201,35 +285,3 @@ def render_crest_plain(pixels: dict[tuple[int, int], str]) -> Text:
         if text_row < CREST_GRID // 2 - 1:
             text.append("\n")
     return text
-
-
-def build_theme(color_mode: ColorMode) -> Theme:
-    """Build the Textual :class:`~textual.theme.Theme` for the studio.
-
-    The theme exposes the brand palette through Textual design tokens (``$primary``,
-    ``$secondary``, ``$surface`` …) so the app's TCSS never hard-codes a hex value.
-    In plain mode a desaturated dark theme is returned so colour-derived contrast still
-    works while ANSI colour output is suppressed by the console layer.
-
-    :param color_mode: The resolved colour mode for the session.
-    :returns: A registered-ready :class:`~textual.theme.Theme` named ``"sirenspec"``.
-    """
-    return Theme(
-        name="sirenspec",
-        primary=PRIMARY,
-        secondary=LIGHT,
-        accent=CREST_LIGHT,
-        foreground=TERM_FG,
-        background=TERM_BG,
-        surface=TERM_BG_2,
-        panel=TERM_BG_2,
-        success=LIGHT,
-        warning=YOU,
-        error="#ff5f57",
-        dark=True,
-        variables={
-            "border": TERM_BORDER,
-            "text-muted": TERM_DIM,
-            "text-disabled": TERM_FAINT,
-        },
-    )

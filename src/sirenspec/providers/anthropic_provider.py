@@ -6,9 +6,10 @@ import asyncio
 import os
 from collections.abc import AsyncIterator
 
-from anthropic import AsyncAnthropic
+from anthropic import APIStatusError, AsyncAnthropic, AuthenticationError
 
 from sirenspec.core.usage import TokenUsage
+from sirenspec.exceptions import ProviderError
 
 
 class AnthropicProvider:
@@ -62,7 +63,15 @@ class AnthropicProvider:
         if system_prompt:
             kwargs["system"] = system_prompt
 
-        response = await self.client.messages.create(**kwargs)
+        try:
+            response = await self.client.messages.create(**kwargs)
+        except AuthenticationError as exc:
+            raise ProviderError(
+                "Anthropic authentication failed — set ANTHROPIC_API_KEY to a valid key "
+                "(tip: check that no shell export is shadowing your .env value)"
+            ) from exc
+        except APIStatusError as exc:
+            raise ProviderError(f"Anthropic API error ({exc.status_code}): {exc.message}") from exc
         self._last_token_usage = TokenUsage(
             prompt_tokens=response.usage.input_tokens,
             completion_tokens=response.usage.output_tokens,
@@ -100,14 +109,22 @@ class AnthropicProvider:
         if system_prompt:
             kwargs["system"] = system_prompt
 
-        async with self.client.messages.stream(**kwargs) as stream:
-            async for text in stream.text_stream:
-                yield text
-            usage = (await stream.get_final_message()).usage
-            self._last_token_usage = TokenUsage(
-                prompt_tokens=usage.input_tokens,
-                completion_tokens=usage.output_tokens,
-            )
+        try:
+            async with self.client.messages.stream(**kwargs) as stream:
+                async for text in stream.text_stream:
+                    yield text
+                usage = (await stream.get_final_message()).usage
+                self._last_token_usage = TokenUsage(
+                    prompt_tokens=usage.input_tokens,
+                    completion_tokens=usage.output_tokens,
+                )
+        except AuthenticationError as exc:
+            raise ProviderError(
+                "Anthropic authentication failed — set ANTHROPIC_API_KEY to a valid key "
+                "(tip: check that no shell export is shadowing your .env value)"
+            ) from exc
+        except APIStatusError as exc:
+            raise ProviderError(f"Anthropic API error ({exc.status_code}): {exc.message}") from exc
 
 
 if __name__ == "__main__":

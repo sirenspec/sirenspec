@@ -262,6 +262,6 @@ class TestAppBoot:
     @pytest.mark.asyncio
     async def test_toggle_rail_hides_it(self, tmp_path: Path) -> None:
         app = make_app(tmp_path)
-        async with app.run_test() as pilot:
+        async with app.run_test(size=(160, 40)) as pilot:
             await pilot.press("ctrl+b")
             assert app.query_one("#rail", WorkflowRail).has_class("hidden")

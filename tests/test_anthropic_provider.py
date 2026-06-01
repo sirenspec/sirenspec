@@ -112,3 +112,29 @@ class TestAnthropicProvider:
 
         assert chunks == ["Hello", " world"]
         assert provider.last_token_usage.total == 30
+
+    @pytest.mark.asyncio
+    async def test_auth_error_wrapped_as_provider_error(self, provider: AnthropicProvider) -> None:
+        """AuthenticationError from the Anthropic SDK is re-raised as ProviderError."""
+        from anthropic import AuthenticationError as AnthropicAuthError
+
+        from sirenspec.exceptions import ProviderError
+
+        exc = AnthropicAuthError(message="invalid x-api-key", response=MagicMock(status_code=401), body={})
+        with patch.object(provider._client.messages, "create", new=AsyncMock(side_effect=exc)):
+            with pytest.raises(ProviderError, match="authentication failed"):
+                await provider.complete([{"role": "user", "content": "hi"}])
+
+    @pytest.mark.asyncio
+    async def test_api_status_error_wrapped_as_provider_error(self, provider: AnthropicProvider) -> None:
+        """APIStatusError from the Anthropic SDK is re-raised as ProviderError."""
+        from anthropic import APIStatusError
+
+        from sirenspec.exceptions import ProviderError
+
+        mock_response = MagicMock()
+        mock_response.status_code = 429
+        exc = APIStatusError(message="rate limit", response=mock_response, body={})
+        with patch.object(provider._client.messages, "create", new=AsyncMock(side_effect=exc)):
+            with pytest.raises(ProviderError, match="429"):
+                await provider.complete([{"role": "user", "content": "hi"}])

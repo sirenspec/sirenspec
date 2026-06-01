@@ -109,8 +109,13 @@ class SplashHeader(Horizontal):
             f"{summary.name} · {summary.node_count} {nodes_word} · {summary.agent_count} {agents_word}\n",
             style=theme.TERM_DIM,
         )
-        provider = summary.primary_provider or "—"
-        meta.append(f"testing in production mode · {provider}", style=theme.TERM_FAINT)
+        status_parts: list[str] = []
+        if summary.agent_count:
+            status_parts.append(f"{summary.agent_count} {agents_word}")
+        if summary.primary_provider:
+            status_parts.append(summary.primary_provider)
+        if status_parts:
+            meta.append(" · ".join(status_parts), style=theme.TERM_FAINT)
         self.meta_text = meta
         self.query_one("#splash-meta", Static).update(meta)
 
@@ -127,6 +132,13 @@ class WorkflowRail(VerticalScroll):
         """
         yield Static(id="rail-body")
 
+    NODE_STATUS_ICONS: dict[str, tuple[str, str]] = {
+        "running": ("▸ ", theme.LIGHT),
+        "success": ("✓ ", "#86efac"),
+        "failed": ("✕ ", "#fca5a5"),
+        "skipped": ("◌ ", theme.TERM_FAINT),
+    }
+
     def show_rail(
         self,
         summary: WorkflowSummary,
@@ -134,6 +146,7 @@ class WorkflowRail(VerticalScroll):
         snapshot_label: str,
         turns: int,
         cost_usd: float | None,
+        node_statuses: dict[str, str] | None = None,
     ) -> None:
         """Repaint the rail from the workflow summary and live session stats.
 
@@ -141,11 +154,15 @@ class WorkflowRail(VerticalScroll):
         :param snapshot_label: The active snapshot label (e.g. ``"v3"``).
         :param turns: Number of completed turns this session.
         :param cost_usd: Accumulated estimated USD spend, or ``None`` when unavailable.
+        :param node_statuses: Optional mapping of node_id to status for live run indicators.
         """
+        statuses = node_statuses or {}
         body = Text()
         body.append(f"workflow.yaml ◇ {snapshot_label}\n", style=theme.TERM_MUTED)
         for node in summary.nodes:
-            body.append("▸ ", style=theme.TERM_FG)
+            status = statuses.get(node.node_id)
+            icon, icon_style = self.NODE_STATUS_ICONS.get(status or "", ("▸ ", theme.TERM_FG))
+            body.append(icon, style=icon_style)
             body.append(node.node_id, style=theme.TERM_FG)
             body.append(f" ({node.kind})\n", style=theme.TERM_DIM)
             for i, child in enumerate(node.children):
@@ -275,6 +292,9 @@ class CommandInput(TextArea):
     Up/Down browse command history at the buffer's top/bottom edges (and move the caret
     otherwise).  Large pastes (more than 3 lines or 100 words) are collapsed into a
     ``[Pasted text …]`` placeholder that expands back to the full text on submit.
+
+    Pressing ``/`` posts :class:`OpenPalette` rather than inserting the character, so the
+    app can snapshot the current buffer and open the command palette cleanly.
     """
 
     class Submitted(Message, namespace="input"):
@@ -287,9 +307,13 @@ class CommandInput(TextArea):
             super().__init__()
             self.value = value
 
+    class OpenPalette(Message, namespace="input"):
+        """Posted when the user presses ``/`` to open the command palette."""
+
     def __init__(self, **kwargs: object) -> None:
         kwargs.setdefault("show_line_numbers", False)
         kwargs.setdefault("soft_wrap", True)
+        kwargs.setdefault("placeholder", "Type a message, or press / for commands")
         super().__init__(**kwargs)  # type: ignore[arg-type]
         self.command_history: list[str] = []
         self.history_index: int | None = None
@@ -360,10 +384,15 @@ class CommandInput(TextArea):
         self.post_message(self.Submitted(self.expanded_value()))
 
     async def _on_key(self, event: events.Key) -> None:
-        """Map Enter to submit, Shift+Enter / Ctrl+J to newline, and Up/Down to history.
+        """Map Enter to submit, Shift+Enter / Ctrl+J to newline, Up/Down to history, and / to palette.
 
         :param event: The key event.
         """
+        if event.key == "slash":
+            event.prevent_default()
+            event.stop()
+            self.post_message(self.OpenPalette())
+            return
         if event.key == "enter":
             event.prevent_default()
             event.stop()
@@ -502,14 +531,65 @@ class FooterHints(Static):
         self.update(text)
 
 
+ONBOARDING_HINTS: tuple[str, ...] = (
+    "/run to execute  ·  Ctrl+B to hide the rail  ·  /edit to propose changes",
+    "/snapshot to save a version  ·  /diff to compare  ·  /rollback to undo",
+    "/help for all commands  ·  ↑↓ to browse history  ·  Shift+Enter for newline",
+)
+
+
+class HintCycler(Static):
+    """A one-line hint strip below the splash that cycles onboarding tips.
+
+    Cycling stops once the user types their first message.
+
+    :param hints: Tuple of hint strings to cycle through.
+    """
+
+    def __init__(self, hints: tuple[str, ...] = ONBOARDING_HINTS, **kwargs: object) -> None:
+        super().__init__(**kwargs)  # type: ignore[arg-type]
+        self._hints = hints
+        self._index = 0
+        self._active = True
+
+    def advance(self) -> None:
+        """Move to the next hint in the cycle.
+
+        If cycling has been disabled (user has typed), this is a no-op.
+        """
+        if not self._active:
+            return
+        self._index = (self._index + 1) % len(self._hints)
+        self.render_hint()
+
+    def deactivate(self) -> None:
+        """Stop cycling and clear the widget once the user is engaged."""
+        self._active = False
+        self.update("")
+
+    def render_hint(self) -> None:
+        """Repaint the current hint into the widget."""
+        if not self._active or not self._hints:
+            return
+        text = Text()
+        text.append("  ", style="")
+        text.append(self._hints[self._index], style=theme.TERM_FAINT)
+        self.update(text)
+
+    def on_mount(self) -> None:
+        """Show the first hint immediately on mount."""
+        self.render_hint()
+
+
 class RightPane(Vertical):
     """The right column: splash, transcript, and input."""
 
     def compose(self) -> ComposeResult:
-        """Yield the splash header, transcript, and command input.
+        """Yield the splash header, onboarding hint strip, transcript, and command input.
 
         :returns: The child widgets of the right pane.
         """
         yield SplashHeader(id="splash")
+        yield HintCycler(id="hint-cycler")
         yield Transcript(id="transcript", wrap=True, markup=False)
         yield CommandInput(id="input")

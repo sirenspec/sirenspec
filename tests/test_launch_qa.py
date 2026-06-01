@@ -429,9 +429,9 @@ class TestKeyBindings:
     @pytest.mark.asyncio
     async def test_ctrl_b_toggles_rail(self, tmp_path: Path) -> None:
         app, _ = make_app(tmp_path)
-        async with app.run_test() as pilot:
+        async with app.run_test(size=(160, 40)) as pilot:
             rail = app.query_one("#rail", WorkflowRail)
-            assert not rail.has_class("hidden"), "Rail starts visible"
+            assert not rail.has_class("hidden"), "Rail starts visible at wide viewport"
             await pilot.press("ctrl+b")
             await pilot.pause()
             assert rail.has_class("hidden"), "Rail should be hidden after ctrl+b"
@@ -983,3 +983,158 @@ class TestEdgeCases:
             assert not isinstance(app.screen, EditScreen), (
                 "Should have returned to main studio after Escape in edit screen"
             )
+
+
+# ---------------------------------------------------------------------------
+# P1-4 — node status on rail + retry
+# ---------------------------------------------------------------------------
+
+
+class TestNodeStatusRail:
+    """Rail nodes show live status icons during a turn; retry reruns last message."""
+
+    @pytest.mark.asyncio
+    async def test_node_status_icons_after_turn(self, tmp_path: Path, fake_provider: FakeProvider) -> None:
+        """After a successful turn the rail should reflect the node's success status."""
+        app, _ = make_app(tmp_path)
+        async with app.run_test() as pilot:
+            ci = app.query_one(CommandInput)
+            ci.focus()
+            ci.value = "hello"
+            await pilot.press("enter")
+            await pilot.pause()
+            assert "answer" in app._node_statuses, "Node 'answer' should appear in statuses"
+            assert app._node_statuses["answer"] == "success"
+
+    @pytest.mark.asyncio
+    async def test_retry_command_reruns_last_message(self, tmp_path: Path, fake_provider: FakeProvider) -> None:
+        """/retry reruns the last message; call count on the provider increases."""
+        app, _ = make_app(tmp_path)
+        async with app.run_test() as pilot:
+            ci = app.query_one(CommandInput)
+            ci.focus()
+            ci.value = "ping"
+            await pilot.press("enter")
+            await pilot.pause()
+            calls_after_first = len(fake_provider.calls)
+            ci.value = "/retry"
+            await pilot.press("enter")
+            await pilot.pause()
+            assert len(fake_provider.calls) > calls_after_first, "Retry should have called the provider again"
+
+    @pytest.mark.asyncio
+    async def test_retry_with_no_prior_message_posts_notice(self, tmp_path: Path) -> None:
+        """/retry with no prior message should post a notice, not crash."""
+        app, _ = make_app(tmp_path)
+        async with app.run_test() as pilot:
+            ci = app.query_one(CommandInput)
+            ci.focus()
+            ci.value = "/retry"
+            await pilot.press("enter")
+            await pilot.pause()
+            tx = transcript_text(app)
+            assert "nothing to retry" in tx.lower(), f"Expected 'nothing to retry' notice; got:\n{tx}"
+
+    @pytest.mark.asyncio
+    async def test_failed_turn_shows_retry_hint(self, tmp_path: Path) -> None:
+        """A failed turn should surface a retry/edit hint in the transcript."""
+        from sirenspec.exceptions import ProviderError
+
+        set_provider_override(lambda _uri: FakeProvider(raises=ProviderError("auth failed")))
+        app, _ = make_app(tmp_path)
+        async with app.run_test() as pilot:
+            ci = app.query_one(CommandInput)
+            ci.focus()
+            ci.value = "trigger failure"
+            await pilot.press("enter")
+            await pilot.pause()
+            tx = transcript_text(app)
+            assert "/retry" in tx or "retry" in tx.lower(), f"Expected retry hint after failure; got:\n{tx}"
+
+
+# ---------------------------------------------------------------------------
+# P1-3 — onboarding hint cycler
+# ---------------------------------------------------------------------------
+
+
+class TestHintCycler:
+    """Hint cycler shows tips until the user types their first message."""
+
+    @pytest.mark.asyncio
+    async def test_hint_deactivates_after_first_turn(self, tmp_path: Path, fake_provider: FakeProvider) -> None:
+        """After the first user turn the hint cycler should be blank."""
+        from sirenspec.session.widgets import HintCycler
+
+        app, _ = make_app(tmp_path)
+        async with app.run_test() as pilot:
+            ci = app.query_one(CommandInput)
+            ci.focus()
+            ci.value = "hello"
+            await pilot.press("enter")
+            await pilot.pause()
+            hint = app.query_one(HintCycler)
+            assert not hint._active, "HintCycler should be deactivated after first turn"
+
+
+# ---------------------------------------------------------------------------
+# P2 — responsive layout + SIRENSPEC_THEME
+# ---------------------------------------------------------------------------
+
+
+class TestResponsiveLayout:
+    """Rail auto-hides at narrow terminal widths."""
+
+    @pytest.mark.asyncio
+    async def test_rail_auto_hides_below_100_cols(self, tmp_path: Path) -> None:
+        """At < 100 cols the rail should be auto-hidden."""
+        app, _ = make_app(tmp_path)
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            rail = app.query_one("#rail", WorkflowRail)
+            assert rail.has_class("hidden"), "Rail should auto-hide at 80 cols"
+
+    @pytest.mark.asyncio
+    async def test_rail_visible_above_100_cols(self, tmp_path: Path) -> None:
+        """At >= 100 cols the rail should be visible."""
+        app, _ = make_app(tmp_path)
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause()
+            rail = app.query_one("#rail", WorkflowRail)
+            assert not rail.has_class("hidden"), "Rail should be visible at 160 cols"
+
+    @pytest.mark.asyncio
+    async def test_rail_narrow_class_between_100_and_140(self, tmp_path: Path) -> None:
+        """Between 100-140 cols the rail should use the narrow class."""
+        app, _ = make_app(tmp_path)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.pause()
+            rail = app.query_one("#rail", WorkflowRail)
+            assert not rail.has_class("hidden"), "Rail should be visible at 120 cols"
+            assert rail.has_class("narrow"), "Rail should be narrow at 120 cols"
+
+
+class TestSirenspecTheme:
+    """SIRENSPEC_THEME env var selects alternate colour palettes."""
+
+    def test_sentry_theme_variant(self) -> None:
+        """SIRENSPEC_THEME=sentry builds a Sentry-branded theme."""
+        import os
+
+        from sirenspec.session.theme import ColorMode, build_theme
+
+        os.environ["SIRENSPEC_THEME"] = "sentry"
+        try:
+            t = build_theme(ColorMode(enabled=True))
+            assert t.primary == "#362D59", f"Sentry primary mismatch: {t.primary}"
+        finally:
+            os.environ.pop("SIRENSPEC_THEME", None)
+
+    def test_dark_theme_is_default(self) -> None:
+        """Without SIRENSPEC_THEME the default dark theme is used."""
+        import os
+
+        from sirenspec.session.theme import PRIMARY, ColorMode, build_theme
+
+        os.environ.pop("SIRENSPEC_THEME", None)
+        t = build_theme(ColorMode(enabled=True))
+        assert t.primary == PRIMARY, f"Default theme primary mismatch: {t.primary}"
