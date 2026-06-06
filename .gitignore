@@ -15,7 +15,6 @@ wheels/
 
 # UV cache
 .uv/
-uv.lock
 
 # IDE
 .windsurf/
