@@ -36,3 +36,6 @@ docs/adr/
 # Environment variables
 .env
 
+# Git backup (created during repository cleanup)
+.git.backup/
+
