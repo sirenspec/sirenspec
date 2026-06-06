@@ -171,8 +171,16 @@ async def execute_swrm_for_item(
                 agent_trace["error"] = str(wrapped)
                 return agent_trace, wrapped
 
-    tasks = [run_with_semaphore(agent) for agent in agents]
-    gathered: list[tuple[dict[str, Any], SwrmAgentError | None]] = await asyncio.gather(*tasks)
+    tasks = [asyncio.create_task(run_with_semaphore(agent)) for agent in agents]
+    try:
+        gathered: list[tuple[dict[str, Any], SwrmAgentError | None]] = await asyncio.gather(*tasks)
+    except Exception:
+        # Cancel all remaining tasks if gather fails
+        for task in tasks:
+            task.cancel()
+        # Wait for cancellation to complete
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
 
     agent_traces: list[dict[str, Any]] = []
     total_tokens = 0
@@ -346,8 +354,16 @@ async def execute_swrm(
 
     # asyncio.gather starts all tasks immediately; the semaphore throttles how
     # many run concurrently. gather waits for every task before returning.
-    tasks = [run_with_semaphore(agent) for agent in agents]
-    gathered: list[tuple[dict[str, Any], SwrmAgentError | None]] = await asyncio.gather(*tasks)
+    tasks = [asyncio.create_task(run_with_semaphore(agent)) for agent in agents]
+    try:
+        gathered: list[tuple[dict[str, Any], SwrmAgentError | None]] = await asyncio.gather(*tasks)
+    except Exception:
+        # Cancel all remaining tasks if gather fails
+        for task in tasks:
+            task.cancel()
+        # Wait for cancellation to complete
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
 
     agent_traces: list[dict[str, Any]] = []
     total_tokens = 0

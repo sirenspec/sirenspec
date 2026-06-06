@@ -359,9 +359,17 @@ async def execute_factory_node(
                     memory=memory,
                 )
 
-        tasks = [run_with_semaphore(idx, item) for idx, item in enumerate(items)]
+        tasks = [asyncio.create_task(run_with_semaphore(idx, item)) for idx, item in enumerate(items)]
 
-    gathered: list[tuple[dict[str, Any], FactoryNodeError | None]] = await asyncio.gather(*tasks)
+    try:
+        gathered: list[tuple[dict[str, Any], FactoryNodeError | None]] = await asyncio.gather(*tasks)
+    except Exception:
+        # Cancel all remaining tasks if gather fails
+        for task in tasks:
+            task.cancel()
+        # Wait for cancellation to complete
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
 
     instance_traces: list[dict[str, Any]] = []
     outputs: list[Any] = []
